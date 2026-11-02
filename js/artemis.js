@@ -171,12 +171,15 @@
       const ctx = canvas.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = "#03050b"; ctx.fillRect(0, 0, w, h);
-      const wide = w > 900, words = box(copy), strip = box(card);
-      // fit Earth, Orion and the Moon beside the words and photo card (under the words on a phone), above the player
-      // bar and, on a phone, the photo strip
+      const wide = w > 900, words = box(copy), strip = box(card), barTop = box(bar)[1];
+      // the photo card sits in the words' column on wide screens and at tablet widths; on a phone it is a strip below
+      const cardInWords = strip[3] - strip[1] < 1 || (strip[1] >= words[1] - 4 && strip[3] <= words[3] + 4);
+      // fit Earth, Orion and the Moon beside the words and photo card (under the words on a narrower screen), above the
+      // player bar and, on a phone, the photo strip
       const left = wide ? Math.max(w * 0.44, words[2] + 24) : 24, right = w - (wide ? 48 : 24);
-      const top = wide ? 120 : words[3] + 28, bottom = wide ? h - 130 : strip[1] - 32;
-      const k = Math.min((right - left) / (BOX.x1 - BOX.x0), (bottom - top) / (BOX.y1 - BOX.y0));
+      let top = wide ? 120 : words[3] + 28, bottom = wide ? h - 130 : (cardInWords ? barTop - 24 : strip[1] - 32);
+      if (bottom - top < 0.25 * h) { top = Math.min(top, h * 0.45); bottom = Math.max(top + 0.25 * h, barTop - 24); }
+      const k = Math.max(0.05, Math.min((right - left) / (BOX.x1 - BOX.x0), (bottom - top) / (BOX.y1 - BOX.y0)));
       const cx = left + BOX.x1 * k + ((right - left) - (BOX.x1 - BOX.x0) * k) / 2;
       const cy = top - BOX.y0 * k + ((bottom - top) - (BOX.y1 - BOX.y0) * k) / 2;
       const P = (x, y) => [cx - x * k, cy + y * k];                // the Sun to the left, dusk (+y) down
@@ -244,7 +247,7 @@
       // names: Orion and the Moon move with the time; the rest are placed once for each size
       const lk = `${w}x${h}`;
       if (lk !== labelKey) {
-        labels = placeLabels(ctx, w, h, P, k, { ex, ey, eR, cy, wide, words, card: strip, bar: box(bar) });
+        labels = placeLabels(ctx, w, h, P, k, { ex, ey, eR, cy, wide: wide || cardInWords, words, card: strip, bar: box(bar) });
         labelKey = lk;
       }
       for (const l of labels) text(ctx, l.str, l.x, l.y, l.o);
@@ -271,7 +274,7 @@
         const dt = Math.min(0.1, (now - last) / 1000);
         hours += dt * (tEnd / 32) * (shown ? 0.3 : 1);       // the whole flight in about half a minute, slower at a photo
         if (hours > tEnd) hours = 0;
-        draw();
+        try { draw(); } catch (e) { console.error(e); }      // one bad frame must not stop the loop
       }
       last = now;
       requestAnimationFrame(tick);
@@ -284,10 +287,9 @@
     };
     playBtn.addEventListener("click", () => setPlay(!playing));
     scrub.addEventListener("input", () => { setPlay(false); hours = +scrub.value / 1000 * tEnd; draw(); });
-    new ResizeObserver(draw).observe(canvas);
     setPlay(playing);
-    draw();
     requestAnimationFrame(tick);
+    new ResizeObserver(() => { try { draw(); } catch (e) { console.error(e); } }).observe(canvas);
   }
 
   window.FK.fontsReady().then(start);
