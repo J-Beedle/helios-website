@@ -93,7 +93,7 @@
         return d;
       };
       const taken = [pad(L.words, 12), [0, L.bar[1] - 10, w, h]];         // on a wide screen the card is in the words
-      if (!L.wide) taken.push([0, L.card[1] - 4, w, h]);
+      if (!L.wide) taken.push(L.card[2] > w - 40 ? [0, L.card[1] - 4, w, h] : pad(L.card, 8));   // a phone's strip, or the card
       const fly = events.find(e => e.id === "flyby");
       if (fly) {
         const q = at(D.orion, fly.h), f = P(q[0], q[1]);
@@ -120,10 +120,11 @@
         if (best) { out.push(best); taken.push(pad(best.r, o.keep || 4)); }
       };
       const ex = L.ex, ey = L.ey, eR = L.eR;
-      add("← Sun", { size: 12, color: C.sun, keep: 28 }, [20, L.words[2] + 18].flatMap(x =>
+      add("← Sun", { size: 12, color: C.sun, keep: 28 }, [20, L.left - 6].flatMap(x =>
         [0, -24, 24, -48, 48, -72, 72, -96, 96, -120, -144, -168].map(dy => [x, L.cy + dy, "left"])));
       add("Earth", { size: 12, color: C.text }, [[ex - eR - 8, ey + eR + 8, "right"], [ex, ey + eR + 14, "center"],
-        [ex - eR - 8, ey - eR - 8, "right"], [ex + eR + 8, ey + eR + 8, "left"]]);
+        [ex - eR - 8, ey - eR - 8, "right"], [ex + eR + 8, ey + eR + 8, "left"], [ex - eR - 10, ey, "right"],
+        [ex + eR + 8, ey - eR - 8, "left"], [ex, ey - eR - 14, "center"]]);
       const rb = Math.max(9 * k, eR + 26);
       add("Van Allen belts", { size: 11, mono: true, color: C.muted }, [55, 125, 90, 20, 160, 200, -20].map(a => {
         const c = Math.cos(a * DEG);
@@ -174,12 +175,21 @@
       const wide = w > 900, words = box(copy), strip = box(card), barTop = box(bar)[1];
       // the photo card sits in the words' column on wide screens and at tablet widths; on a phone it is a strip below
       const cardInWords = strip[3] - strip[1] < 1 || (strip[1] >= words[1] - 4 && strip[3] <= words[3] + 4);
-      // fit Earth, Orion and the Moon beside the words and photo card (under the words on a narrower screen), above the
-      // player bar and, on a phone, the photo strip
-      const left = wide ? Math.max(w * 0.44, words[2] + 24) : 24, right = w - (wide ? 48 : 24);
-      let top = wide ? 120 : words[3] + 28, bottom = wide ? h - 130 : (cardInWords ? barTop - 24 : strip[1] - 32);
-      if (bottom - top < 0.25 * h) { top = Math.min(top, h * 0.45); bottom = Math.max(top + 0.25 * h, barTop - 24); }
-      const k = Math.max(0.05, Math.min((right - left) / (BOX.x1 - BOX.x0), (bottom - top) / (BOX.y1 - BOX.y0)));
+      // the words alone, without the photo card under them
+      const lines = [...copy.children].filter(e => e !== card).map(box).reduce((a, b) =>
+        [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]);
+      // fit Earth, Orion and the Moon beside the words and photo card on a wide screen; under the words on a phone,
+      // above the photo strip; and at tablet widths under the card or, where that leaves too little room, beside it
+      const fit = (l, t, r, b) => ({ l, t, r, b, k: Math.min((r - l) / (BOX.x1 - BOX.x0), (b - t) / (BOX.y1 - BOX.y0)) });
+      let F;
+      if (wide) F = fit(Math.max(w * 0.44, words[2] + 24), 120, w - 48, h - 130);
+      else if (!cardInWords) F = fit(24, lines[3] + 28, w - 24, strip[1] - 32);
+      else {
+        const under = fit(24, words[3] + 28, w - 56, barTop - 30), beside = fit(strip[2] + 24, lines[3] + 20, w - 56, barTop - 30);   // room for the Moon's name
+        F = under.k >= beside.k ? under : beside;
+      }
+      if (F.k < 0.05) F = fit(24, h * 0.3, w - 24, Math.max(h * 0.55, barTop - 24));
+      const left = F.l, right = F.r, top = F.t, bottom = F.b, k = Math.max(0.05, F.k);
       const cx = left + BOX.x1 * k + ((right - left) - (BOX.x1 - BOX.x0) * k) / 2;
       const cy = top - BOX.y0 * k + ((bottom - top) - (BOX.y1 - BOX.y0) * k) / 2;
       const P = (x, y) => [cx - x * k, cy + y * k];                // the Sun to the left, dusk (+y) down
@@ -192,11 +202,11 @@
       ctx.setLineDash([5, 4]); ctx.lineWidth = 1; ctx.strokeStyle = rgba(C.shock, 0.4); ctx.stroke(); ctx.setLineDash([]);
       path(mp); ctx.fillStyle = "rgba(27,49,99,0.3)"; ctx.fill();
       ctx.lineWidth = 1.2; ctx.strokeStyle = rgba(C.mp, 0.55); ctx.stroke();
-      if (!wide) {                                               // on a phone, fade the boundaries out behind the words
-        const veil = ctx.createLinearGradient(0, words[3] - 12, 0, words[3] + 28);
+      if (!wide) {                                               // below a wide screen, fade the boundaries out behind the words
+        const veil = ctx.createLinearGradient(0, lines[3] - 12, 0, lines[3] + 28);
         veil.addColorStop(0, "#03050b"); veil.addColorStop(1, "rgba(3,5,11,0)");
-        ctx.fillStyle = "#03050b"; ctx.fillRect(0, 0, w, words[3] - 12);
-        ctx.fillStyle = veil; ctx.fillRect(0, words[3] - 12, w, 40);
+        ctx.fillStyle = "#03050b"; ctx.fillRect(0, 0, w, lines[3] - 12);
+        ctx.fillStyle = veil; ctx.fillRect(0, lines[3] - 12, w, 40);
       }
       window.FK.stars(ctx, w, h, 260, 99);
       // the radiation belts at their equatorial extent: the inner zone (L 1.2–2.5) and the outer zone (L 3–7)
@@ -245,14 +255,15 @@
       ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(po[0], po[1], 14, 0, TAU); ctx.fill();
       ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(po[0], po[1], 2.4, 0, TAU); ctx.fill();
       // names: Orion and the Moon move with the time; the rest are placed once for each size
-      const lk = `${w}x${h}`;
+      const lk = [w, h, left, top, k, strip[0], strip[2], strip[3] - strip[1]].map(v => Math.round(v * 100)).join(",");   // not the card's slide-in
       if (lk !== labelKey) {
-        labels = placeLabels(ctx, w, h, P, k, { ex, ey, eR, cy, wide: wide || cardInWords, words, card: strip, bar: box(bar) });
+        labels = placeLabels(ctx, w, h, P, k, { ex, ey, eR, cy, left, wide, words: wide ? words : lines, card: strip, bar: box(bar) });
         labelKey = lk;
       }
       for (const l of labels) text(ctx, l.str, l.x, l.y, l.o);
       text(ctx, "Orion", po[0] + 11, po[1] - 12, { size: 12, weight: 600, color: "rgba(255,196,186,0.95)" });
-      text(ctx, "Moon", pm[0] + rm + 7, pm[1] - rm - 7, { size: 12, color: C.text });
+      const near = Math.hypot(po[0] - pm[0], po[1] - pm[1]) < 48;   // at the flyby, keep the Moon's name off Orion's
+      text(ctx, "Moon", pm[0] + rm + 7, pm[1] + (near ? rm + 16 : -rm - 7), { size: 12, color: C.text });
       // the read-out, and the photograph for this moment
       const when = new Date(t0 + hours * 3.6e6);
       const dE = Math.hypot(o[0], o[1], o[2]) * RE_KM, dM = Math.hypot(o[0] - m[0], o[1] - m[1], o[2] - m[2]) * RE_KM;

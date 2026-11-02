@@ -352,9 +352,10 @@
       // names, quietly, on the north side (the page's words sit over the south)
       const bsN = at(g.bs, 1.05), mpN = at(g.mp, 1.62);
       this.tag(ctx, "Bow shock", P(bsN[0] + 0.6, bsN[1]), [0.62, 0.88, 1], 0.75, fs, "right", 500);
-      this.tag(ctx, "Magnetopause", P(mpN[0] * 1.08, mpN[1] * 1.08 + 0.4), [0.78, 0.86, 1], 0.85, fs, "left", 500);
-      if (!narrow) this.tag(ctx, "Plasma sheet", P(Math.max(-31, L.xRight + 7), -4.6), [1, 0.72, 0.5], 0.6, fs, "center", 500);
-      this.tag(ctx, "MMS", [m[0] + 10 * s, m[1] - 9 * s], [0.7, 0.95, 1], 0.9, fs, "left");
+      this.tag(ctx, "Magnetopause", P(mpN[0] * 0.97 - 1.1, mpN[1] * 0.97 + 0.55), [0.78, 0.86, 1], 0.85, fs, "left", 500);
+      if (!narrow) this.tag(ctx, "Plasma sheet", P(Math.max(-15.5, L.xRight + 3.4), -2.3), [1, 0.72, 0.5], 0.7, fs, "center", 500);
+      this.tag(ctx, "Earth", [L.earth[0], L.earth[1] - 1.55 * L.k], [1, 1, 1], 0.85, fs, "center");   // over the north pole
+      this.tag(ctx, "MMS", [m[0] + 10 * s + 0.25 * L.k, m[1] - 9 * s], [0.7, 0.95, 1], 0.9, fs, "left");
     }
 
     links(ctx, pts, color, width) {
