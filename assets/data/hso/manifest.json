@@ -1,0 +1,1318 @@
+{
+ "event": {
+  "name": "Burch 2016 EDR",
+  "t0": "2015-10-16T11:00:00Z",
+  "span": [
+   0.0,
+   15300.0
+  ],
+  "crossing": 7622.0,
+  "focus": [
+   7320.0,
+   7920.0
+  ],
+  "kp": 2.0,
+  "dipoleTilt": -2.9271315769785784,
+  "rCrossing": [
+   8.313146781484665,
+   8.51917205268293,
+   -0.7067836247346773
+  ]
+ },
+ "context": {
+  "file": "context.bin",
+  "arrays": {
+   "orbit.t": {
+    "offset": 0,
+    "count": 1440,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "orbit.r": {
+    "offset": 5760,
+    "count": 4320,
+    "dtype": "f4",
+    "cols": 3
+   },
+   "omni.t": {
+    "offset": 23040,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "omni.b": {
+    "offset": 24544,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "omni.bx": {
+    "offset": 26048,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "omni.by": {
+    "offset": 27552,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "omni.bz": {
+    "offset": 29056,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "omni.v": {
+    "offset": 30560,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "omni.n": {
+    "offset": 32064,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   },
+   "omni.p": {
+    "offset": 33568,
+    "count": 376,
+    "dtype": "f4",
+    "cols": 1
+   }
+  },
+  "bytes": 35072
+ },
+ "craft": {
+  "1": {
+   "survey": {
+    "file": "mms1-survey.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 15304,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 61216,
+      "count": 61216,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 306080,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 319696,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 333312,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 374160,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 387776,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 401392,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 510320,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 510448,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 513852,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 527468,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 541084,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 581932,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 595548,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 609164,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 650012,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 758940,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 759068,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 762472,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 803320
+   },
+   "burst": {
+    "file": "mms1-burst.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 59520,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 238080,
+      "count": 238080,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 1190400,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 1202912,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 1215424,
+      "count": 9384,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 1252960,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 1265472,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 1277984,
+      "count": 100096,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 1378080,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 1378336,
+      "count": 3128,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 1381464,
+      "count": 15661,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 1444108,
+      "count": 15661,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 1506752,
+      "count": 46983,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 1694684,
+      "count": 15661,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 1757328,
+      "count": 15661,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 1819972,
+      "count": 46983,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 2007904,
+      "count": 501152,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 2509056,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 2509312,
+      "count": 15661,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 2524976,
+      "count": 46983,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 2712908,
+    "segments": [
+     [
+      6964.856892108917,
+      7113.851035118103
+     ],
+     [
+      7344.861880064011,
+      7393.854710102081
+     ],
+     [
+      7414.862797021866,
+      7503.856153964996
+     ],
+     [
+      7524.864243030548,
+      7663.858254909515
+     ],
+     [
+      7744.867130994797,
+      7783.859829902649
+     ]
+    ]
+   }
+  },
+  "2": {
+   "survey": {
+    "file": "mms2-survey.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 15304,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 61216,
+      "count": 61216,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 306080,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 319696,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 333312,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 374160,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 387776,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 401392,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 510320,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 510448,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 513852,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 527468,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 541084,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 581932,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 595548,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 609164,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 650012,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 758940,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 759068,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 762472,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 803320
+   },
+   "burst": {
+    "file": "mms2-burst.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 59520,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 238080,
+      "count": 238080,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 1190400,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 1202912,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 1215424,
+      "count": 9384,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 1252960,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 1265472,
+      "count": 3128,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 1277984,
+      "count": 100096,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 1378080,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 1378336,
+      "count": 3128,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 1381464,
+      "count": 15660,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 1444104,
+      "count": 15660,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 1506744,
+      "count": 46980,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 1694664,
+      "count": 15660,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 1757304,
+      "count": 15660,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 1819944,
+      "count": 46980,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 2007864,
+      "count": 501120,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 2508984,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 2509240,
+      "count": 15660,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 2524900,
+      "count": 46980,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 2712820,
+    "segments": [
+     [
+      6964.574654102325,
+      7113.568527936935
+     ],
+     [
+      7344.578958034515,
+      7393.57170009613
+     ],
+     [
+      7414.5797510147095,
+      7503.572947978973
+     ],
+     [
+      7524.580996990204,
+      7663.574760913849
+     ],
+     [
+      7744.583492040634,
+      7783.576122045517
+     ]
+    ]
+   }
+  },
+  "3": {
+   "survey": {
+    "file": "mms3-survey.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 15304,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 61216,
+      "count": 61216,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 306080,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 319696,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 333312,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 374160,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 387776,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 401392,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 510320,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 510448,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 513852,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 527468,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 541084,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 581932,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 595548,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 609164,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 650012,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 758940,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 759068,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 762472,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 803320
+   },
+   "burst": {
+    "file": "mms3-burst.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 59520,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 238080,
+      "count": 238080,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 1190400,
+      "count": 3130,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 1202920,
+      "count": 3130,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 1215440,
+      "count": 9390,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 1253000,
+      "count": 3130,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 1265520,
+      "count": 3130,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 1278040,
+      "count": 100160,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 1378200,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 1378456,
+      "count": 3130,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 1381588,
+      "count": 15658,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 1444220,
+      "count": 15658,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 1506852,
+      "count": 46974,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 1694748,
+      "count": 15658,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 1757380,
+      "count": 15658,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 1820012,
+      "count": 46974,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 2007908,
+      "count": 501056,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 2508964,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 2509220,
+      "count": 15658,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 2524880,
+      "count": 46974,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 2712776,
+    "segments": [
+     [
+      6964.81956410408,
+      7113.81366109848
+     ],
+     [
+      7344.824438095093,
+      7393.817254066467
+     ],
+     [
+      7414.825336933136,
+      7503.818665027618
+     ],
+     [
+      7524.82674908638,
+      7663.820719957352
+     ],
+     [
+      7744.829572916031,
+      7783.822261095047
+     ]
+    ]
+   }
+  },
+  "4": {
+   "survey": {
+    "file": "mms4-survey.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 15304,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 61216,
+      "count": 61216,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 306080,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 319696,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 333312,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 374160,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 387776,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 401392,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 510320,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 510448,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 513852,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 527468,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 541084,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 581932,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 595548,
+      "count": 3404,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 609164,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 650012,
+      "count": 108928,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 758940,
+      "count": 32,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 759068,
+      "count": 3404,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 762472,
+      "count": 10212,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 803320
+   },
+   "burst": {
+    "file": "mms4-burst.bin",
+    "arrays": {
+     "fgm.t": {
+      "offset": 0,
+      "count": 59904,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "fgm.b": {
+      "offset": 239616,
+      "count": 239616,
+      "dtype": "f4",
+      "cols": 4
+     },
+     "dis.t": {
+      "offset": 1198080,
+      "count": 3131,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.n": {
+      "offset": 1210604,
+      "count": 3131,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.v": {
+      "offset": 1223128,
+      "count": 9393,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "dis.tpar": {
+      "offset": 1260700,
+      "count": 3131,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.tperp": {
+      "offset": 1273224,
+      "count": 3131,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "dis.spec": {
+      "offset": 1285748,
+      "count": 100192,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "dis.etab": {
+      "offset": 1385940,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "dis.eidx": {
+      "offset": 1386196,
+      "count": 3131,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.t": {
+      "offset": 1389328,
+      "count": 15665,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.n": {
+      "offset": 1451988,
+      "count": 15665,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.v": {
+      "offset": 1514648,
+      "count": 46995,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.tpar": {
+      "offset": 1702628,
+      "count": 15665,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.tperp": {
+      "offset": 1765288,
+      "count": 15665,
+      "dtype": "f4",
+      "cols": 1
+     },
+     "des.vst": {
+      "offset": 1827948,
+      "count": 46995,
+      "dtype": "f4",
+      "cols": 3
+     },
+     "des.spec": {
+      "offset": 2015928,
+      "count": 501280,
+      "dtype": "u1",
+      "cols": 32
+     },
+     "des.etab": {
+      "offset": 2517208,
+      "count": 64,
+      "dtype": "f4",
+      "cols": 32
+     },
+     "des.eidx": {
+      "offset": 2517464,
+      "count": 15665,
+      "dtype": "u1",
+      "cols": 1
+     },
+     "des.j": {
+      "offset": 2533132,
+      "count": 46995,
+      "dtype": "f4",
+      "cols": 3
+     }
+    },
+    "bytes": 2721112,
+    "segments": [
+     [
+      6964.059310913086,
+      7114.053436994553
+     ],
+     [
+      7344.064218997955,
+      7393.05703997612
+     ],
+     [
+      7414.065124034882,
+      7504.058474063873
+     ],
+     [
+      7524.066545009613,
+      7664.060542106628
+     ],
+     [
+      7744.06938791275,
+      7783.062079906464
+     ]
+    ]
+   }
+  }
+ },
+ "spectra": {
+  "dis": {
+   "log10": [
+    3.5,
+    7.8
+   ],
+   "units": "keV/(cm\u00b2 s sr keV)"
+  },
+  "des": {
+   "log10": [
+    4.8,
+    8.8
+   ],
+   "units": "keV/(cm\u00b2 s sr keV)"
+  }
+ },
+ "units": {
+  "b": "nT",
+  "n": "cm\u207b\u00b3",
+  "v": "km/s",
+  "t": "eV",
+  "e": "eV",
+  "j": "\u00b5A/m\u00b2",
+  "p": "nPa",
+  "r": "R_E (6371.2 km), GSE"
+ },
+ "sources": [
+  "mms1_fgm_brst_l2_20151016125604_v4.18.1.cdf",
+  "mms1_fgm_brst_l2_20151016130224_v4.18.1.cdf",
+  "mms1_fgm_brst_l2_20151016130334_v4.18.1.cdf",
+  "mms1_fgm_brst_l2_20151016130524_v4.18.1.cdf",
+  "mms1_fgm_brst_l2_20151016130904_v4.18.1.cdf",
+  "mms1_fgm_srvy_l2_20151016_v4.18.0.cdf",
+  "mms1_fpi_brst_l2_des-moms_20151016125604_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_des-moms_20151016130224_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_des-moms_20151016130334_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_des-moms_20151016130524_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_des-moms_20151016130904_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_dis-moms_20151016125604_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_dis-moms_20151016130224_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_dis-moms_20151016130334_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_dis-moms_20151016130524_v3.3.0.cdf",
+  "mms1_fpi_brst_l2_dis-moms_20151016130904_v3.3.0.cdf",
+  "mms1_fpi_fast_l2_des-moms_20151016040000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_des-moms_20151016060000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_des-moms_20151016080000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_des-moms_20151016100000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_des-moms_20151016120000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_des-moms_20151016140000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_dis-moms_20151016040000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_dis-moms_20151016060000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_dis-moms_20151016080000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_dis-moms_20151016100000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_dis-moms_20151016120000_v3.4.0.cdf",
+  "mms1_fpi_fast_l2_dis-moms_20151016140000_v3.4.0.cdf",
+  "mms1_mec_srvy_l2_epht89d_20151016_v2.0.2.cdf",
+  "mms2_fgm_brst_l2_20151016125604_v4.18.0.cdf",
+  "mms2_fgm_brst_l2_20151016130224_v4.18.0.cdf",
+  "mms2_fgm_brst_l2_20151016130334_v4.18.0.cdf",
+  "mms2_fgm_brst_l2_20151016130524_v4.18.0.cdf",
+  "mms2_fgm_brst_l2_20151016130904_v4.18.0.cdf",
+  "mms2_fgm_srvy_b_gse_20151016_1100-1515.csv",
+  "mms2_fpi_brst_l2_des-moms_20151016125604_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_des-moms_20151016130224_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_des-moms_20151016130334_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_des-moms_20151016130524_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_des-moms_20151016130904_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_dis-moms_20151016125604_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_dis-moms_20151016130224_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_dis-moms_20151016130334_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_dis-moms_20151016130524_v3.3.0.cdf",
+  "mms2_fpi_brst_l2_dis-moms_20151016130904_v3.3.0.cdf",
+  "mms2_fpi_fast_l2_des-moms_20151016100000_v3.4.0.cdf",
+  "mms2_fpi_fast_l2_des-moms_20151016120000_v3.4.0.cdf",
+  "mms2_fpi_fast_l2_des-moms_20151016140000_v3.4.0.cdf",
+  "mms2_fpi_fast_l2_dis-moms_20151016100000_v3.4.0.cdf",
+  "mms2_fpi_fast_l2_dis-moms_20151016120000_v3.4.0.cdf",
+  "mms2_fpi_fast_l2_dis-moms_20151016140000_v3.4.0.cdf",
+  "mms3_fgm_brst_l2_20151016125604_v4.18.0.cdf",
+  "mms3_fgm_brst_l2_20151016130224_v4.18.0.cdf",
+  "mms3_fgm_brst_l2_20151016130334_v4.18.0.cdf",
+  "mms3_fgm_brst_l2_20151016130524_v4.18.0.cdf",
+  "mms3_fgm_brst_l2_20151016130904_v4.18.0.cdf",
+  "mms3_fgm_srvy_b_gse_20151016_1100-1515.csv",
+  "mms3_fpi_brst_l2_des-moms_20151016125604_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_des-moms_20151016130224_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_des-moms_20151016130334_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_des-moms_20151016130524_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_des-moms_20151016130904_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_dis-moms_20151016125604_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_dis-moms_20151016130224_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_dis-moms_20151016130334_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_dis-moms_20151016130524_v3.3.0.cdf",
+  "mms3_fpi_brst_l2_dis-moms_20151016130904_v3.3.0.cdf",
+  "mms3_fpi_fast_l2_des-moms_20151016100000_v3.4.0.cdf",
+  "mms3_fpi_fast_l2_des-moms_20151016120000_v3.4.0.cdf",
+  "mms3_fpi_fast_l2_des-moms_20151016140000_v3.4.0.cdf",
+  "mms3_fpi_fast_l2_dis-moms_20151016100000_v3.4.0.cdf",
+  "mms3_fpi_fast_l2_dis-moms_20151016120000_v3.4.0.cdf",
+  "mms3_fpi_fast_l2_dis-moms_20151016140000_v3.4.0.cdf",
+  "mms4_fgm_brst_l2_20151016125604_v4.18.0.cdf",
+  "mms4_fgm_brst_l2_20151016130224_v4.18.0.cdf",
+  "mms4_fgm_brst_l2_20151016130334_v4.18.0.cdf",
+  "mms4_fgm_brst_l2_20151016130524_v4.18.0.cdf",
+  "mms4_fgm_brst_l2_20151016130904_v4.18.0.cdf",
+  "mms4_fgm_srvy_b_gse_20151016_1100-1515.csv",
+  "mms4_fpi_brst_l2_des-moms_20151016125604_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_des-moms_20151016130224_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_des-moms_20151016130334_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_des-moms_20151016130524_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_des-moms_20151016130904_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_dis-moms_20151016125604_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_dis-moms_20151016130224_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_dis-moms_20151016130334_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_dis-moms_20151016130524_v3.3.0.cdf",
+  "mms4_fpi_brst_l2_dis-moms_20151016130904_v3.3.0.cdf",
+  "mms4_fpi_fast_l2_des-moms_20151016100000_v3.4.0.cdf",
+  "mms4_fpi_fast_l2_des-moms_20151016120000_v3.4.0.cdf",
+  "mms4_fpi_fast_l2_des-moms_20151016140000_v3.4.0.cdf",
+  "mms4_fpi_fast_l2_dis-moms_20151016100000_v3.4.0.cdf",
+  "mms4_fpi_fast_l2_dis-moms_20151016120000_v3.4.0.cdf",
+  "mms4_fpi_fast_l2_dis-moms_20151016140000_v3.4.0.cdf",
+  "omni_hro_1min_20151016.csv"
+ ]
+}

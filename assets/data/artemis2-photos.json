@@ -1,0 +1,52 @@
+[
+ {
+  "id": "launch",
+  "nasaId": "NHQ202604010308",
+  "utc": "2026-04-01T22:35:12Z",
+  "title": "Launch",
+  "caption": "Artemis II lifts off from Launch Complex 39B at Kennedy Space Center, 6:35 p.m. EDT on 1 April.",
+  "credit": "NASA/Bill Ingalls",
+  "img": "assets/img/artemis/launch.jpg",
+  "source": "https://images.nasa.gov/details/NHQ202604010308"
+ },
+ {
+  "id": "flyby",
+  "nasaId": "art002e021278",
+  "utc": "2026-04-06T22:41:00Z",
+  "title": "Lunar flyby",
+  "caption": "Earthset over the Moon's far side, photographed by the crew during the flyby.",
+  "credit": "NASA",
+  "img": "assets/img/artemis/flyby.jpg",
+  "source": "https://images.nasa.gov/details/art002e021278"
+ },
+ {
+  "id": "crew",
+  "nasaId": "art002e013361",
+  "utc": "2026-04-07T22:35:09Z",
+  "title": "The crew",
+  "caption": "Christina Koch, Jeremy Hansen, Reid Wiseman and Victor Glover (clockwise from left) inside Orion on the way home, the day after the flyby.",
+  "credit": "NASA",
+  "img": "assets/img/artemis/crew.jpg",
+  "source": "https://images.nasa.gov/details/art002e013361"
+ },
+ {
+  "id": "return",
+  "nasaId": "art002e031476",
+  "utc": "2026-04-10T06:00:00Z",
+  "title": "Bound for home",
+  "caption": "Orion and a crescent Earth, seen by a camera on one of Orion's solar array wings on the way home.",
+  "credit": "NASA",
+  "img": "assets/img/artemis/return.jpg",
+  "source": "https://images.nasa.gov/details/art002e031476"
+ },
+ {
+  "id": "splashdown",
+  "nasaId": "KSC-20260410-PH-JNV01_0002",
+  "utc": "2026-04-11T00:07:00Z",
+  "title": "Splashdown",
+  "caption": "Orion descends under its three main parachutes toward the Pacific Ocean near San Diego.",
+  "credit": "NASA/Josh Valcarcel",
+  "img": "assets/img/artemis/splashdown.jpg",
+  "source": "https://images.nasa.gov/details/KSC-20260410-PH-JNV01_0002"
+ }
+]

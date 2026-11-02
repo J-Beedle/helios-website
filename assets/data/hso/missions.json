@@ -1,0 +1,274 @@
+{
+ "tha": {
+  "label": "THEMIS-A",
+  "survey": {
+   "file": "tha.bin",
+   "arrays": {
+    "fgm.t": {
+     "offset": 0,
+     "count": 5299,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "fgm.b": {
+     "offset": 21196,
+     "count": 21196,
+     "dtype": "f4",
+     "cols": 4
+    },
+    "dis.t": {
+     "offset": 105980,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "dis.n": {
+     "offset": 127180,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "dis.v": {
+     "offset": 148380,
+     "count": 15900,
+     "dtype": "f4",
+     "cols": 3
+    },
+    "dis.tpar": {
+     "offset": 211980,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "dis.tperp": {
+     "offset": 233180,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "dis.spec": {
+     "offset": 254380,
+     "count": 169600,
+     "dtype": "u1",
+     "cols": 32
+    },
+    "dis.etab": {
+     "offset": 423980,
+     "count": 32,
+     "dtype": "f4",
+     "cols": 32
+    },
+    "dis.eidx": {
+     "offset": 424108,
+     "count": 5300,
+     "dtype": "u1",
+     "cols": 1
+    },
+    "des.t": {
+     "offset": 429408,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "des.n": {
+     "offset": 450608,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "des.v": {
+     "offset": 471808,
+     "count": 15900,
+     "dtype": "f4",
+     "cols": 3
+    },
+    "des.tpar": {
+     "offset": 535408,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "des.tperp": {
+     "offset": 556608,
+     "count": 5300,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "des.spec": {
+     "offset": 577808,
+     "count": 169600,
+     "dtype": "u1",
+     "cols": 32
+    },
+    "des.etab": {
+     "offset": 747408,
+     "count": 32,
+     "dtype": "f4",
+     "cols": 32
+    },
+    "des.eidx": {
+     "offset": 747536,
+     "count": 5300,
+     "dtype": "u1",
+     "cols": 1
+    },
+    "des.j": {
+     "offset": 752836,
+     "count": 15900,
+     "dtype": "f4",
+     "cols": 3
+    },
+    "efi.t": {
+     "offset": 816436,
+     "count": 5268,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "efi.e": {
+     "offset": 837508,
+     "count": 15804,
+     "dtype": "f4",
+     "cols": 3
+    }
+   },
+   "bytes": 900724
+  },
+  "notes": "THEMIS L2 (UC Berkeley) via CDAWeb: FGM, ESA reduced mode, EFI."
+ },
+ "c4": {
+  "label": "Cluster-4",
+  "survey": {
+   "file": "c4.bin",
+   "arrays": {
+    "fgm.t": {
+     "offset": 0,
+     "count": 3701,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "fgm.b": {
+     "offset": 14804,
+     "count": 14804,
+     "dtype": "f4",
+     "cols": 4
+    },
+    "dis.t": {
+     "offset": 74020,
+     "count": 3687,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "dis.n": {
+     "offset": 88768,
+     "count": 3687,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "dis.v": {
+     "offset": 103516,
+     "count": 11061,
+     "dtype": "f4",
+     "cols": 3
+    },
+    "dis.tpar": {
+     "offset": 147760,
+     "count": 3687,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "dis.tperp": {
+     "offset": 162508,
+     "count": 3687,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "isp.t": {
+     "offset": 177256,
+     "count": 1850,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "isp.spec": {
+     "offset": 184656,
+     "count": 57350,
+     "dtype": "u1",
+     "cols": 31
+    },
+    "isp.etab": {
+     "offset": 242008,
+     "count": 31,
+     "dtype": "f4",
+     "cols": 31
+    },
+    "isp.eidx": {
+     "offset": 242132,
+     "count": 1850,
+     "dtype": "u1",
+     "cols": 1
+    },
+    "des.t": {
+     "offset": 243984,
+     "count": 3701,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "des.n": {
+     "offset": 258788,
+     "count": 3701,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "des.v": {
+     "offset": 273592,
+     "count": 11103,
+     "dtype": "f4",
+     "cols": 3
+    },
+    "des.tpar": {
+     "offset": 318004,
+     "count": 3701,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "des.tperp": {
+     "offset": 332808,
+     "count": 3701,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "esp.t": {
+     "offset": 347612,
+     "count": 3701,
+     "dtype": "f4",
+     "cols": 1
+    },
+    "esp.spec": {
+     "offset": 362416,
+     "count": 162844,
+     "dtype": "u1",
+     "cols": 44
+    },
+    "esp.etab": {
+     "offset": 525260,
+     "count": 44,
+     "dtype": "f4",
+     "cols": 44
+    },
+    "esp.eidx": {
+     "offset": 525436,
+     "count": 3701,
+     "dtype": "u1",
+     "cols": 1
+    },
+    "des.j": {
+     "offset": 529140,
+     "count": 11103,
+     "dtype": "f4",
+     "cols": 3
+    }
+   },
+   "bytes": 573552
+  },
+  "notes": "Cluster 4 via CDAWeb (FGM spin, CIS-CODIF H\u207a and PEACE prime parameters, CODIF H\u207a spectra) and ESA's CSA (PEACE pitch-spin DEFlux)."
+ }
+}

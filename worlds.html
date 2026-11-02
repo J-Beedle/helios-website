@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Helios · Other worlds</title>
+  <meta name="description" content="Beyond Earth's magnetosphere: Mars, the Moon, Jupiter and Mercury in Helios, from the views available today to the ones in development.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Helios · Other worlds">
+  <meta property="og:description" content="Mars, the Moon, Jupiter and Mercury in Helios.">
+  <meta property="og:image" content="https://j-beedle.github.io/helios-website/assets/img/og.jpg">
+  <!-- chrome:meta -->
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/img/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="css/site.css?v=31">  <!-- /chrome:meta -->
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <!-- chrome:head -->
+  <header class="site-head" id="head">
+    <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+    <nav aria-label="Main">
+      <ul class="nav">
+        <li><a href="index.html#observatory">Observatory</a></li>
+        <li><a href="index.html#fleet">Fleet</a></li>
+        <li><a href="index.html#reconnection">Reconnection</a></li>
+        <li><a href="worlds.html" aria-current="page">Worlds</a></li>
+        <li><a href="artemis.html">Artemis II</a></li>
+        <li><a href="models.html">Models</a></li>
+        <li><a href="hso.html">Demo</a></li>
+        <li><a href="index.html#learn">Videos</a></li>
+        <li><a href="index.html#beta">Beta</a></li>
+      </ul>
+    </nav>
+    <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="drawer"><span></span><span></span><span></span></button>
+  </header>
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Menu">
+    <p class="group">Pages</p>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="worlds.html" aria-current="page">Other worlds</a></li>
+      <li><a href="artemis.html">Artemis II</a></li>
+      <li><a href="models.html">The models</a></li>
+      <li><a href="hso.html">Demo</a></li>
+    </ul>
+    <p class="group">On the home page</p>
+    <ul>
+      <li><a href="index.html#observatory">Observatory</a></li>
+      <li><a href="index.html#fleet">The fleet</a></li>
+      <li><a href="index.html#reconnection">Reconnection</a></li>
+      <li><a href="index.html#aurora">Aurora</a></li>
+      <li><a href="index.html#analysis">Analysis</a></li>
+      <li><a href="index.html#desktop">Designed for Mac</a></li>
+      <li><a href="index.html#learn">Videos</a></li>
+      <li><a href="index.html#built">Development</a></li>
+      <li><a href="index.html#about">About</a></li>
+      <li><a href="index.html#beta">Public beta</a></li>
+    </ul>
+    <p class="small">Helios 1.0 · public beta for macOS</p>
+  </aside>  <!-- /chrome:head -->
+
+  <main id="main">
+    <section class="panel subhero" id="top" aria-label="Other worlds">
+      <div class="media"><img src="assets/img/mars-view.jpg" alt="Helios's Mars view: Mars inside its bow shock and magnetic pileup boundary, with MAVEN's orbit and Phobos" decoding="async">
+        <p class="caption">The Mars view, in development: the bow shock and magnetic pileup boundary, MAVEN's orbit and Phobos, on 11 May 2024.</p></div>
+      <div class="copy">
+        <span class="eyebrow reveal">Other worlds</span>
+        <h1 class="reveal d1">Beyond Earth's magnetosphere</h1>
+        <p class="lede reveal d2">Every planet meets the solar wind in its own way. Mercury has a small magnetosphere of its own, Venus and Mars have only the ones the solar wind induces, the Moon has none, and Jupiter's is the largest of any planet. Helios is growing to show them all, starting with Mars.</p>
+      </div>
+    </section>
+
+    <section class="split" id="scale">
+      <div class="wrap">
+        <div class="copy">
+          <span class="eyebrow reveal">Side by side</span>
+          <h2 class="reveal d1">Four magnetospheres</h2>
+          <p class="reveal d2">Earth's magnetic field holds the solar wind off about ten Earth radii upstream. Mercury's much weaker field manages less than half a Mercury radius above the surface. Venus and Mars have no global field at all, so the solar wind piles up against their upper atmospheres, barely above the ground.</p>
+          <div class="controls reveal d2">
+            <div class="seg" id="seg-scale" role="group" aria-label="Scale">
+              <button data-mode="radii" aria-pressed="true">Each to fit</button><button data-mode="km" aria-pressed="false">True size</button>
+            </div>
+          </div>
+          <p class="cite reveal d2">Subsolar distances as Helios draws them: Mercury, Winslow et al. 2013 · Venus, Martinecz et al. 2008 · Earth, Shue et al. 1998 and Jelínek et al. 2012 at 2&nbsp;nPa · Mars, Vignes et al. 2000. The shapes are schematic.</p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame wide"><canvas id="fig-scale" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth and Mars compared"></canvas></div>
+          <figcaption>Dashed: bow shock. Solid blue: magnetopause. Solid orange: Mars's magnetic pileup boundary.<span class="credit">Distances from Helios's research build</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split flip" id="mars">
+      <div class="wrap">
+        <div class="copy">
+          <div class="tags reveal"><span class="eyebrow">Mars</span><span class="status dev">In development</span></div>
+          <h2 class="reveal d1">From orbit to the rovers</h2>
+          <p class="reveal d2">The new Mars view sets MAVEN, the Mars Reconnaissance Orbiter, Tianwen-1, Phobos and Deimos around Mars, inside the bow shock of Gruesbeck et al. (2018) and the magnetic pileup boundary of Trotignon et al. (2006). Tianwen-1 brings its magnetometer data.</p>
+          <p class="reveal d2">On the ground, Perseverance and Curiosity sit on their real traverses, each with that sol's raw images, and HiRISE footprints show where the orbiters have looked. The view isn't in Helios 1.0 yet.</p>
+          <p class="cite reveal d2">Gruesbeck et al. 2018, <a href="https://doi.org/10.1029/2018JA025366">doi:10.1029/2018JA025366</a> · Trotignon et al. 2006, <a href="https://doi.org/10.1016/j.pss.2006.01.003">doi:10.1016/j.pss.2006.01.003</a> · Mars globe: Viking MDIM 2.1 (USGS)</p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame"><img src="assets/img/mars-rover.jpg" alt="Perseverance in Jezero crater on sol 2,022, with a grid of the day's raw images" loading="lazy"></div>
+          <figcaption>Perseverance on sol 2,022, with the day's raw images.<span class="credit">Helios research build · rover traverse from NASA MMGIS</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split" id="moon">
+      <div class="wrap">
+        <div class="copy">
+          <div class="tags reveal"><span class="eyebrow">The Moon</span><span class="status ok">In Helios 1.0</span></div>
+          <h2 class="reveal d1">No global magnetic field</h2>
+          <p class="reveal d2">The solar wind reaches the Moon's surface directly and leaves a wake behind it. For a few days each month the Moon passes through Earth's magnetotail instead. Helios's Moon view shows where it sits against the bow shock and the tail, with ARTEMIS's two probes in lunar orbit and Artemis II's flight. Other spacecraft in lunar orbit come next.</p>
+          <div class="actions reveal d2">
+            <a class="link" href="artemis.html"><span class="ring"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h7M5.5 2l3 3-3 3" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></span>Artemis II in Helios</a>
+          </div>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame"><img src="assets/img/moon-view.jpg" alt="Helios's Moon view: the magnetosphere, the Moon's orbit and ARTEMIS's two probes" loading="lazy"></div>
+          <figcaption>The Moon view.<span class="credit">Helios · HSO screen export</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split flip" id="jupiter">
+      <div class="wrap">
+        <div class="copy">
+          <div class="tags reveal"><span class="eyebrow">Jupiter</span><span class="status ok">In Helios 1.0</span><span class="status dev">Magnetosphere planned</span></div>
+          <h2 class="reveal d1">The largest magnetosphere</h2>
+          <p class="reveal d2">Jupiter's magnetosphere is the largest of any planet. Its sunward edge usually lies 50 to 100 Jupiter radii out, and Io's volcanoes keep it filled with plasma. Helios's Jupiter view already follows Juno on its orbits around the planet and Europa Clipper on its way there, with the inner fleet. Jupiter's magnetosphere is planned.</p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame"><img src="assets/img/jupiter-view.jpg" alt="Helios's Jupiter view: the planets' orbits out to Jupiter, with Juno at Jupiter and the inner fleet" loading="lazy"></div>
+          <figcaption>The Jupiter view, from the Sun out to Juno at Jupiter.<span class="credit">Helios · HSO screen</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split" id="mercury">
+      <div class="wrap">
+        <div class="copy">
+          <div class="tags reveal"><span class="eyebrow">Mercury</span><span class="status">Planned</span></div>
+          <h2 class="reveal d1">The smallest magnetosphere</h2>
+          <p class="reveal d2">Mercury has a weak field of its own, and a magnetosphere so small that the planet fills much of it. Its nose sits about 1.45 Mercury radii from the center, only some 1,100&nbsp;km above the surface (Winslow et al. 2013). Helios already tracks BepiColombo on its way to Mercury. A Mercury view is planned.</p>
+          <p class="cite reveal d2">Winslow et al. 2013, <a href="https://doi.org/10.1002/jgra.50237">doi:10.1002/jgra.50237</a></p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame"><img src="assets/img/solar-system.jpg" alt="Helios's Sun view: the inner planets, with Mercury, BepiColombo, Parker Solar Probe and Earth" loading="lazy"></div>
+          <figcaption>The Sun view: Mercury and BepiColombo near the Sun, with Parker Solar Probe and Earth.<span class="credit">Helios · HSO screen export</span></figcaption>
+        </figure>
+      </div>
+    </section>
+  </main>
+
+  <!-- chrome:foot -->
+  <footer class="site-foot" id="credits">
+    <div class="row">
+      <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+      <nav aria-label="Footer">
+        <a href="index.html#observatory">Observatory</a>
+        <a href="worlds.html">Worlds</a>
+        <a href="artemis.html">Artemis II</a>
+        <a href="models.html">Models</a>
+        <a href="hso.html">Demo</a>
+        <a href="index.html#learn">Videos</a>
+        <a href="index.html#beta">Public beta</a>
+      </nav>
+    </div>
+    <div class="credits">
+      <div>
+        <h4>Data</h4>
+        <p>MMS Science Data Center (LASP) · CDAWeb and SSCWeb (NASA SPDF) · NOAA SWPC and NCEI · ESA Cluster Science Archive · JPL Horizons · AMDA (CDPP) · Helioviewer · UC Berkeley · University of Calgary · University of Iowa · WDC for Geomagnetism, Kyoto</p>
+      </div>
+      <div>
+        <h4>Methods and imagery</h4>
+        <p>Analysis methods adapted from PySPEDAS and SPEDAS. Earth imagery from NASA's Blue Marble. Artemis II photographs from the NASA Image and Video Library. Each model is cited where it appears.</p>
+      </div>
+      <div>
+        <h4>About</h4>
+        <p>Helios is built by Dr. Jason Beedle. It is developed independently and is not supported or endorsed by NASA, NOAA, ESA or any institution.</p>
+      </div>
+    </div>
+    <p class="fine">© 2026 Helios · Helios 1.0 public beta for macOS</p>
+  </footer>  <!-- /chrome:foot -->
+
+  <script src="js/site.js?v=31"></script>
+  <script src="js/figkit.js?v=31"></script>
+  <script src="js/worlds.js?v=31"></script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+WEBVTT
+
+00:02.550 --> 00:07.260
+Right now, dozens of spacecraft are observing the space around Earth and the Sun.
+
+00:07.260 --> 00:10.730
+Scientists call this fleet the Heliophysics System Observatory.
+
+00:12.200 --> 00:19.790
+The Sun constantly emits a wind of charged particles into space, and that wind carries the Sun's
+magnetic field with it.
+
+00:19.790 --> 00:25.960
+Where it meets Earth's magnetic field, the two can snap and reconnect, releasing bursts of
+energy.
+
+00:25.960 --> 00:28.030
+That's called magnetic reconnection.
+
+00:28.030 --> 00:34.380
+It powers the northern lights, and it drives space weather, which can disrupt satellites, GPS and
+power grids.
+
+00:35.850 --> 00:43.540
+I'm Dr. Jason Beedle, and I study reconnection with NASA's Magnetospheric Multiscale mission,
+or MMS.
+
+00:43.540 --> 00:52.860
+It flies four spacecraft in a tight pyramid formation to use the near-Earth environment as a
+natural laboratory to study the physics behind reconnection.
+
+00:53.980 --> 00:56.930
+MMS is just one part of NASA's fleet.
+
+00:56.930 --> 01:07.098
+THEMIS, Cluster, and the Van Allen Probes have explored the complex plasma environments of
+the near-Earth system, Wind and ACE act as upstream monitors, observing the solar wind
+
+01:07.098 --> 01:12.900
+before it reaches us, and the Parker Solar Probe has sampled the edges of the Sun's outer
+atmosphere.
+
+01:14.360 --> 01:16.240
+All of this data is public.
+
+01:16.240 --> 01:21.870
+But using it means working across fifteen-plus websites, archives and software packages.
+
+01:21.870 --> 01:25.740
+Putting even one event in context takes significant effort and skill.
+
+01:27.230 --> 01:33.270
+So I wondered how hard it would be to bring all of this together, in one simple visual
+environment.
+
+01:33.270 --> 01:37.520
+That became Helios: a virtual observatory for the space around Earth.
+
+01:38.910 --> 01:45.140
+Pick any moment, and Helios shows you where every spacecraft was, from low Earth orbit out to
+Jupiter.
+
+01:45.140 --> 01:47.540
+Click on one to see what it measured.
+
+01:47.540 --> 01:53.440
+Jump to October 16th, 2015, when MMS flew right through the heart of a reconnection event.
+
+01:53.440 --> 02:01.610
+From there, you can slice up the particle data, compare all four spacecraft, or write your own
+equations, without writing any code.
+
+02:01.610 --> 02:07.160
+You can watch the northern lights through cameras on the ground, next to the spacecraft
+passing overhead.
+
+02:07.160 --> 02:11.970
+And you can save it all in a workspace that reopens just as you left it, even offline.
+
+02:13.460 --> 02:14.830
+It's fast, too.
+
+02:14.830 --> 02:20.620
+Some calculations run hundreds of times faster than the field-standard Python tools.
+
+02:20.620 --> 02:24.670
+And for every plot, you can see the code and the exact data files behind it.
+
+02:25.980 --> 02:31.520
+All of its data comes from public archives run by NASA, NOAA, ESA and others.
+
+02:31.520 --> 02:35.590
+Helios brings it together, so more people can explore the space around Earth.

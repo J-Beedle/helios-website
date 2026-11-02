@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Helios · The models</title>
+  <meta name="description" content="The published models behind Helios's views: the magnetopause and bow shock, IGRF and Tsyganenko field lines, the AE-8/AP-8 radiation belts and the auroral oval, each with a live figure.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Helios · The models">
+  <meta property="og:description" content="The published models behind every view in Helios, with live figures.">
+  <meta property="og:image" content="https://j-beedle.github.io/helios-website/assets/img/og.jpg">
+  <!-- chrome:meta -->
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/img/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="css/site.css?v=31">  <!-- /chrome:meta -->
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <!-- chrome:head -->
+  <header class="site-head" id="head">
+    <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+    <nav aria-label="Main">
+      <ul class="nav">
+        <li><a href="index.html#observatory">Observatory</a></li>
+        <li><a href="index.html#fleet">Fleet</a></li>
+        <li><a href="index.html#reconnection">Reconnection</a></li>
+        <li><a href="worlds.html">Worlds</a></li>
+        <li><a href="artemis.html">Artemis II</a></li>
+        <li><a href="models.html" aria-current="page">Models</a></li>
+        <li><a href="hso.html">Demo</a></li>
+        <li><a href="index.html#learn">Videos</a></li>
+        <li><a href="index.html#beta">Beta</a></li>
+      </ul>
+    </nav>
+    <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="drawer"><span></span><span></span><span></span></button>
+  </header>
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Menu">
+    <p class="group">Pages</p>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="worlds.html">Other worlds</a></li>
+      <li><a href="artemis.html">Artemis II</a></li>
+      <li><a href="models.html" aria-current="page">The models</a></li>
+      <li><a href="hso.html">Demo</a></li>
+    </ul>
+    <p class="group">On the home page</p>
+    <ul>
+      <li><a href="index.html#observatory">Observatory</a></li>
+      <li><a href="index.html#fleet">The fleet</a></li>
+      <li><a href="index.html#reconnection">Reconnection</a></li>
+      <li><a href="index.html#aurora">Aurora</a></li>
+      <li><a href="index.html#analysis">Analysis</a></li>
+      <li><a href="index.html#desktop">Designed for Mac</a></li>
+      <li><a href="index.html#learn">Videos</a></li>
+      <li><a href="index.html#built">Development</a></li>
+      <li><a href="index.html#about">About</a></li>
+      <li><a href="index.html#beta">Public beta</a></li>
+    </ul>
+    <p class="small">Helios 1.0 · public beta for macOS</p>
+  </aside>  <!-- /chrome:head -->
+
+  <main id="main">
+    <section class="panel subhero" id="top" aria-label="The models">
+      <div class="media"><canvas id="fig-boundaries" role="img" aria-label="The magnetopause and bow shock for the solar wind set with the sliders"></canvas>
+        <p class="caption">Dashed: 2&nbsp;nPa and B<sub>z</sub> = 0, for comparison.</p></div>
+      <div class="copy">
+        <h1 class="reveal d1">The physics</h1>
+        <p class="lede reveal d2">Helios draws the magnetosphere from published models, written from studies and checked against reference code. Below, move the sliders to change the solar wind: the magnetopause and bow shock respond as Shue et al. (1998) and Jelínek et al. (2012) predict.</p>
+        <div class="controls reveal d2">
+          <div class="slider"><label for="in-pd"><span>Dynamic pressure</span><output id="out-pd">2.0 nPa</output></label>
+            <input id="in-pd" type="range" min="-0.3" max="1" step="0.01" value="0.301"></div>
+          <div class="slider"><label for="in-bz"><span>IMF B<sub>z</sub></span><output id="out-bz">0.0 nT</output></label>
+            <input id="in-bz" type="range" min="-15" max="10" step="0.5" value="0"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="split" id="boundaries">
+      <div class="wrap">
+        <div class="copy">
+          <span class="eyebrow reveal">Boundaries</span>
+          <h2 class="reveal d1">Magnetopause, magnetotail and bow shock</h2>
+          <p class="reveal d2">The magnetopause in Helios's views is Lin et al. (2010), a three-dimensional surface that leans with the dipole tilt and dips in at the cusps. Shue et al. (1998) gives the stand-off distance in the readouts. Down the tail, the magnetosphere's surface flares as described by Petrinec &amp; Russell (1996).</p>
+          <p class="reveal d2">The bow shock is Jelínek et al. (2012), widening into a Mach cone far downstream. Every boundary follows the solar wind of the moment and turns with the aberration from Earth's orbital motion.</p>
+          <p class="cite reveal d2">Lin et al. 2010, <a href="https://doi.org/10.1029/2009JA014235">doi:10.1029/2009JA014235</a> · Shue et al. 1998, <a href="https://doi.org/10.1029/98JA01103">doi:10.1029/98JA01103</a> · Petrinec &amp; Russell 1996, <a href="https://doi.org/10.1029/95JA02834">doi:10.1029/95JA02834</a> · Jelínek et al. 2012, <a href="https://doi.org/10.1029/2011JA017252">doi:10.1029/2011JA017252</a></p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame"><img src="assets/img/magnetosphere-3d.jpg" alt="A tilted 3-D view of the magnetopause and bow shock, with the orbits of MMS, Cluster, THEMIS and the Van Allen Probes" width="1600" height="1221" loading="lazy"></div>
+          <figcaption>The magnetopause (gold, with its faint wireframe) and bow shock (dashed) in 3-D, at 13:07 UT on 16 October 2015 for that minute's solar wind, the Sun to the left.<span class="credit">Helios's magnetosphere view · HSO demo</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split flip" id="field-lines">
+      <div class="wrap">
+        <div class="copy">
+          <span class="eyebrow reveal">Field lines</span>
+          <h2 class="reveal d1">Trace Earth's magnetic field lines</h2>
+          <p class="reveal d2">Field lines start from the International Geomagnetic Reference Field (IGRF-14). Tsyganenko's models add the magnetosphere's own currents: T89, driven by Kp, or T01, driven by the solar wind and Dst. An adaptive Dormand–Prince integrator traces each line, marks it open or closed and puts its feet at 110&nbsp;km above the Earth's surface.</p>
+          <p class="reveal d2">Choose a Kp. As activity rises, the nightside field stretches further down the tail.</p>
+          <div class="controls reveal d2">
+            <div class="seg" id="seg-kp" role="group" aria-label="Kp">
+              <button data-kp="kp0" aria-pressed="false">Kp 0</button><button data-kp="kp1" aria-pressed="false">1</button><button data-kp="kp2" aria-pressed="true">2</button><button data-kp="kp3" aria-pressed="false">3</button><button data-kp="kp4" aria-pressed="false">4</button><button data-kp="kp5" aria-pressed="false">5+</button>
+            </div>
+          </div>
+          <p class="cite reveal d2">Beggan et al. 2026 (IGRF-14), <a href="https://doi.org/10.1186/s40623-025-02360-0">doi:10.1186/s40623-025-02360-0</a> · Tsyganenko 1989, <a href="https://doi.org/10.1016/0032-0633(89)90066-4">doi:10.1016/0032-0633(89)90066-4</a> · Tsyganenko 2002, <a href="https://doi.org/10.1029/2001JA000219">doi:10.1029/2001JA000219</a> · Dormand &amp; Prince 1980</p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame wide"><canvas id="fig-t89" role="img" aria-label="IGRF plus T89 field lines in the noon–midnight plane"></canvas></div>
+          <figcaption>IGRF + T89 in the noon–midnight plane at zero dipole tilt. Pale blue lines are closed; violet lines are open.<span class="credit">Traced by Helios</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split" id="belts">
+      <div class="wrap">
+        <div class="copy">
+          <span class="eyebrow reveal">Radiation belts</span>
+          <h2 class="reveal d1">The Van Allen belts</h2>
+          <p class="reveal d2">AE-8 and AP-8 are NASA's maps of trapped electrons and protons at solar maximum and minimum. The CRRES maps add electrons that follow geomagnetic activity, through the 15-day mean of Ap, and protons for quiet and active times.</p>
+          <p class="reveal d2">In Helios the belts are a 3-D volume or a set of cuts on a centered dipole, and they change as the time machine runs.</p>
+          <div class="controls reveal d2">
+            <div class="seg" id="seg-species" role="group" aria-label="Particles">
+              <button data-species="electron" aria-pressed="true">Electrons &gt; 1 MeV</button><button data-species="proton" aria-pressed="false">Protons &gt; 10 MeV</button>
+            </div>
+            <div class="seg" id="seg-solar" role="group" aria-label="Solar cycle">
+              <button data-solar="max" aria-pressed="true">Solar max</button><button data-solar="min" aria-pressed="false">Solar min</button>
+            </div>
+          </div>
+          <p class="cite reveal d2">Vette 1991 (AE-8) · Sawyer &amp; Vette 1976 (AP-8) · Brautigam &amp; Bell 1995 (CRRESELE) · Meffert &amp; Gussenhoven 1994 (CRRESPRO)</p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame wide"><canvas id="fig-belts" role="img" aria-label="A cut through the radiation belts in a magnetic meridian"></canvas><p class="readout" id="belts-readout"></p></div>
+          <figcaption>Integral flux through a magnetic meridian. The thin lines are dipole field lines at L = 2, 4 and 6.<span class="credit">Computed by Helios's AE-8/AP-8 code</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split flip" id="aurora">
+      <div class="wrap">
+        <div class="copy">
+          <span class="eyebrow reveal">Aurora</span>
+          <h2 class="reveal d1">The auroral oval</h2>
+          <p class="reveal d2">Starkov's model gives the oval's poleward and equatorward edges, and the edge of the diffuse aurora, at every magnetic local time. Helios drives it with the hour's mean AL index from OMNI, or with Kp when AL is missing.</p>
+          <div class="controls reveal d2">
+            <div class="slider"><label for="in-kp-oval"><span>Kp</span><output id="out-kp-oval">3.0</output></label>
+              <input id="in-kp-oval" type="range" min="0" max="9" step="0.1" value="3"></div>
+          </div>
+          <p class="cite reveal d2">Starkov 1994 · Sigernes et al. 2011, <a href="https://doi.org/10.1051/swsc/2011003">doi:10.1051/swsc/2011003</a></p>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame square"><canvas id="fig-oval" role="img" aria-label="The northern auroral oval"></canvas><p class="readout" id="oval-readout"></p></div>
+          <figcaption>The northern oval seen from above, noon at the top: the discrete oval in green, the diffuse aurora beyond it. AL comes from Kp by Starkov's own relation.<span class="credit">Starkov (1994) with Sigernes et al. (2011)'s coefficients, ported from Helios</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split" id="also">
+      <div class="section-head">
+        <span class="eyebrow reveal">Also in Helios</span>
+        <h2 class="reveal d1">The rest of the toolkit</h2>
+      </div>
+      <div class="grid-cards">
+        <div class="reveal"><h3>Coordinates</h3><p>GEI, GEO, MAG, SM, GSM and GSE follow Hapgood's definitions and are checked against PySPEDAS's coordinate transforms.</p></div>
+        <div class="reveal d1"><h3>Solar wind</h3><p>For past events Helios uses OMNI, already shifted to the bow-shock nose. For recent ones it uses NOAA's propagated product, or works out the delay from each L1 monitor itself.</p></div>
+        <div class="reveal d2"><h3>The Sun</h3><p>SDO's images from May 2010 and SOHO's back to 1996, through Helioviewer, on a sphere that turns as the Sun does.</p></div>
+        <div class="reveal"><h3>Magnetic footprints</h3><p>On the low-Earth-orbit globe, each spacecraft's field-line footpoint has a track an hour either side and shows the all-sky cameras that can see it.</p></div>
+        <div class="reveal d1"><h3>Planetary and spacecraft positions</h3><p>Spacecraft come from JPL Horizons and NASA's SSCWeb. Planets come from JPL's Keplerian elements.</p></div>
+        <div class="reveal d2"><h3>Sky</h3><p>The Yale Bright Star Catalogue and NASA's Deep Star Maps, with the Milky Way and the constellations when you want them.</p></div>
+      </div>
+    </section>
+
+    <section class="split" id="refs">
+      <div class="section-head">
+        <span class="eyebrow reveal">References</span>
+        <h2 class="reveal d1">Sources</h2>
+        <p class="reveal d2">The figures on this page run in your browser. The boundary and oval formulas are ported from Helios's code; the field lines and radiation-belt cuts were computed by Helios itself.</p>
+      </div>
+      <ol class="refs">
+        <li>Beggan, C. D., et al. (2026). International Geomagnetic Reference Field: the fourteenth generation. <i>Earth, Planets and Space</i>, 78, 127. <a href="https://doi.org/10.1186/s40623-025-02360-0">doi:10.1186/s40623-025-02360-0</a></li>
+        <li>Brautigam, D. H., &amp; Bell, J. T. (1995). CRRESELE documentation (PL-TR-95-2128). Phillips Laboratory.</li>
+        <li>Dormand, J. R., &amp; Prince, P. J. (1980). A family of embedded Runge–Kutta formulae. <i>J. Comput. Appl. Math.</i>, 6(1), 19–26. <a href="https://doi.org/10.1016/0771-050X(80)90013-3">doi:10.1016/0771-050X(80)90013-3</a></li>
+        <li>Hapgood, M. A. (1992). Space physics coordinate transformations: a user guide. <i>Planet. Space Sci.</i>, 40(5), 711–717. <a href="https://doi.org/10.1016/0032-0633(92)90012-D">doi:10.1016/0032-0633(92)90012-D</a></li>
+        <li>Jelínek, K., Němeček, Z., &amp; Šafránková, J. (2012). A new approach to magnetopause and bow shock modeling based on automated region identification. <i>JGR</i>, 117, A05208. <a href="https://doi.org/10.1029/2011JA017252">doi:10.1029/2011JA017252</a></li>
+        <li>Lin, R. L., et al. (2010). A three-dimensional asymmetric magnetopause model. <i>JGR</i>, 115, A04207. <a href="https://doi.org/10.1029/2009JA014235">doi:10.1029/2009JA014235</a></li>
+        <li>Meffert, J. D., &amp; Gussenhoven, M. S. (1994). CRRESPRO documentation (PL-TR-94-2218). Phillips Laboratory.</li>
+        <li>Petrinec, S. M., &amp; Russell, C. T. (1996). Near-Earth magnetotail shape and size as determined from the magnetopause flaring angle. <i>JGR</i>, 101(A1), 137–152. <a href="https://doi.org/10.1029/95JA02834">doi:10.1029/95JA02834</a></li>
+        <li>Sawyer, D. M., &amp; Vette, J. I. (1976). AP-8 trapped proton environment for solar maximum and solar minimum (NSSDC/WDC-A-R&amp;S 76-06). NASA GSFC.</li>
+        <li>Shue, J.-H., et al. (1998). Magnetopause location under extreme solar wind conditions. <i>JGR</i>, 103(A8), 17691–17700. <a href="https://doi.org/10.1029/98JA01103">doi:10.1029/98JA01103</a></li>
+        <li>Sigernes, F., et al. (2011). Two methods to forecast auroral displays. <i>J. Space Weather Space Clim.</i>, 1, A03. <a href="https://doi.org/10.1051/swsc/2011003">doi:10.1051/swsc/2011003</a></li>
+        <li>Starkov, G. V. (1994). <i>Geomagnetism and Aeronomy</i>, 34(1), 101–103, and 34(3), 331–336.</li>
+        <li>Tsyganenko, N. A. (1989). A magnetospheric magnetic field model with a warped tail current sheet. <i>Planet. Space Sci.</i>, 37(1), 5–20. <a href="https://doi.org/10.1016/0032-0633(89)90066-4">doi:10.1016/0032-0633(89)90066-4</a></li>
+        <li>Tsyganenko, N. A. (2002). A model of the near magnetosphere with a dawn-dusk asymmetry, parts 1 and 2. <i>JGR</i>, 107(A8). <a href="https://doi.org/10.1029/2001JA000219">doi:10.1029/2001JA000219</a></li>
+        <li>Vette, J. I. (1991). The AE-8 trapped electron model environment (NSSDC/WDC-A-R&amp;S 91-24). NASA GSFC.</li>
+      </ol>
+    </section>
+  </main>
+
+  <!-- chrome:foot -->
+  <footer class="site-foot" id="credits">
+    <div class="row">
+      <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+      <nav aria-label="Footer">
+        <a href="index.html#observatory">Observatory</a>
+        <a href="worlds.html">Worlds</a>
+        <a href="artemis.html">Artemis II</a>
+        <a href="models.html">Models</a>
+        <a href="hso.html">Demo</a>
+        <a href="index.html#learn">Videos</a>
+        <a href="index.html#beta">Public beta</a>
+      </nav>
+    </div>
+    <div class="credits">
+      <div>
+        <h4>Data</h4>
+        <p>MMS Science Data Center (LASP) · CDAWeb and SSCWeb (NASA SPDF) · NOAA SWPC and NCEI · ESA Cluster Science Archive · JPL Horizons · AMDA (CDPP) · Helioviewer · UC Berkeley · University of Calgary · University of Iowa · WDC for Geomagnetism, Kyoto</p>
+      </div>
+      <div>
+        <h4>Methods and imagery</h4>
+        <p>Analysis methods adapted from PySPEDAS and SPEDAS. Earth imagery from NASA's Blue Marble. Artemis II photographs from the NASA Image and Video Library. Each model is cited where it appears.</p>
+      </div>
+      <div>
+        <h4>About</h4>
+        <p>Helios is built by Dr. Jason Beedle. It is developed independently and is not supported or endorsed by NASA, NOAA, ESA or any institution.</p>
+      </div>
+    </div>
+    <p class="fine">© 2026 Helios · Helios 1.0 public beta for macOS</p>
+  </footer>  <!-- /chrome:foot -->
+
+  <script src="js/site.js?v=31"></script>
+  <script src="js/figkit.js?v=31"></script>
+  <script src="js/models.js?v=31"></script>
+</body>
+</html>

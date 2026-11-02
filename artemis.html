@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Helios · Artemis II</title>
+  <meta name="description" content="Artemis II's flight around the Moon, 1–10 April 2026, as Helios flies it: Orion's track from JPL Horizons, with the solar wind, the radiation belts and the rest of the fleet.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Helios · Artemis II">
+  <meta property="og:description" content="Around the Moon and back, with the space weather alongside.">
+  <meta property="og:image" content="https://j-beedle.github.io/helios-website/assets/img/og.jpg">
+  <!-- chrome:meta -->
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/img/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="css/site.css?v=31">  <!-- /chrome:meta -->
+  <link rel="preload" href="assets/data/artemis2.json" as="fetch" crossorigin>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <!-- chrome:head -->
+  <header class="site-head" id="head">
+    <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+    <nav aria-label="Main">
+      <ul class="nav">
+        <li><a href="index.html#observatory">Observatory</a></li>
+        <li><a href="index.html#fleet">Fleet</a></li>
+        <li><a href="index.html#reconnection">Reconnection</a></li>
+        <li><a href="worlds.html">Worlds</a></li>
+        <li><a href="artemis.html" aria-current="page">Artemis II</a></li>
+        <li><a href="models.html">Models</a></li>
+        <li><a href="hso.html">Demo</a></li>
+        <li><a href="index.html#learn">Videos</a></li>
+        <li><a href="index.html#beta">Beta</a></li>
+      </ul>
+    </nav>
+    <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="drawer"><span></span><span></span><span></span></button>
+  </header>
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Menu">
+    <p class="group">Pages</p>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="worlds.html">Other worlds</a></li>
+      <li><a href="artemis.html" aria-current="page">Artemis II</a></li>
+      <li><a href="models.html">The models</a></li>
+      <li><a href="hso.html">Demo</a></li>
+    </ul>
+    <p class="group">On the home page</p>
+    <ul>
+      <li><a href="index.html#observatory">Observatory</a></li>
+      <li><a href="index.html#fleet">The fleet</a></li>
+      <li><a href="index.html#reconnection">Reconnection</a></li>
+      <li><a href="index.html#aurora">Aurora</a></li>
+      <li><a href="index.html#analysis">Analysis</a></li>
+      <li><a href="index.html#desktop">Designed for Mac</a></li>
+      <li><a href="index.html#learn">Videos</a></li>
+      <li><a href="index.html#built">Development</a></li>
+      <li><a href="index.html#about">About</a></li>
+      <li><a href="index.html#beta">Public beta</a></li>
+    </ul>
+    <p class="small">Helios 1.0 · public beta for macOS</p>
+  </aside>  <!-- /chrome:head -->
+
+  <main id="main">
+    <section class="panel subhero top plain" id="top" aria-label="Artemis II">
+      <div class="media"><canvas id="fig-artemis" role="img" aria-label="Orion's path from Earth around the Moon and back, seen from above the ecliptic, the Sun to the left"></canvas></div>
+      <div class="copy" style="max-width:500px">
+        <span class="eyebrow reveal">Artemis II · 1–10 April 2026</span>
+        <h1 class="reveal d1">Around the Moon and back</h1>
+        <p class="lede reveal d2">Helios flies Orion's real trajectory in its time machine, alongside the solar wind, the radiation belts and the rest of the fleet.</p>
+        <figure class="photo-card" id="photo-card" aria-live="polite">
+          <img alt="" width="720" height="540">
+          <figcaption><span class="when"></span><span class="cap"></span><a class="credit" target="_blank" rel="noopener"></a></figcaption>
+        </figure>
+      </div>
+      <div class="player-bar">
+        <button class="icon-btn" id="btn-play" aria-label="Pause"></button>
+        <div class="slider"><label for="in-time"><span id="art-time"><span>—</span><span class="sep"> · </span><span></span></span><output><span><span id="art-earth">—</span> from Earth</span><span class="sep"> · </span><span><span id="art-moon">—</span> from the Moon</span></output></label>
+          <input id="in-time" type="range" min="0" max="1000" step="1" value="0"></div>
+      </div>
+    </section>
+
+    <section class="split" id="timeline">
+      <div class="wrap">
+        <div class="copy">
+          <span class="eyebrow reveal">The flight</span>
+          <h2 class="reveal d1">A nine-day voyage</h2>
+          <p class="reveal d2">Orion's journey comes from JPL Horizons, then Helios turns its coordinates into GSE and draws it on the Moon and magnetosphere views.</p>
+          <ol class="timeline reveal d2">
+            <li><time>1 Apr · 22:35 UTC</time>Launch</li>
+            <li><time>2 Apr · 23:49 UTC</time>Translunar injection</li>
+            <li><time>6 Apr · 23:01 UTC</time>Lunar flyby, 8,282 km from the Moon's center</li>
+            <li><time>6 Apr · 23:05 UTC</time>Farthest from Earth, 413,146 km</li>
+            <li><time>10 Apr · 23:53 UTC</time>Entry interface</li>
+          </ol>
+        </div>
+        <figure class="figure reveal d1">
+          <div class="frame"><img src="assets/img/moon-view-flyby.jpg" alt="Helios's Moon view at Orion's lunar flyby: Orion's path from Earth to the Moon, the magnetosphere, the Moon's orbit and ARTEMIS's two probes at the Moon" width="2000" height="1338" loading="lazy"></div>
+          <figcaption>The Moon view at the lunar flyby, 23:01 UTC on 6 April 2026: Orion's path (red) out to the Moon, the magnetopause and bow shock for that moment's solar wind, the Moon's orbit, and ARTEMIS's two probes at the Moon.<span class="credit">Helios · HSO screen</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="split" id="weather">
+      <div class="section-head">
+        <span class="eyebrow reveal">Space weather</span>
+        <h2 class="reveal d1">Monitor the near-Earth environment</h2>
+        <p class="reveal d2">Scrub Helios's time machine through the flight and the rest of Helios moves with it, showing the spacecraft and observations that matter for exploration beyond low Earth orbit.</p>
+      </div>
+      <div class="grid-cards">
+        <div class="reveal"><span class="eyebrow">Radiation belts</span><h3>Out through the belts</h3><p>Turn on AE-8/AP-8 or CRRES and watch Orion's path cross the Van Allen belts on the way out and again on the way home.</p></div>
+        <div class="reveal d1"><span class="eyebrow">Upstream</span><h3>The solar wind at L1</h3><p>ACE, Wind, DSCOVR and SOLAR-1 show the solar wind before it arrives. OMNI gives the same wind shifted to Earth.</p></div>
+        <div class="reveal d2"><span class="eyebrow">Activity</span><h3>Kp, AE and SYM-H</h3><p>Click Earth to watch the geomagnetic indices through the flight.</p></div>
+        <div class="reveal"><span class="eyebrow">Particles</span><h3>GOES protons and electrons</h3><p>Integral protons from above 1 MeV to above 500 MeV, and electrons above 0.8, 2 and 4 MeV, beside GOES's magnetometer and X-ray data.</p></div>
+        <div class="reveal d1"><span class="eyebrow">Boundaries</span><h3>Wind, sheath or tail</h3><p>The magnetopause and bow shock follow the solar wind minute by minute, so you can see where the Moon and Orion sit against them.</p></div>
+        <div class="reveal d2"><span class="eyebrow">At the flyby</span><h3>Out on the dawn flank</h3><p>When Orion swung past, the Moon was on the dawn side, about 53 Earth radii from the Sun–Earth line and well clear of the magnetotail.</p></div>
+      </div>
+      <div class="section-head">
+        <div class="actions reveal" style="margin-top:48px">
+          <a class="btn" href="models.html">The models<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7h11M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></a>
+          <a class="link" href="worlds.html"><span class="ring"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h7M5.5 2l3 3-3 3" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></span>Other worlds</a>
+        </div>
+        <p class="cite">Trajectory: JPL Horizons, target −1024 (Artemis II, Orion “Integrity”), as Helios caches it. The Moon on this page comes from a low-precision lunar theory that puts the flyby within 150&nbsp;km of Helios's distance. The magnetosphere is Shue et al. (1998) and Jelínek et al. (2012) for a typical solar wind (2&nbsp;nPa, B<sub>z</sub> = 0); the belts are drawn at their equatorial extent. Photographs: NASA Image and Video Library, each credited where it appears.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- chrome:foot -->
+  <footer class="site-foot" id="credits">
+    <div class="row">
+      <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+      <nav aria-label="Footer">
+        <a href="index.html#observatory">Observatory</a>
+        <a href="worlds.html">Worlds</a>
+        <a href="artemis.html">Artemis II</a>
+        <a href="models.html">Models</a>
+        <a href="hso.html">Demo</a>
+        <a href="index.html#learn">Videos</a>
+        <a href="index.html#beta">Public beta</a>
+      </nav>
+    </div>
+    <div class="credits">
+      <div>
+        <h4>Data</h4>
+        <p>MMS Science Data Center (LASP) · CDAWeb and SSCWeb (NASA SPDF) · NOAA SWPC and NCEI · ESA Cluster Science Archive · JPL Horizons · AMDA (CDPP) · Helioviewer · UC Berkeley · University of Calgary · University of Iowa · WDC for Geomagnetism, Kyoto</p>
+      </div>
+      <div>
+        <h4>Methods and imagery</h4>
+        <p>Analysis methods adapted from PySPEDAS and SPEDAS. Earth imagery from NASA's Blue Marble. Artemis II photographs from the NASA Image and Video Library. Each model is cited where it appears.</p>
+      </div>
+      <div>
+        <h4>About</h4>
+        <p>Helios is built by Dr. Jason Beedle. It is developed independently and is not supported or endorsed by NASA, NOAA, ESA or any institution.</p>
+      </div>
+    </div>
+    <p class="fine">© 2026 Helios · Helios 1.0 public beta for macOS</p>
+  </footer>  <!-- /chrome:foot -->
+
+  <script src="js/site.js?v=31"></script>
+  <script src="js/figkit.js?v=31"></script>
+  <script src="js/artemis.js?v=31"></script>
+</body>
+</html>

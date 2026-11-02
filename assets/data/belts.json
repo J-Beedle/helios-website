@@ -1,0 +1,34 @@
+{
+ "electron-max": {
+  "img": "assets/img/belts-electron-max.png",
+  "lo": 3,
+  "hi": 7,
+  "halfWidth": 8,
+  "halfHeight": 4,
+  "energy_MeV": 1
+ },
+ "electron-min": {
+  "img": "assets/img/belts-electron-min.png",
+  "lo": 3,
+  "hi": 7,
+  "halfWidth": 8,
+  "halfHeight": 4,
+  "energy_MeV": 1
+ },
+ "proton-max": {
+  "img": "assets/img/belts-proton-max.png",
+  "lo": 2,
+  "hi": 6,
+  "halfWidth": 8,
+  "halfHeight": 4,
+  "energy_MeV": 10
+ },
+ "proton-min": {
+  "img": "assets/img/belts-proton-min.png",
+  "lo": 2,
+  "hi": 6,
+  "halfWidth": 8,
+  "halfHeight": 4,
+  "energy_MeV": 10
+ }
+}
