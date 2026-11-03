@@ -1207,6 +1207,8 @@
   const CRESCENT_HELP = "Burch et al. (2016)'s perpendicular crescent: a cut at 13:07:02.195 on MMS2 (02.212 on MMS3), B-aligned, axes ±15×10³ km/s, colors 10⁻³⁰–10⁻²⁵ s³/cm⁶, and the figure ±5 s around it";
   const CUT_COLORS = ["#1F6FD8", "#E8760C", "#2AA24A", "#8E44AD", "#D8322B", "#0E9AA7", "#C2185B", "#8D6E63"];   // VDFCutPalette
   const CHEV = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>';
+  // SF Symbols' arrow.left.and.right.circle.fill, gold, as Helios draws its reset
+  const RESET = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4 8h8M6 5.6L3.8 8 6 10.4M10 5.6L12.2 8 10 10.4" fill="none" stroke="#14161b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const HAM = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
   const CANON = ["b", "ionSpec", "elecSpec", "n", "ti", "te", "tanis", "p", "vi", "ve", "jfpi", "jpar", "jperp", "e"];
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
@@ -1250,7 +1252,7 @@
         <button class="fw-ic fw-sb" aria-label="Show the figure and analysis tools" aria-pressed="false" title="Figure and analysis tools">${HAM}</button>
         ${host.pinned != null ? `<span class="fw-pin" title="Pinned: opened while the time machine was at this moment">${clock(host.pinned)} UTC</span>` : ""}
         <div class="fw-cuts" hidden><span class="fc-l">VDF cuts</span><span class="fc-chips"></span><button class="fc-cres" title="${esc(CRESCENT_HELP)}">Crescent</button><div class="fw-add"><button class="pick fc-add" aria-haspopup="menu" aria-expanded="false" title="Add a VDF cut: a species at the current time. Then drag its numbered line, or type its time in its column."><b>+</b>Add</button><div class="pick-menu fc-menu" role="menu" hidden></div></div></div>
-        <div class="fw-range"><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
+        <div class="fw-range"><button class="fw-reset" hidden aria-label="Reset the time range" title="Reset the trimmed time range to the full ±window (or double-click the figure)">${RESET}</button><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
       </div>
       <div class="fw-main">
         <aside class="fw-side tk" aria-label="Figure and analysis tools" hidden></aside>
@@ -1305,6 +1307,9 @@
       const s = (A.b - A.a) / 2, m = WINDOW_CHOICES.find(x => Math.abs(x * 60 - s) < 1);
       $(".fw-rb span", el).textContent = m ? rangeLabel(m) : `±${span(s)}`;
       $$("[data-m]", el).forEach(o => o.setAttribute("aria-selected", String(+o.dataset.m === m)));
+      // Helios's reset: shown only while the window is trimmed inside its ±window
+      const h = A.home;
+      $(".fw-reset", el).hidden = !h || (Math.abs(A.a - h[0]) < 0.01 && Math.abs(A.b - h[1]) < 0.01);
     };
     /** Show and hide the side panels; a floating window grows or shrinks by what they take. */
     function relayout() {
@@ -1775,6 +1780,7 @@
       host.setRange(W, +o.dataset.m);
       W.rangeText();
     });
+    $(".fw-reset", el).addEventListener("click", () => { if (A.home) { A.setFocus(...A.home); W.rangeText(); } });
     $(".fw-sb", el).addEventListener("click", () => { W.sideOpen = !W.sideOpen; renderSide(); relayout(); });
     W.openTools = (tab) => { W.sideOpen = true; if (tab) W.tab = tab; renderSide(); relayout(); };
     new ResizeObserver(() => W.redraw()).observe($(".fw-main", el));
@@ -2029,7 +2035,7 @@
     win = DataWindow(D, 1, {
       el: winEl, S, app, moment: () => ev.crossing,
       widen: (W) => { wins.classList.toggle("wide", W.extra > 0 || winEl.classList.contains("zoomed")); },
-      setRange: (W, m) => { const c = (app.a + app.b) / 2; app.setFocus(c - m * 60, c + m * 60); },
+      setRange: (W, m) => { const c = (app.a + app.b) / 2; app.setFocus(c - m * 60, c + m * 60); app.home = [app.a, app.b]; },
       onCraft: (W) => {
         const name = CRAFT[W.n].name;
         $("#tab-craft").textContent = name;

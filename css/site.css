@@ -662,7 +662,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .tl-m { background: #febc2e; }
 .tl-z { background: #28c840; }
 .fw-pick, .fw-range { position: relative; }
-.fw-range { margin-left: auto; }
+.fw-range { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.fw-reset { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: #f7c55c; cursor: pointer; }
+.fw-reset[hidden] { display: none; }
+.fw-reset:hover { color: #ffd98a; }
+.fw-reset svg { width: 15px; height: 15px; }
 .fw-range .pick-menu { left: auto; right: 0; min-width: 96px; }
 .fw-pin { color: #ffc44d; font: 500 11px/1 ui-monospace, "SF Mono", Menlo, monospace; }
 .fw-body { position: relative; flex: 1; min-height: 0; background: #fff; }
