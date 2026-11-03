@@ -69,13 +69,24 @@
         ctx.lineWidth = 1.6; ctx.strokeStyle = rgba(C.mp, 0.9); path(ctx, mpAll, P); ctx.stroke();
         ctx.setLineDash([6, 4]); ctx.lineWidth = 1.2; ctx.strokeStyle = rgba(C.shock, 0.75); path(ctx, bsAll, P); ctx.stroke(); ctx.setLineDash([]);
         earth(ctx, cx, cy, Math.max(3, k));
+        // geosynchronous orbit, 6.6 Rₑ: a strong enough push brings the magnetopause inside it
+        const GEO = 6.62, gc = [127, 212, 173];
+        ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2; ctx.strokeStyle = rgba(gc, 0.8);
+        ctx.beginPath(); ctx.arc(cx, cy, GEO * k, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+        if (wide) {
+          const g = P(-GEO * Math.SQRT1_2, GEO * Math.SQRT1_2);
+          text(ctx, "Geosynchronous orbit 6.6 R_E", g[0] + 6, g[1] - 8, { size: 12, color: rgba(gc, 0.95) });
+        } else {
+          const g = P(0, GEO);
+          text(ctx, "Geosynchronous 6.6 R_E", g[0], g[1] - 9, { size: 11, align: "center", color: rgba(gc, 0.95) });
+        }
         // the stand-off distances
         const m0 = P(mp.r0, 0), b0 = P(bs.R, 0);
         ctx.fillStyle = C.accent; [m0, b0].forEach(s => { ctx.beginPath(); ctx.arc(s[0], s[1], 3, 0, TAU); ctx.fill(); });
         if (wide) {
           text(ctx, `Magnetopause ${mp.r0.toFixed(1)} R_E`, m0[0] + 12, m0[1] - 16, { size: 13 });
           text(ctx, `Bow shock ${bs.R.toFixed(1)} R_E`, b0[0] - 12, b0[1] + 18, { size: 13, align: "right", color: C.muted });
-          scaleBar(ctx, w - 190, h - 44, k, 10, "10 R_E");
+          scaleBar(ctx, w - 190, h - 88, k, 10, "10 R_E");   // clear of the caption
         } else {
           text(ctx, `Magnetopause ${mp.r0.toFixed(1)} R_E · bow shock ${bs.R.toFixed(1)} R_E`, 20, cy + 19 * k, { size: 12 });
         }
