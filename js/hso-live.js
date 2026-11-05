@@ -27,6 +27,18 @@
           622.6, 798.32, 1023.63, 1312.53, 1682.97, 2157.95, 2766.99, 3547.92, 4549.25, 5833.18, 7479.48, 9590.41, 12297.11,
           15767.72, 20217.84, 25923.91],
   };
+  // FPI's two burst energy tables per species, alternating record by record: table k serves step-table parity k
+  const FPI_EB = {
+    dis: [[10.64, 13.66, 17.55, 22.55, 28.96, 37.2, 47.78, 61.37, 78.83, 101.26, 130.06, 167.06, 214.59, 275.64, 354.05, 454.78, 584.15,
+           750.33, 963.79, 1237.97, 1590.15, 2042.53, 2623.59, 3369.96, 4328.65, 5560.08, 7141.83, 9173.56, 11783.28, 15135.42, 19441.19, 24971.88],
+          [12.06, 15.49, 19.89, 25.55, 32.82, 42.16, 54.15, 69.56, 89.34, 114.76, 147.41, 189.34, 243.21, 312.4, 401.27, 515.42, 662.05,
+           850.39, 1092.31, 1403.06, 1802.2, 2314.9, 2973.45, 3819.34, 4905.88, 6301.52, 8094.19, 10396.85, 13354.58, 17153.73, 22033.68, 28301.89]],
+    des: [[10.96, 14.05, 18.02, 23.1, 29.62, 37.98, 48.7, 62.45, 80.07, 102.67, 131.65, 168.81, 216.45, 277.54, 355.87, 456.3, 585.09,
+           750.22, 961.95, 1233.44, 1581.56, 2027.92, 2600.26, 3334.13, 4275.12, 5481.68, 7028.78, 9012.51, 11556.1, 14817.58, 18999.54, 24361.78],
+          [12.41, 15.91, 20.4, 26.16, 33.54, 43.01, 55.15, 70.71, 90.67, 116.26, 149.08, 191.15, 245.1, 314.27, 402.97, 516.7, 662.53,
+           849.51, 1089.27, 1396.69, 1790.88, 2296.32, 2944.42, 3775.42, 4840.95, 6207.21, 7959.08, 10205.36, 13085.62, 16778.78, 21514.25, 27586.21]],
+  };
+  const BURST_HALF = 600;                                    // burst data are fetched ±10 minutes around the moment
   // Helios's THEMIS ESA sweeps (ascending eV): HAPI does not serve them either (prepare_hso_missions.py)
   const ION32 = [5.8, 7.3, 10.0, 12.7, 16.5, 22.3, 29.2, 38.5, 50.4, 66.6, 87.7, 115.0, 151.2, 199.3, 262.0, 345.1, 453.6,
                  597.5, 787.2, 1035.4, 1363.2, 1794.5, 2362.7, 3109.5, 4093.4, 5388.4, 7092.9, 9336.7, 12290.5, 16178.4, 21296.3, 25213.4];
@@ -48,6 +60,32 @@
   }
   function emit() { window.dispatchEvent(new CustomEvent("hso-live", { detail: { tasks: [...tasks], bytes } })); }
 
+  // ───────────────────────── a polite client: a few requests at a time, retried when the server is busy ─────────────────────────
+  const MAXQ = 4, queue = [];
+  let active = 0;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  /** Runs fn when one of MAXQ slots is free; `first` jumps the queue (a VDF cut the viewer is waiting on). */
+  function slot(fn, first) {
+    return new Promise((res, rej) => {
+      const run = () => { active++; fn().then(res, rej).finally(() => { active--; const next = queue.shift(); if (next) next(); }); };
+      if (active < MAXQ) run(); else if (first) queue.unshift(run); else queue.push(run);
+    });
+  }
+  /** fetch, retried three times (1.5, 3, 6 s apart) on a network error, a 5xx/429 answer, or no answer within `wait` ms
+   *  (CDAWeb sometimes sits on a request under load, then answers a retry in seconds). */
+  async function get(url, init, wait = 45000) {
+    for (let k = 0; ; k++) {
+      const ac = new AbortController(), timer = setTimeout(() => ac.abort(), wait);
+      try {
+        const r = await fetch(url, Object.assign({ signal: ac.signal }, init));
+        if (r.ok) { const body = await r.arrayBuffer(); clearTimeout(timer); return new Response(body, { status: r.status, headers: r.headers }); }
+        clearTimeout(timer);
+        if ((r.status >= 500 || r.status === 429) && k < 3) { await sleep(1500 * 2 ** k); continue; }
+        return r;
+      } catch (e) { clearTimeout(timer); if (k >= 3) throw e; await sleep(1500 * 2 ** k); }
+    }
+  }
+
   // ───────────────────────── HAPI ─────────────────────────
   /** "2015-10-16T11:00:00.024201612Z" → ms; HAPI's times carry up to nine decimals, which Date.parse refuses. */
   function hapiTime(s) {
@@ -57,12 +95,17 @@
   }
   /** One HAPI request as CSV: the rows inside [a, b] (CDAWeb answers an empty interval with the nearest record), their
    *  times in seconds after T0, and each column after Time; fill values (|x| ≥ 1e30) become NaN. */
-  async function hapi(id, params, a, b) {
+  function hapi(id, params, a, b, first, openEnd) {
     const url = `${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`;
-    const r = await fetch(url);
-    if (r.status === 404) return { t: new Float64Array(0), cols: [], n: 0 };
-    if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
-    const text = await r.text();
+    return slot(async () => {
+      const r = await get(url);
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
+      return r.text();
+    }, first).then(text => parseCSV(id, text, a, openEnd ? b - 1e-3 : b));
+  }
+  function parseCSV(id, text, a, b) {
+    if (text === null) return { t: new Float64Array(0), cols: [], n: 0 };
     if (/^\s*[{,]/.test(text)) {                             // a HAPI status in place of data
       const m = /"message":\s*"([^"]+)"/.exec(text);
       if (/1201|no data/i.test(m ? m[1] : "")) return { t: new Float64Array(0), cols: [], n: 0 };
@@ -86,7 +129,9 @@
   }
   /** A long request cut into pieces fetched side by side, joined in order. */
   async function hapiChunked(id, params, a, b, k) {
-    const step = (b - a) / k, parts = await Promise.all(Array.from({ length: k }, (_, i) => hapi(id, params, a + i * step, i === k - 1 ? b : a + (i + 1) * step - 1)));
+    // whole-second edges, each piece ending where the next begins (HAPI's time.max is exclusive and to the second here)
+    const edge = (i) => (i === 0 ? Math.floor(a / 1000) * 1000 : i === k ? Math.ceil(b / 1000) * 1000 : Math.round((a + i * (b - a) / k) / 1000) * 1000);
+    const parts = await Promise.all(Array.from({ length: k }, (_, i) => hapi(id, params, edge(i), edge(i + 1), false, i < k - 1)));
     const n = parts.reduce((s, p) => s + p.n, 0), nc = Math.max(0, ...parts.map(p => p.cols.length)), t = new Float64Array(n);
     const cols = Array.from({ length: nc }, () => new Float64Array(n));
     let o = 0;
@@ -95,7 +140,7 @@
   }
   /** One parameter's bins (HAPI info), for spectra the server labels itself. */
   async function hapiBins(id, param) {
-    const r = await fetch(`${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`);
+    const r = await slot(() => get(`${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`));
     if (!r.ok) return null;
     const p = (await r.json()).parameters.find(x => x.name === param);
     return p && p.bins && p.bins[0].centers;
@@ -167,10 +212,28 @@
       spec: [spec8(flux, n, nc, sp), nc], etab: [Float32Array.from(FPI_E[sp]), nc], eidx: [new Uint8Array(n), 1],
     });
   }
+  /** Burst moments: columns parity, spectrum[32], n, V[3], (spin tone[3],) T∥, T⊥, in HAPI's order. */
+  function fpiBurstSet(r, sp, withST) {
+    const n = r.n, o = withST ? 3 : 0, eidx = new Uint8Array(n);
+    for (let i = 0; i < n; i++) eidx[i] = r.cols[0][i] === 1 ? 1 : 0;
+    return set({
+      t: [f32(r.t), 1], n: [f32(r.cols[33]), 1], v: [stack(r.cols, 34, 3), 3], tpar: [f32(r.cols[37 + o]), 1], tperp: [f32(r.cols[38 + o]), 1],
+      ...(withST ? { vst: [stack(r.cols, 37, 3).map(x => (isFinite(x) ? x : 0)), 3] } : {}),
+      spec: [spec8(stack(r.cols, 1, 32), n, 32, sp), 32], etab: [Float32Array.from(FPI_EB[sp].flat()), 32], eidx: [eidx, 1],
+    });
+  }
   async function mms(n) {
     const sc = `mms${n}`, [a, b] = window_;
     const moms = (sp, st) => [`${sc}_${sp}_energyspectr_omni_fast`, `${sc}_${sp}_numberdensity_fast`, `${sc}_${sp}_bulkv_gse_fast`,
                               ...(st ? [`${sc}_${sp}_bulkv_spintone_gse_fast`] : []), `${sc}_${sp}_temppara_fast`, `${sc}_${sp}_tempperp_fast`];   // HAPI's order
+    const ba = AT - BURST_HALF * 1000, bb = AT + BURST_HALF * 1000;
+    const bmoms = (sp, st) => [`${sc}_${sp}_steptable_parity_brst`, `${sc}_${sp}_energyspectr_omni_brst`, `${sc}_${sp}_numberdensity_brst`, `${sc}_${sp}_bulkv_gse_brst`,
+                               ...(st ? [`${sc}_${sp}_bulkv_spintone_gse_brst`] : []), `${sc}_${sp}_temppara_brst`, `${sc}_${sp}_tempperp_brst`];
+    const burst = Promise.all([
+      track(`MMS${n} burst FGM`, hapiChunked(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, 6)),
+      track(`MMS${n} burst FPI ions`, hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb)),
+      track(`MMS${n} burst FPI electrons`, hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3)),
+    ]).catch((e) => { console.warn(e); return null; });
     const [fg, di, de] = await Promise.all([
       track(`MMS${n} FGM`, hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8)),
       track(`MMS${n} FPI ions`, hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b)),
@@ -183,7 +246,13 @@
       des: fpiSet(de, "des", true),
     };
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
-    return { sv, bu: null, kind: "mms", empty: !fg.n && !di.n };
+    const bu = burst.then((B3) => {                          // the burst data follow the survey, drawn when they arrive
+      if (!B3 || !(B3[0].n || B3[1].n || B3[2].n)) return null;
+      const out = { fgm: set({ t: [f32(B3[0].t), 1], b: [stack(B3[0].cols, 0, 4), 4] }), dis: fpiBurstSet(B3[1], "dis", false), des: fpiBurstSet(B3[2], "des", true) };
+      out.des.j = current(out.dis.t, out.dis.v, out.des.t, out.des.n, out.des.v); out.des.cols.j = 3;
+      return out;
+    });
+    return { sv, bu: null, burst: bu, kind: "mms", empty: !fg.n && !di.n };
   }
 
   // ───────────────────────── THEMIS ─────────────────────────
@@ -318,7 +387,7 @@
   const stamp = (ms) => iso(ms).replace(/[-:]/g, "");
   /** Positions (GSE, R_E) of several observatories over [a, b]: { id: { t (s after T0), p } }. */
   async function ssc(ids, a, b) {
-    const r = await fetch(`${SSC}/locations/${ids.join(",")}/${stamp(a)},${stamp(b)}/gse/`, { headers: { Accept: "application/json" } });
+    const r = await get(`${SSC}/locations/${ids.join(",")}/${stamp(a)},${stamp(b)}/gse/`, { headers: { Accept: "application/json" } });
     if (!r.ok) throw new Error(`SSCWeb: HTTP ${r.status}`);
     const text = await r.text();
     bytes += text.length; emit();
@@ -515,6 +584,90 @@
     return [S, out.buffer];
   }
 
+  // ───────────────────────── FPI-DES burst distributions, on demand ─────────────────────────
+  const DIST_LO = -35, DIST_HI = -23;                        // log10 s³/cm⁶ for the 8-bit phase-space densities
+  /** HAPI's binary format: each record an ASCII time (its length found from the first 'Z'), then little-endian doubles. */
+  async function hapiBinary(id, params, a, b, nd) {
+    const url = `${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}&format=binary`;
+    const buf = await slot(async () => {
+      const r = await get(url, undefined, 20000);
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
+      return r.arrayBuffer();
+    }, true);
+    if (!buf) return [];
+    const u8 = new Uint8Array(buf);
+    bytes += buf.byteLength; emit();
+    if (!u8.length || u8[0] === 123 || u8[0] === 44) return [];            // "{" or ",": a status, no records
+    let tl = 0; while (tl < 40 && u8[tl] !== 90) tl++; tl++;                // through the "Z"
+    const rec = tl + 8 * nd, out = [], dec = new TextDecoder();
+    for (let o = 0; o + rec <= buf.byteLength; o += rec) {
+      const ms = hapiTime(dec.decode(u8.subarray(o, o + tl)));
+      if (ms < a || ms > b) continue;
+      out.push({ t: sec(ms), v: new Float64Array(buf.slice(o + tl, o + rec)) });
+    }
+    return out;
+  }
+  const vdfStores = {};
+  /** A probe's distributions as hso.js reads them (the demo's vdf-mmsN.bin layout), growing a block at a time:
+   *  ensure(t) fetches the records within a second of t, with B (FGM, DMPA) and the electron bulk velocity (DBCS) at
+   *  each, and the DBCS → GSE rotation from the probe's own MEC attitude, as Helios takes it. */
+  function vdfStore(n) {
+    if (vdfStores[n]) return vdfStores[n];
+    const sc = `mms${n}`, S = vdfStores[n] = {
+      n, t: [], E: new Float32Array(0), PHI: new Float32Array(0), B: new Float32Array(0), V: new Float32Array(0), Q: new Float32Array(0),
+      D: new Uint8Array(0), lo: DIST_LO, hi: DIST_HI, dbcsToGSE: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], spans: [], pending: null, live: true,
+      covers(t) { return this.spans.some(([a, b]) => t >= a && t <= b); },
+      ensure(t) {
+        if (this.covers(t)) return Promise.resolve(true);
+        if (this.pending) return this.pending.then(() => this.ensure(t));
+        const a = T0 + (t - 1) * 1000, b = T0 + (t + 1) * 1000;
+        this.pending = track(`MMS${n} electron distributions ${new Date(T0 + t * 1000).toISOString().slice(11, 19)}`, Promise.all([
+          hapiBinary(`MMS${n}_FPI_BRST_L2_DES-DIST`, [`${sc}_des_dist_brst`, `${sc}_des_phi_brst`, `${sc}_des_energy_brst`], a, b, 16384 + 64),
+          hapi(`MMS${n}_FPI_BRST_L2_DES-MOMS`, [`${sc}_des_bulkv_dbcs_brst`], a - 100, b + 100, true),
+          hapi(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_dmpa_brst_l2`], a - 100, b + 100, true),
+          this.spans.length ? null : hapi(`MMS${n}_MEC_SRVY_L2_EPHT89D`, [`${sc}_mec_quat_eci_to_dbcs`, `${sc}_mec_quat_eci_to_gse`], a - 60e3, b + 60e3, true),
+        ])).then(([dist, mom, fgm, mecq]) => {
+          if (mecq && mecq.n) {                              // DBCS → GSE = (ECI → GSE)(ECI → DBCS)ᵀ, turned the way that puts the Sun on +X
+            const i = nearest(mecq.t, t), q = (c) => rot(mecq.cols[c][i], mecq.cols[c + 1][i], mecq.cols[c + 2][i], mecq.cols[c + 3][i]);
+            const sun = sunJ2000(T0 + t * 1000).u, G0 = q(4), flip = app(T_(G0), sun)[0] > app(G0, sun)[0];
+            const G = flip ? T_(G0) : G0, Dm = flip ? T_(q(0)) : q(0), M = mul(G, T_(Dm));
+            this.dbcsToGSE = [M.slice(0, 3), M.slice(3, 6), M.slice(6, 9)];
+          }
+          this.spans.push([t - 1, t + 1]);
+          const have = new Set(this.t.map(x => x.toFixed(4))), add = dist.filter(d => !have.has(d.t.toFixed(4)));
+          if (!add.length) return this.covers(t);
+          const all = this.t.map((x, i) => ({ t: x, i, old: true })).concat(add.map((d, i) => ({ t: d.t, i, old: false }))).sort((p, q_) => p.t - q_.t);
+          const N = all.length, E = new Float32Array(N * 32), PHI = new Float32Array(N * 32), B = new Float32Array(N * 3), V = new Float32Array(N * 3), D = new Uint8Array(N * 16384);
+          const span = DIST_HI - DIST_LO;
+          all.forEach((r, k) => {
+            if (r.old) {
+              E.set(this.E.subarray(r.i * 32, r.i * 32 + 32), k * 32); PHI.set(this.PHI.subarray(r.i * 32, r.i * 32 + 32), k * 32);
+              B.set(this.B.subarray(r.i * 3, r.i * 3 + 3), k * 3); V.set(this.V.subarray(r.i * 3, r.i * 3 + 3), k * 3);
+              D.set(this.D.subarray(r.i * 16384, r.i * 16384 + 16384), k * 16384);
+              return;
+            }
+            const d = add[r.i].v;
+            for (let j = 0; j < 16384; j++) {
+              const f = d[j];
+              if (f > 0 && f < 1e-10) D[k * 16384 + j] = Math.max(1, Math.min(255, Math.round(1 + (Math.log10(f) - DIST_LO) / span * 254)));
+            }
+            PHI.set(d.subarray(16384, 16416), k * 32); E.set(d.subarray(16416, 16448), k * 32);
+            const vi = nearest(mom.t, r.t);                   // the moments share the distributions' records
+            for (let c = 0; c < 3; c++) V[k * 3 + c] = mom.n && Math.abs(mom.t[vi] - r.t) < 0.016 ? mom.cols[c][vi] : NaN;
+            const s3 = [0, 0, 0]; let m = 0;                    // B over the record's 30 ms
+            for (let j = 0; j < fgm.n; j++) if (fgm.t[j] >= r.t && fgm.t[j] < r.t + 0.03) { for (let c = 0; c < 3; c++) s3[c] += fgm.cols[c][j]; m++; }
+            for (let c = 0; c < 3; c++) B[k * 3 + c] = m ? s3[c] / m : NaN;
+          });
+          Object.assign(this, { t: all.map(r => r.t), E, PHI, B, V, Q: new Float32Array(N), D });
+          return this.covers(t) && add.length > 0;
+        }).finally(() => { this.pending = null; });
+        return this.pending;
+      },
+    };
+    return S;
+  }
+
   // ───────────────────────── the source hso.js reads ─────────────────────────
   const craftCache = {};
   window.HSO_SOURCE = {
@@ -524,6 +677,8 @@
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
     mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : cluster(key))),
     scene,
+    vdf: (n) => vdfStore(n),
+    burstHalf: BURST_HALF,
     tasks: () => [...tasks],
   };
 })();

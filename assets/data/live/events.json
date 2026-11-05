@@ -1,0 +1,8 @@
+[
+  { "group": "Magnetic reconnection", "t": "2015-10-16T13:07:02Z", "name": "Dayside electron diffusion region", "short": "Burch 2016 EDR", "ref": "Burch et al. 2016, Science" },
+  { "group": "Magnetic reconnection", "t": "2015-12-08T11:20:44Z", "name": "Dayside electron diffusion region", "short": "Burch & Phan 2016 EDR", "ref": "Burch & Phan 2016, GRL" },
+  { "group": "Magnetic reconnection", "t": "2016-12-09T09:03:54Z", "name": "Electron-only reconnection in the magnetosheath", "short": "Phan 2018 e⁻-only", "ref": "Phan et al. 2018, Nature" },
+  { "group": "Magnetic reconnection", "t": "2017-07-11T22:34:03Z", "name": "Magnetotail electron diffusion region", "short": "Torbert 2018 tail EDR", "ref": "Torbert et al. 2018, Science" },
+  { "group": "Boundary waves", "t": "2015-09-08T10:10:00Z", "name": "Kelvin–Helmholtz waves with reconnection, dusk flank", "short": "Eriksson 2016 KH", "ref": "Eriksson et al. 2016, GRL · approximate time" },
+  { "group": "Storms", "t": "2024-05-10T17:05:00Z", "name": "May 2024 superstorm: sudden commencement", "short": "May 2024 storm SSC", "ref": "Hayakawa et al. 2025, ApJ" }
+]

@@ -77,17 +77,19 @@
           <span class="eyebrow">Live prototype · not yet on the site</span>
           <h1>The HSO screen, live</h1>
           <p class="lede">Pick a moment. Your browser fetches four hours of MMS survey data around it, the MMS orbit and frames, OMNI's solar wind, THEMIS and Cluster, and the rest of the fleet straight from NASA's public archives, and draws them in the demo's screens.</p>
+          <label class="live-ev"><span>Events</span><select id="live-event" aria-label="Open a known event"><option value="">Choose an event…</option></select></label>
+          <p class="live-or">or any moment</p>
           <form class="live-pick" id="live-pick">
             <label><span>Date (UTC)</span><input type="date" id="live-date" min="2015-09-01" required></label>
             <label><span>Time (UTC)</span><input type="time" id="live-time" step="60" required></label>
             <button class="btn" type="submit">Load this moment<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7h11M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></button>
           </form>
-          <p class="live-try">Try: <a href="?t=2015-10-16T13:07Z">16 Oct 2015 13:07</a> (Burch et al. 2016, the demo's event) · <a href="?t=2017-07-11T22:34Z">11 Jul 2017 22:34</a> (Torbert et al. 2018, magnetotail)</p>
+          <p class="live-ref" id="live-ref" hidden></p>
           <div class="live-status" id="live-status" hidden></div>
         </div>
         <div class="live-scope">
-          <p><b>Live now</b> MMS1–4 FGM survey and FPI fast moments and spectra · MMS MEC orbit, Kp and frames · OMNI 1-min solar wind · THEMIS A, D, E (FGM, ESA, EFI) · Cluster 1–4 (FGM, CIS, PEACE, CODIF H⁺) · positions from SSCWeb · planets from JPL's approximate elements</p>
-          <p><b>Not yet</b> burst data and VDF cuts · the Sun from SDO (a plain disk here) · field topology · Cluster's PEACE spectrogram</p>
+          <p><b>Live now</b> MMS1–4 FGM and FPI moments and spectra, survey for four hours and burst within 10 minutes of the moment · FPI-DES distributions for VDF cuts, fetched around each cut · MMS MEC orbit, Kp and frames · OMNI 1-min solar wind · THEMIS A, D, E (FGM, ESA, EFI) · Cluster 1–4 (FGM, CIS, PEACE, CODIF H⁺) · positions from SSCWeb · planets from JPL's approximate elements</p>
+          <p><b>Not yet</b> ion and HPCA distributions · the Sun from SDO (a plain disk here) · field topology · Cluster's PEACE spectrogram</p>
           <p><b>Sources</b> CDAWeb's HAPI server and SSCWeb (NASA SPDF), read directly by your browser: no Helios server is involved. Results come from the archives' current versions and are not checked by hand.</p>
         </div>
       </div>
@@ -204,14 +206,15 @@
       <div class="wrap">
         <div class="copy">
           <span class="eyebrow">About this prototype</span>
-          <h2>Tier 1: survey data for any moment</h2>
+          <h2>Survey and burst data for any moment</h2>
           <p>The screens and tools are the demo's. Only where the data come from has changed: here every number is fetched when you press Load, for the moment you pick.</p>
         </div>
         <div class="grid-notes">
-          <p><b>MMS.</b> FGM survey B in GSE (shown as one-second averages, fetched in eight pieces side by side), FPI fast-survey ion and electron moments and omni spectra, and MEC's orbit, Kp, dipole tilt and attitude quaternions, all from CDAWeb's HAPI server. FPI's fast energy tables are the demo's, which HAPI does not serve. Outside MMS's science regions FPI is off, so only B shows.</p>
+          <p><b>MMS.</b> FGM survey B in GSE (shown as one-second averages, fetched in eight pieces side by side), FPI fast-survey ion and electron moments and omni spectra, and MEC's orbit, Kp, dipole tilt and attitude quaternions, all from CDAWeb's HAPI server. FPI's energy tables are the demo's, which HAPI does not serve (burst records alternate between two, by FPI's step-table parity). Burst FGM and FPI moments load for ±10 minutes around the moment, where MMS took burst data. Outside MMS's science regions FPI is off, so only B shows.</p>
+          <p><b>Electron distributions.</b> A VDF cut fetches FPI-DES burst distributions within a second of its time, in HAPI's binary format, about 4 MB a second of data, with B from burst FGM and the electrons' bulk velocity at each record. GSE and GSM cuts turn the instrument frame with the probe's own MEC attitude, as Helios does. The cuts themselves are the demo's: geometric, on a 100 × 100 grid, with the same frames and options.</p>
           <p><b>Other missions.</b> THEMIS A, D and E: FGM, ESA reduced-mode moments and spectra (Helios's energy tables) and EFI. Cluster 1–4: FGM spin, CIS-CODIF H⁺ and PEACE prime parameters and CODIF H⁺ spectra. Each loads when its window opens. Missions not flying on the day are left out.</p>
           <p><b>The view.</b> OMNI's 1-minute solar wind sizes the magnetopause and bow shock. GEO and SM come from MEC's quaternions. THEMIS, Cluster, ARTEMIS, the Moon, SDO, the Van Allen Probes, Geotail and the L1 monitors are SSCWeb's. The planets use JPL's approximate elements, the stars are turned to the day, and the all-sky imagers are Helios's site list for that month.</p>
-          <p><b>What it costs.</b> About 20–30 MB per MMS probe for the four hours, most of it FGM, and a few MB for the scene. The archives answer in a few seconds each; nothing is cached between visits yet.</p>
+          <p><b>What it costs.</b> About 20–30 MB per MMS probe for the four hours of survey, most of it FGM, plus up to 20–40 MB of burst data where MMS took it, and a few MB for the scene. The archives answer in a few seconds each; nothing is cached between visits yet.</p>
         </div>
       </div>
     </section>

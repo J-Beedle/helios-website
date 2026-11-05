@@ -138,10 +138,27 @@
   }
   async function loadCraft(D, n) {
     if (D.craft[n]) return D.craft[n];
-    if (LIVE) {                                             // survey only: no burst segments
+    if (LIVE) {                                             // survey, and burst within SRC.burstHalf of the moment
       const C = Object.assign({ segs: { fgm: [], dis: [], des: [] }, erange: {} }, await SRC.craft(n));
       for (const ds of Object.keys(C.sv)) cadence(C.sv[ds]);
-      C.erange = { dis: edges([C.sv.dis]), des: edges([C.sv.des]) };
+      C.erange.dis = edges([C.sv.dis]); C.erange.des = edges([C.sv.des]);
+      if (C.burst) C.burst.then((bu) => {                      // the burst data, when they arrive: segments, ranges, a redraw
+        if (!bu) return;
+        C.bu = bu;
+        for (const ds of ["fgm", "dis", "des"]) {
+          const B = bu[ds], t = B.t, out = [];
+          cadence(B);
+          if (t.length) {
+            let st = t[0];
+            for (let i = 1; i < t.length; i++) if (t[i] - t[i - 1] > Math.max(1, B.gap)) { out.push([st, t[i - 1] + B.dt]); st = t[i]; }
+            out.push([st, t[t.length - 1] + B.dt]);
+          }
+          C.segs[ds] = out;
+        }
+        C.erange.dis = edges([C.sv.dis, bu.dis]); C.erange.des = edges([C.sv.des, bu.des]);
+        if (D.n === n) D.bu = bu;
+        window.dispatchEvent(new CustomEvent("hso-burst", { detail: n }));
+      }, () => {});
       return (D.craft[n] = C);
     }
     const e = D.m.craft[n], bufs = await Promise.all([e.survey.file, e.burst.file].map(fetchBuf));
@@ -1227,7 +1244,8 @@
   ];
   const VDF_OPTS = [["frame", "frame"], ["vmax", "electron axes"], ["contours", "electron contours"], ["sigma", "electron smoothing"],
                     ["records", "electron slice time"], ["subtract", "electron subtract"], ["zlo", "electron colors"], ["zhi", "electron colors"]];
-  const CRESCENT_T = { 2: 7622.195, 3: 7622.212 };         // 13:07:02.195 on MMS2; MMS3's crescent record starts at 02.212
+  const CRESCENT_T = { 2: (Date.UTC(2015, 9, 16, 13, 7, 2, 195) - T0) / 1000, 3: (Date.UTC(2015, 9, 16, 13, 7, 2, 212) - T0) / 1000 };
+  const HAS_CRESCENT = !LIVE || Math.abs(CRESCENT_T[2] - (SRC.at - SRC.t0) / 1000) < SRC.burstHalf;         // 13:07:02.195 on MMS2; MMS3's crescent record starts at 02.212
   const CRESCENT_HELP = "Burch et al. (2016)'s perpendicular crescent: a cut at 13:07:02.195 on MMS2 (02.212 on MMS3), B-aligned, axes ±15×10³ km/s, colors 10⁻³⁰–10⁻²⁵ s³/cm⁶, and the figure ±5 s around it";
   const CUT_COLORS = ["#1F6FD8", "#E8760C", "#2AA24A", "#8E44AD", "#D8322B", "#0E9AA7", "#C2185B", "#8D6E63"];   // VDFCutPalette
   const CHEV = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>';
@@ -1276,7 +1294,7 @@
         <div class="fw-pick"><button class="pick fw-pb" aria-haspopup="listbox" aria-expanded="false"><i class="sw"></i><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Spacecraft" hidden></div></div>
         <button class="fw-ic fw-sb" aria-label="Show the figure and analysis tools" aria-pressed="false" title="Figure and analysis tools">${HAM}</button>
         ${host.pinned != null ? `<span class="fw-pin" title="Pinned: opened while the time machine was at this moment">${clock(host.pinned)} UTC</span>` : ""}
-        <div class="fw-cuts" hidden><span class="fc-l">VDF cuts</span><span class="fc-chips"></span><button class="fc-cres" title="${esc(CRESCENT_HELP)}">Crescent</button><div class="fw-add"><button class="pick fc-add" aria-haspopup="menu" aria-expanded="false" title="Add a VDF cut: a species at the current time. Then drag its numbered line, or type its time in its column."><b>+</b>Add</button><div class="pick-menu fc-menu" role="menu" hidden></div></div></div>
+        <div class="fw-cuts" hidden><span class="fc-l">VDF cuts</span><span class="fc-chips"></span>${HAS_CRESCENT ? `<button class="fc-cres" title="${esc(CRESCENT_HELP)}">Crescent</button>` : ""}<div class="fw-add"><button class="pick fc-add" aria-haspopup="menu" aria-expanded="false" title="Add a VDF cut: a species at the current time. Then drag its numbered line, or type its time in its column."><b>+</b>Add</button><div class="pick-menu fc-menu" role="menu" hidden></div></div></div>
         <div class="fw-range"><button class="fw-reset" hidden aria-label="Reset the time range" title="Reset the trimmed time range to the full ±window (or double-click the figure)">${RESET}</button><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
       </div>
       <div class="fw-main">
@@ -1303,6 +1321,12 @@
       [A.a, A.b] = host.span(); A.home = [A.a, A.b];
     }
     W.app = A;
+    if (LIVE) window.addEventListener("hso-burst", (e) => {     // live: the burst data arrived after the window drew
+      if (W.n !== e.detail) return;
+      const d = D.craft[W.n];
+      Object.assign(W.view, { bu: d.bu, segs: d.segs, erange: d.erange });
+      W.redraw(); redrawCuts();
+    });
     W.panel = Panel(W.view, A, $(".fw-plot", el), $(".fw-over", el), {
       mission: CRAFT[n0].mission, stack: MISSIONS[CRAFT[n0].mission].stack.slice(),
       onMark: (k, t) => moveCut(W.vdf.cuts[k], t),
@@ -1406,7 +1430,7 @@
       const last = VDF_PRESETS.find(p => p.id === V.preset) || VDF_PRESETS[0];
       const changed = match ? [] : [...new Set(VDF_OPTS.filter(([k]) => last.v[k] !== V[k]).map(([, label]) => label))];
       let h = `<p class="tk-h3">VDF options</p>`;
-      h += `<button class="tk-btn tk-cres" data-act="crescent" title="${esc(CRESCENT_HELP)}">Show the Burch crescent<small>13:07:02.195 · B-aligned · ±15×10³ km/s</small></button>`;
+      if (HAS_CRESCENT) h += `<button class="tk-btn tk-cres" data-act="crescent" title="${esc(CRESCENT_HELP)}">Show the Burch crescent<small>13:07:02.195 · B-aligned · ±15×10³ km/s</small></button>`;
       h += tk.opt("Preset", tk.sel('data-vdf="preset"', [...VDF_PRESETS.map(p => [p.id, p.name]), ["torbert", "Torbert et al. 2018 (electrons) · in the app", true],
         ["wang", "Wang et al. 2019 (ions) · in the app", true], ...(match ? [] : [["custom", `${last.name} · modified`]])], match ? match.id : "custom"), "auto");
       if (!match) h += tk.note(`Modified from ${last.name}: ${changed.join(", ")}.`, true);
@@ -1465,11 +1489,9 @@
         h += `<section class="tk-sec">${tk.h("Analysis panels")}`
           + tk.sw('data-an="lmn"', "LMN frame", W.lmn.panel, "The LMN frame workbench beside the figure: calculate a frame, apply a saved one, or enter axes");
         if (!W.lmn.panel) h += W.lmn.error ? tk.note(esc(W.lmn.error), true) : W.lmn.frame ? tk.note(lmnStatus()) : "";
-        if (mms && LIVE) {
-          h += tk.sw("", "VDF cuts", false, "Live VDFs need FPI burst data: the next step for this prototype. The demo page shows them for 16 Oct 2015.", true);
-        } else if (mms) {
+        if (mms) {
           h += tk.sw('data-an="vdf"', "VDF cuts", W.vdf.on, "Velocity-distribution cuts beside the figure, one column per cut");
-          if (!W.vdf.on) h += tk.link("crescent", "Show the Burch crescent · 13:07:02.195", CRESCENT_HELP);
+          if (!W.vdf.on && HAS_CRESCENT) h += tk.link("crescent", "Show the Burch crescent · 13:07:02.195", CRESCENT_HELP);
           if (W.vdf.on) h += `<div class="tk-ind">${tk.note("Cuts attach to the right, one column each. Add a species with + Add above them; drag a cut's numbered line on the figure, or type its time in its column. FPI cuts need burst; HPCA uses survey.")}${vdfOptionsHTML()}</div>`;
           h += tk.sw("", "HPCA TOF", false, "In the app: the TOF workbench beside the figure", true)
             + tk.sw("", "Modified Alfvén", false, "In the app: V_out from the painted inflow regions, HPCA mass densities and B_L (Cassak & Shay 2007)", true);
@@ -1483,7 +1505,7 @@
         h += `</section>`;
       }
       h += tk.dis("data", "Data · in this page", W.open.has("data"),
-        tk.note(LIVE ? `Fetched live from CDAWeb (HAPI) and SSCWeb for this moment: ${(D.bytes / 1e6).toFixed(1)} MB so far, survey data only.`
+        tk.note(LIVE ? `Fetched live from CDAWeb (HAPI) and SSCWeb for this moment: ${(D.bytes / 1e6).toFixed(1)} MB so far. Survey data for four hours, burst data within ${SRC.burstHalf / 60} minutes of the moment, and electron distributions around each VDF cut.`
           : `Cut down from public Level 2 data for this demo and loaded with the page: ${(D.bytes / 1e6).toFixed(1)} MB so far. Helios fetches any window live and keeps saved events and pinned windows on disk.`));
       return h;
     }
@@ -1665,7 +1687,8 @@
     async function loadCuts() {
       const V = W.vdf;
       V.data = null;
-      if (V.on && (W.n === 2 || W.n === 3)) V.data = await loadVDF(W.n).catch(() => null);
+      if (V.on && LIVE && CRAFT[W.n].mission === "mms") V.data = SRC.vdf(W.n);
+      else if (V.on && (W.n === 2 || W.n === 3)) V.data = await loadVDF(W.n).catch(() => null);
       renderCuts();
     }
     /** Where + Add puts a cut (effectiveVdfTime): the last cut's time, else the window's moment while it is on screen,
@@ -1704,10 +1727,10 @@
         + ["H⁺", "He⁺⁺", "He⁺", "O⁺"].map(s => `<button role="menuitem" ${off}>HPCA ${s}</button>`).join("")
         + `<p class="pm-h">Four-spacecraft ∇fₑ — Vlasov terms (Shuster et al.)</p><button role="menuitem" ${off}>The ∇fₑ terms · in the app</button>`
         + (last ? `<hr><button role="menuitem" data-add="next">Another fₑ electrons cut, 1 s later</button>` : "")
-        + `<hr><button role="menuitem" data-add="crescent" title="${esc(CRESCENT_HELP)}">The Burch et al. 2016 crescent, ${clock(CRESCENT_T[W.n] ?? CRESCENT_T[2], true)}</button>`
+        + (HAS_CRESCENT ? `<hr><button role="menuitem" data-add="crescent" title="${esc(CRESCENT_HELP)}">The Burch et al. 2016 crescent, ${clock(CRESCENT_T[W.n] ?? CRESCENT_T[2], true)}</button>` : "")
         + (W.vdf.cuts.length ? `<hr><button role="menuitem" class="pm-danger" data-add="clear">Remove all cuts</button>` : "");
     }
-    $(".fc-cres", el).addEventListener("click", () => W.crescent());
+    if (HAS_CRESCENT) $(".fc-cres", el).addEventListener("click", () => W.crescent());
     $(".fc-menu", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-add]");
       if (!b) return;
@@ -1721,8 +1744,8 @@
     const vdfOpts = () => {
       const V = W.vdf, L = W.lmn, f = L.frame;
       let gsm = null;
-      if (V.frame === "gsm" && host.S) {                    // GSE → GSM from the dipole axis at 13:07 (MEC's SM frame)
-        const F = host.S.frames, i = F.t.reduce((b, t, k) => (Math.abs(t - 7620) < Math.abs(F.t[b] - 7620) ? k : b), 0), m = F.sm[i];
+      if (V.frame === "gsm" && host.S) {                    // GSE → GSM from the dipole axis at the event (MEC's SM frame)
+        const tc = D.m.event.crossing, F = host.S.frames, i = F.t.reduce((b, t, k) => (Math.abs(t - tc) < Math.abs(F.t[b] - tc) ? k : b), 0), m = F.sm[i];
         const y = unit3(cross3([m[2], m[5], m[8]], [1, 0, 0]));
         gsm = [[1, 0, 0], y, cross3([1, 0, 0], y)];
       }
@@ -1749,8 +1772,15 @@
       const out = V ? cutFPI(V, c.t, vdfOpts()) : null;
       cv.hidden = !out; msg.hidden = !!out;
       $(".vd-title", box).textContent = out ? `fₑ electrons · ${out.tag}` : "fₑ electrons";
-      $(".vd-rec", box).textContent = out ? `record 2015-10-16  ${clock(out.start, true)}–${clock(out.end, true).slice(6)} UT` : "—";
+      $(".vd-rec", box).textContent = out ? `record ${new Date(T0 + out.start * 1000).toISOString().slice(0, 10)}  ${clock(out.start, true)}–${clock(out.end, true).slice(6)} UT` : "—";
       $(".vd-note", box).textContent = out ? out.note : "";
+      if (!out && LIVE && V) {                              // live: fetch the distributions around the cut, then draw
+        if (!V.covers(c.t)) {
+          msg.textContent = "fetching electron distributions from CDAWeb…";
+          V.ensure(c.t).then(() => drawCut(c), () => { msg.textContent = "The distributions could not be fetched."; });
+        } else msg.textContent = "No FPI-DES burst distribution at this time. Burst data come in segments: drag the cut's line into one (the green bar above the figure), or type a time in it.";
+        return;
+      }
       if (!out) {
         msg.textContent = W.n !== 2 && W.n !== 3
           ? "This demo carries FPI-DES burst distributions for MMS2 and MMS3, 13:07:01.0–03.5 UT: pick one from this window's menu. Helios loads any burst interval, for any probe."
