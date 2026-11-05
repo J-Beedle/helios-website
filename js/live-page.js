@@ -57,8 +57,8 @@
   // what is loading
   const box = $("#live-status");
   window.addEventListener("hso-live", (e) => {
-    const { tasks, bytes } = e.detail, word = { loading: "fetching…", ok: "✓", none: "no data", error: "failed" };
+    const { tasks, bytes, relay } = e.detail, word = { loading: "fetching…", ok: "✓", none: "no data", error: "failed" };
     box.hidden = false;
-    box.innerHTML = `<p class="ls-h">${(bytes / 1e6).toFixed(1)} MB fetched</p><ul>${tasks.map(([k, v]) => `<li class="${v}"><span>${k}</span><b>${word[v]}</b></li>`).join("")}</ul>`;
+    box.innerHTML = `<p class="ls-h">${(bytes / 1e6).toFixed(1)} MB fetched · ${relay ? "through the Helios cache" : "directly from the archives"}</p><ul>${tasks.map(([k, v]) => `<li class="${v}"><span>${k}</span><b>${word[v]}</b></li>`).join("")}</ul>`;
   });
 })();

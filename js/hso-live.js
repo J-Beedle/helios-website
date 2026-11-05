@@ -15,7 +15,7 @@
 
   const HALF = 2 * 3600, SPAN = 2 * HALF, T0 = AT - HALF * 1000;   // the overview runs two hours either side
   const KEEP = [-3 * 3600, SPAN + 3 * 3600];               // ephemeris kept around it, as the demo's scene
-  const HAPI = "https://cdaweb.gsfc.nasa.gov/hapi", SSC = "https://sscweb.gsfc.nasa.gov/WS/sscr/2";
+  let HAPI = "https://cdaweb.gsfc.nasa.gov/hapi", SSC = "https://sscweb.gsfc.nasa.gov/WS/sscr/2";
   const RE_KM = 6371.2, MK_EV = 86.1733, DEG = Math.PI / 180;
   const SPEC_RANGE = { dis: [3.5, 7.8], des: [4.8, 8.8] };   // log10 keV/(cm² s sr keV), as the demo
   // FPI's fast-survey energy tables (eV), which HAPI does not serve: the same on all four probes in the demo's files
@@ -58,14 +58,32 @@
     return p.then((v) => { tasks.set(label, v && v.empty ? "none" : "ok"); emit(); return v; },
                   (e) => { tasks.set(label, "error"); emit(); console.warn(label, e); throw e; });
   }
-  function emit() { window.dispatchEvent(new CustomEvent("hso-live", { detail: { tasks: [...tasks], bytes } })); }
+  function emit() { window.dispatchEvent(new CustomEvent("hso-live", { detail: { tasks: [...tasks], bytes, relay: viaRelay } })); }
+
+  // ───────────────────────── the relay (server/live_cache.py): the archives behind one cached origin ─────────────────────────
+  // ?cache=<url> or assets/data/live/config.json's "cache" names it; ?cache=off, no config or no answer within 2.5 s
+  // means the archives directly, as before.
+  let viaRelay = false;
+  const relay = (async () => {
+    let url = q.get("cache");
+    if (url === null) url = (await fetch("assets/data/live/config.json").then(r => r.json()).catch(() => ({}))).cache || "";
+    url = url.replace(/\/$/, "");
+    if (!url || url === "off") return false;
+    try {
+      const r = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2500) });
+      if (r.ok) { HAPI = `${url}/hapi`; SSC = `${url}/sscweb`; viaRelay = true; emit(); return true; }
+    } catch (e) { /* the archives directly */ }
+    return false;
+  })();
 
   // ───────────────────────── a polite client: a few requests at a time, retried when the server is busy ─────────────────────────
-  const MAXQ = 4, queue = [];
+  let MAXQ = 4;
+  const queue = [];
   let active = 0;
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   /** Runs fn when one of MAXQ slots is free; `first` jumps the queue (a VDF cut the viewer is waiting on). */
-  function slot(fn, first) {
+  async function slot(fn, first) {
+    if (await relay && MAXQ < 6) MAXQ = 6;                    // the relay keeps its own limit on the archives
     return new Promise((res, rej) => {
       const run = () => { active++; fn().then(res, rej).finally(() => { active--; const next = queue.shift(); if (next) next(); }); };
       if (active < MAXQ) run(); else if (first) queue.unshift(run); else queue.push(run);
@@ -96,9 +114,8 @@
   /** One HAPI request as CSV: the rows inside [a, b] (CDAWeb answers an empty interval with the nearest record), their
    *  times in seconds after T0, and each column after Time; fill values (|x| ≥ 1e30) become NaN. */
   function hapi(id, params, a, b, first, openEnd) {
-    const url = `${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`;
     return slot(async () => {
-      const r = await get(url);
+      const r = await get(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`);
       if (r.status === 404) return null;
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
       return r.text();
@@ -140,7 +157,7 @@
   }
   /** One parameter's bins (HAPI info), for spectra the server labels itself. */
   async function hapiBins(id, param) {
-    const r = await slot(() => get(`${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`));
+    const r = await slot(() => get(`${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`));   // HAPI is read inside, after the relay
     if (!r.ok) return null;
     const p = (await r.json()).parameters.find(x => x.name === param);
     return p && p.bins && p.bins[0].centers;
@@ -387,6 +404,7 @@
   const stamp = (ms) => iso(ms).replace(/[-:]/g, "");
   /** Positions (GSE, R_E) of several observatories over [a, b]: { id: { t (s after T0), p } }. */
   async function ssc(ids, a, b) {
+    await relay;
     const r = await get(`${SSC}/locations/${ids.join(",")}/${stamp(a)},${stamp(b)}/gse/`, { headers: { Accept: "application/json" } });
     if (!r.ok) throw new Error(`SSCWeb: HTTP ${r.status}`);
     const text = await r.text();
@@ -588,9 +606,8 @@
   const DIST_LO = -35, DIST_HI = -23;                        // log10 s³/cm⁶ for the 8-bit phase-space densities
   /** HAPI's binary format: each record an ASCII time (its length found from the first 'Z'), then little-endian doubles. */
   async function hapiBinary(id, params, a, b, nd) {
-    const url = `${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}&format=binary`;
     const buf = await slot(async () => {
-      const r = await get(url, undefined, 20000);
+      const r = await get(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}&format=binary`, undefined, 20000);
       if (r.status === 404) return null;
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
       return r.arrayBuffer();
