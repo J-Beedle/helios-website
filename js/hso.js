@@ -12,7 +12,9 @@
   const MONO = 'ui-monospace, "SF Mono", Menlo, "IBM Plex Mono", monospace';
   const COL = { x: "#2a46d6", y: "#1e8a36", z: "#d8282a", mag: "#151515", ni: "#2a46d6", ne: "#ee8a1c", perp: "#d8282a", par: "#2a46d6" };
   const PAPER = "#f6f4fb", INK = "#1d1d22", INK2 = "rgba(29,29,34,0.6)", RULE = "rgba(29,29,34,0.16)", ORANGE = "#f39a1e";
-  const T0 = Date.UTC(2015, 9, 16, 11, 0, 0);
+  // live.html sets HSO_SOURCE (hso-live.js): the same screens on data fetched from the archives for any moment
+  const SRC = window.HSO_SOURCE || null, LIVE = !!SRC;
+  let T0 = SRC ? SRC.t0 : Date.UTC(2015, 9, 16, 11, 0, 0);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   // a jet-like scale for the spectrograms, as Helios and SPEDAS draw them
@@ -105,6 +107,7 @@
 
   /** The manifest and the context (MMS1's orbit, OMNI); each probe's data loads when it is first needed. */
   async function load() {
+    if (LIVE) { const r = await SRC.load(); return { m: r.m, ctx: r.ctx, craft: {}, get bytes() { return SRC.bytes; }, set bytes(v) {} }; }
     const m = await fetch(BASE + "manifest.json").then(r => r.json());
     const ctx = await fetchBuf(m.context.file);
     return { m, ctx: unpack(ctx, m.context.arrays), craft: {}, bytes: ctx.byteLength };
@@ -114,7 +117,7 @@
     const t = S.t, st = [];
     for (let i = 1; i < t.length; i += Math.max(1, Math.floor(t.length / 500))) st.push(t[i] - t[i - 1]);
     st.sort((p, q) => p - q);
-    S.dt = st[st.length >> 1] || 1;
+    S.dt = st[st.length >> 1] || 1;          // 1 s for a record set with nothing in the window
     S.gap = 3.2 * S.dt;
   }
   /** Energy-bin edges (log10 eV) for each energy table of the given record sets, and the axis they span. */
@@ -135,6 +138,12 @@
   }
   async function loadCraft(D, n) {
     if (D.craft[n]) return D.craft[n];
+    if (LIVE) {                                             // survey only: no burst segments
+      const C = Object.assign({ segs: { fgm: [], dis: [], des: [] }, erange: {} }, await SRC.craft(n));
+      for (const ds of Object.keys(C.sv)) cadence(C.sv[ds]);
+      C.erange = { dis: edges([C.sv.dis]), des: edges([C.sv.des]) };
+      return (D.craft[n] = C);
+    }
     const e = D.m.craft[n], bufs = await Promise.all([e.survey.file, e.burst.file].map(fetchBuf));
     const C = { sv: unpack(bufs[0], e.survey.arrays), bu: unpack(bufs[1], e.burst.arrays), kind: "mms" };
     D.bytes += bufs[0].byteLength + bufs[1].byteLength;
@@ -156,6 +165,11 @@
   let missionsIndex = null;
   async function loadMission(D, key) {
     if (D.craft[key]) return D.craft[key];
+    if (LIVE) {
+      const C = Object.assign({ segs: {}, erange: {} }, await SRC.mission(key));
+      for (const ds of Object.keys(C.sv)) { cadence(C.sv[ds]); C.segs[ds] = []; if (C.sv[ds].etab) C.erange[ds] = edges([C.sv[ds]]); }
+      return (D.craft[key] = C);
+    }
     missionsIndex = missionsIndex || await fetch(BASE + "missions.json").then(r => r.json());
     const e = missionsIndex[key], buf = await fetchBuf(e.survey.file);
     const C = { sv: unpack(buf, e.survey.arrays), bu: null, segs: {}, erange: {}, kind: key, label: e.label, notes: e.notes };
@@ -427,7 +441,8 @@
   function has(D, mission, key) {
     const k = KINDS[key] && kindOf(mission, key);
     if (!k) return false;
-    return k.spec ? !!D.sv[k.spec] : k.lines.some(l => D.sv[l.ds]);
+    const ok = (S) => !!S && (!LIVE || S.t.length > 0);       // live: a record set with nothing that day does not count
+    return k.spec ? ok(D.sv[k.spec]) : k.lines.some(l => ok(D.sv[l.ds]));
   }
 
   // ───────────────────────── the corrections, as Helios applies them ─────────────────────────
@@ -696,7 +711,7 @@
         ctx.fillRect(Math.round(x), yb, 1, 4);
         rich(ctx, secs ? clock(t) : clock(t).slice(0, 5), x, yb + 12, { size: 10.5, align: "center" });
       }
-      rich(ctx, `Time: 2015-10-16${cfg.lmn ? ` · ${cfg.lmn.label}` : ""}`, Pl.x + Pl.w / 2, h - 10, { size: 10.5, align: "center", color: INK2 });
+      rich(ctx, `Time: ${new Date(T0 + (a + b) / 2 * 1000).toISOString().slice(0, 10)}${cfg.lmn ? ` · ${cfg.lmn.label}` : ""}`, Pl.x + Pl.w / 2, h - 10, { size: 10.5, align: "center", color: INK2 });
       overlay();
     }
 
@@ -1184,15 +1199,24 @@
 
   // ───────────────────────── the data window ─────────────────────────
   const PROBE_COL = { 1: "#ebebeb", 2: "#ed7821", 3: "#128c66", 4: "#4fa8ed" };
-  const MMS_FAM = [1, 2, 3, 4], THM_FAM = ["tha", "THEMIS-D", "THEMIS-E"], CL_FAM = ["Cluster-1", "Cluster-2", "Cluster-3", "c4"];
+  const MMS_FAM = [1, 2, 3, 4], THM_FAM = LIVE ? ["tha", "thd", "the"] : ["tha", "THEMIS-D", "THEMIS-E"];
+  const CL_FAM = LIVE ? ["c1", "c2", "c3", "c4"] : ["Cluster-1", "Cluster-2", "Cluster-3", "c4"];
   const CRAFT = {
     1: { name: "MMS1", col: PROBE_COL[1], mission: "mms", family: MMS_FAM }, 2: { name: "MMS2", col: PROBE_COL[2], mission: "mms", family: MMS_FAM },
     3: { name: "MMS3", col: PROBE_COL[3], mission: "mms", family: MMS_FAM }, 4: { name: "MMS4", col: PROBE_COL[4], mission: "mms", family: MMS_FAM },
     tha: { name: "THEMIS-A", col: "#ff74c4", mission: "tha", family: THM_FAM },
     c4: { name: "Cluster-4", col: "#7fe3a1", mission: "c4", family: CL_FAM },
   };
+  if (LIVE) Object.assign(CRAFT, {
+    thd: { name: "THEMIS-D", col: "#ff9a52", mission: "tha", family: THM_FAM }, the: { name: "THEMIS-E", col: "#c18cff", mission: "tha", family: THM_FAM },
+    c1: { name: "Cluster-1", col: "#a8f0c0", mission: "c4", family: CL_FAM }, c2: { name: "Cluster-2", col: "#62d9a0", mission: "c4", family: CL_FAM },
+    c3: { name: "Cluster-3", col: "#3fbf86", mission: "c4", family: CL_FAM },
+  });
   /** The craft a click on the view opens: the demo carries one probe of each other mission, and stands it in for the rest. */
-  const representative = (name) => (/^THEMIS/.test(name) ? "tha" : /^Cluster/.test(name) ? "c4" : null);
+  const representative = (name) => {
+    if (LIVE) { const m = /^THEMIS-([ADE])$/.exec(name) || /^Cluster-([1-4])$/.exec(name); return m ? (/\d/.test(m[1]) ? `c${m[1]}` : `th${m[1].toLowerCase()}`) : null; }
+    return /^THEMIS/.test(name) ? "tha" : /^Cluster/.test(name) ? "c4" : null;
+  };
   const WINDOW_CHOICES = [5, 10, 30, 90, 180];             // ±minutes, as HSOScreen.windowChoices
   const rangeLabel = (m) => (m >= 60 && m % 60 === 0 ? `±${m / 60}h` : `±${m}m`);
   // VDFPresets: a preset sets every electron option it covers. "App default" is Helios's own; the crescent preset is this
@@ -1212,7 +1236,7 @@
   const HAM = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
   const CANON = ["b", "ionSpec", "elecSpec", "n", "ti", "te", "tanis", "p", "vi", "ve", "jfpi", "jpar", "jperp", "e"];
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const DAY = "16 Oct 2015";
+  const DAY = (() => { const d = new Date(T0 + 7200e3); return `${d.getUTCDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]} ${d.getUTCFullYear()}`; })();
   const hmsShort = (t) => { const s = clock(t, true); return s.endsWith(".000") ? s.slice(0, 8) : s; };
   const durText = (s) => (s < 10 ? `${s.toFixed(2)} s` : s < 100 ? `${s.toFixed(1)} s` : `${Math.round(s)} s`);
   /** "13:07:02.175", "13:07:02" or "13:07" on the event's day → seconds from 11:00 UT; null when it does not parse. */
@@ -1221,7 +1245,8 @@
     if (p.length < 2 || p.length > 3) return null;
     const h = +p[0], m = +p[1], s = p.length === 3 ? +p[2] : 0;
     if (![h, m, s].every(isFinite) || h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s >= 61) return null;
-    return h * 3600 + m * 60 + s - 11 * 3600;
+    const d = new Date(T0);                                 // seconds from T0, on T0's day
+    return h * 3600 + m * 60 + s - (d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds());
   }
   /** The tools sidebar's controls (ToolsKit): headings, disclosures, checkboxes, switches, notes and option rows. */
   const tk = {
@@ -1341,8 +1366,9 @@
       const data = D.craft[k], newMission = !W.n || CRAFT[W.n].mission !== Cr.mission;
       Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind });
       W.n = k;
-      if (newMission) {
+      if (newMission || LIVE) {                              // live: only the subplots that probe has data for that day
         C.mission = Cr.mission; C.stack = MISSIONS[Cr.mission].stack.slice();
+        if (LIVE) { const kept = C.stack.filter(q => has(W.view, Cr.mission, q)); if (kept.length) C.stack = kept; }
         if (Cr.mission !== "mms") W.vdf.on = false;
       }
       // a frame belongs to the craft it was solved on (Helios keys it by craft): a new craft starts in GSE
@@ -1439,7 +1465,9 @@
         h += `<section class="tk-sec">${tk.h("Analysis panels")}`
           + tk.sw('data-an="lmn"', "LMN frame", W.lmn.panel, "The LMN frame workbench beside the figure: calculate a frame, apply a saved one, or enter axes");
         if (!W.lmn.panel) h += W.lmn.error ? tk.note(esc(W.lmn.error), true) : W.lmn.frame ? tk.note(lmnStatus()) : "";
-        if (mms) {
+        if (mms && LIVE) {
+          h += tk.sw("", "VDF cuts", false, "Live VDFs need FPI burst data: the next step for this prototype. The demo page shows them for 16 Oct 2015.", true);
+        } else if (mms) {
           h += tk.sw('data-an="vdf"', "VDF cuts", W.vdf.on, "Velocity-distribution cuts beside the figure, one column per cut");
           if (!W.vdf.on) h += tk.link("crescent", "Show the Burch crescent · 13:07:02.195", CRESCENT_HELP);
           if (W.vdf.on) h += `<div class="tk-ind">${tk.note("Cuts attach to the right, one column each. Add a species with + Add above them; drag a cut's numbered line on the figure, or type its time in its column. FPI cuts need burst; HPCA uses survey.")}${vdfOptionsHTML()}</div>`;
@@ -1455,7 +1483,8 @@
         h += `</section>`;
       }
       h += tk.dis("data", "Data · in this page", W.open.has("data"),
-        tk.note(`Cut down from public Level 2 data for this demo and loaded with the page: ${(D.bytes / 1e6).toFixed(1)} MB so far. Helios fetches any window live and keeps saved events and pinned windows on disk.`));
+        tk.note(LIVE ? `Fetched live from CDAWeb (HAPI) and SSCWeb for this moment: ${(D.bytes / 1e6).toFixed(1)} MB so far, survey data only.`
+          : `Cut down from public Level 2 data for this demo and loaded with the page: ${(D.bytes / 1e6).toFixed(1)} MB so far. Helios fetches any window live and keeps saved events and pinned windows on disk.`));
       return h;
     }
     function renderSide() { if (!W.sideOpen) return; const top = side.scrollTop; side.innerHTML = sideHTML(); side.scrollTop = top; }
@@ -1804,7 +1833,7 @@
 
     // the view, and its time bar
     const scene = window.HSOView({
-      root: body, S, stars, orbit: D.ctx.orbit, omni: D.ctx.omni, clock, stamp: (t) => `${clock(t).slice(0, 5)} UTC`,
+      root: body, S, stars, orbit: D.ctx.orbit, omni: D.ctx.omni, clock, stamp: (t) => `${clock(t).slice(0, 5)} UTC`, ...viewOpts(),
       onMMS: (n, t) => open(n, scrubbed ? t : null),
       onOther: (name, t) => {
         const key = representative(name);
@@ -1982,6 +2011,11 @@
   }
 
   // ───────────────────────── the workspace ─────────────────────────
+  /** What the HSO view needs beyond the scene: the live page has no SDO map yet, and its own day. */
+  function viewOpts() {
+    const d = new Date(T0 + 7200e3);
+    return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}` } : {};
+  }
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const stamp = (t) => { const d = new Date(T0 + t * 1000); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} · ${clock(t).slice(0, 5)} UTC`; };
 
@@ -1989,7 +2023,7 @@
     const root = $("#app");
     if (!root) return;
     // the HSO view's scene (Helios's ephemeris cache for the event) and its stars, fetched alongside MMS1's data
-    const sceneData = Promise.all([fetch(BASE + "scene.json").then(r => r.json()), fetchBuf("stars.bin")]);
+    const sceneData = LIVE ? SRC.scene() : Promise.all([fetch(BASE + "scene.json").then(r => r.json()), fetchBuf("stars.bin")]);
     let D, S = null, stars = null;
     try { D = await load(); } catch (e) {
       $("#app-loading").textContent = $("#stage-loading").textContent = "The demo's data could not be loaded.";
@@ -2056,7 +2090,7 @@
     try {
       if (!S) throw new Error("no scene");
       scene = window.HSOView({
-        root: $("#scene-body"), S, stars, orbit: D.ctx.orbit, omni: D.ctx.omni, clock, stamp: (t) => `${clock(t).slice(0, 5)} UTC`,
+        root: $("#scene-body"), S, stars, orbit: D.ctx.orbit, omni: D.ctx.omni, clock, stamp: (t) => `${clock(t).slice(0, 5)} UTC`, ...viewOpts(),
         onMMS: (n) => { openPanel(); win.setCraft(n); },
         onOther: (name) => {
           const key = representative(name);
@@ -2070,7 +2104,7 @@
     } catch (e) {
       $("#scene-body").insertAdjacentHTML("beforeend", '<p class="scene-fail">The HSO view could not load.</p>');
     }
-    fetch(BASE + "topology.json").then(r => r.json()).then(d => scene && scene.setTopology(d)).catch(() => {});
+    if (!LIVE) fetch(BASE + "topology.json").then(r => r.json()).then(d => scene && scene.setTopology(d)).catch(() => {});
     // the View menu: field topology and the boundaries
     const viewBtn = $("#view-btn"), viewMenu = $("#view-menu");
     const shutView = () => { viewMenu.hidden = true; viewBtn.setAttribute("aria-expanded", "false"); };

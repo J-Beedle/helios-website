@@ -503,7 +503,7 @@
     // the near side from the image of the moment and the far side from those of the rotation before, carried forward by
     // differential rotation (prepare_hso_sun.py); here it is turned to the view and drawn as a sphere.
     let sunMap = null;
-    fetch("assets/data/hso/sun.json").then(r => r.json()).then(m => {
+    if (o.sun !== null) fetch(o.sun || "assets/data/hso/sun.json").then(r => r.json()).then(m => {
       const im = new Image();
       im.onload = () => {
         const c = document.createElement("canvas"); c.width = m.width; c.height = m.height;
@@ -1179,7 +1179,7 @@
         `<p><span>IMF Bz</span><b>${isFinite(w.bz) ? (w.bz >= 0 ? "+" : "") + w.bz.toFixed(1) + " nT" : "—"}</b></p>` +
         `<p><span>Dyn. press</span><b>${f(Dp, 1, "nPa")}</b></p>` +
         (south ? `<p class="sw-s">southward · geoeffective</p>` : "") +
-        `<p class="sw-t">Oct 16 · ${o.clock(w.t - 30).slice(0, 5)} UTC</p>`;
+        `<p class="sw-t">${o.day || "Oct 16"} · ${o.clock(w.t - 30).slice(0, 5)} UTC</p>`;
       if (swBox.dataset.html !== html) { swBox.innerHTML = html; swBox.dataset.html = html; swBox.classList.toggle("south", south); }
     }
 
