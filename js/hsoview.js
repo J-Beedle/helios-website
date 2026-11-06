@@ -819,14 +819,31 @@
         }
       }
       // the sky images (live): each dark THEMIS camera's one-minute frame at 110 km, as Helios's AuroraLayer lays them
-      if (o.sky) drawSky(ctx);
-      // the all-sky imagers running that day: filled where the sky is dark enough to image (Sun below −10°)
+      if (o.sky) {
+        // live: each imaging camera's field of view (10° elevation at 110 km ≈ 4.5°), as Helios draws it, under its frame
+        const M0 = frameAt("geo", time), g = 4.5 * DEG, at = (la, lo) => mul(M0, [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)]);
+        for (const s of S.asi) {
+          const la = s.lat * DEG, lo = s.lon * DEG, n = at(la, lo);
+          if (dot(n, P.basis.toward) <= 0.02 || !(Math.asin(clamp(n[0], -1, 1)) / DEG < -12)) continue;
+          ctx.beginPath();
+          for (let k = 0; k <= 48; k++) {
+            const az = k / 48 * TAU, la2 = Math.asin(Math.sin(la) * Math.cos(g) + Math.cos(la) * Math.sin(g) * Math.cos(az));
+            const lo2 = lo + Math.atan2(Math.sin(az) * Math.sin(g) * Math.cos(la), Math.cos(g) - Math.sin(la) * Math.sin(la2));
+            const q = P.pt(at(la2, lo2).map(v => v * lift));
+            if (k) ctx.lineTo(...q); else ctx.moveTo(...q);
+          }
+          ctx.closePath();
+          ctx.fillStyle = "rgba(200,230,255,0.13)"; ctx.fill(); stroke(ctx, "rgba(220,240,255,0.5)", 0.8);
+        }
+        drawSky(ctx);
+      }
+      // the all-sky imagers running that day: filled where the sky is dark enough to image (Sun below −10°; live: −12°, Helios's)
       const M = frameAt("geo", time), taken = [];
       stationMarks = [];
       for (const s of S.asi) {
         const la = s.lat * DEG, lo = s.lon * DEG, n = mul(M, [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)]);
         if (dot(n, P.basis.toward) <= 0.02) continue;
-        const q = P.pt(n.map(v => v * lift)), elev = Math.asin(clamp(n[0], -1, 1)) / DEG, imaging = elev < -10;
+        const q = P.pt(n.map(v => v * lift)), elev = Math.asin(clamp(n[0], -1, 1)) / DEG, imaging = elev < (o.sky ? -12 : -10);
         stationMarks.push({ s, q, elev, imaging, color: NET[s.nets[0]] ?? NET.themis });
       }
       for (const m of stationMarks) {

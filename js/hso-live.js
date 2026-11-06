@@ -17,7 +17,9 @@
   const KEEP = [-3 * 3600, SPAN + 3 * 3600];               // ephemeris kept around it, as the demo's scene
   let HAPI = "https://cdaweb.gsfc.nasa.gov/hapi", SSC = "https://sscweb.gsfc.nasa.gov/WS/sscr/2";
   const RE_KM = 6371.2, MK_EV = 86.1733, DEG = Math.PI / 180;
-  const SPEC_RANGE = { dis: [3.5, 7.8], des: [4.8, 8.8] };   // log10 keV/(cm² s sr keV), as the demo
+  // log10 keV/(cm² s sr keV) the 8-bit spectra are stored over: wide, so no flux is clipped; each window then picks
+  // its own color range from the data, as Helios does (hso.js specRange)
+  const SPEC_RANGE = { dis: [0.5, 9.0], des: [1.5, 10.0] };
   // FPI's fast-survey energy tables (eV), which HAPI does not serve: the same on all four probes in the demo's files
   const FPI_E = {
     dis: [11.33, 14.55, 18.69, 24.0, 30.83, 39.6, 50.87, 65.34, 83.92, 107.8, 138.46, 177.86, 228.45, 293.44, 376.92, 484.15,
@@ -170,22 +172,27 @@
   const f32 = (a) => Float32Array.from(a || []);
 
   /** 8-bit log10 flux, 0 = no data (prepare_hso_demo.spec8). */
-  function spec8(flux, n, nc, sp) {
+  function spec8(flux, n, nc, sp, zerosBlank = false) {
+    lastFlux = flux;
     const [lo, hi] = SPEC_RANGE[sp], out = new Uint8Array(n * nc);
     for (let i = 0; i < n * nc; i++) {
       const f = flux[i];
-      if (!isFinite(f)) continue;
+      if (!isFinite(f) || (zerosBlank && f <= 0)) continue;     // CIS: a zero is drawn blank, as Helios draws it
       const l = Math.log10(Math.max(f, 10 ** lo));
       out[i] = Math.max(1, Math.min(255, Math.round((l - lo) / (hi - lo) * 254) + 1));
     }
     return out;
   }
-  /** A record set in the unpacked shape: arrays and their column counts. */
+  /** A record set in the unpacked shape: arrays and their column counts. A spectrum also keeps its unrounded log10
+   *  flux (specLog), so the color range is taken at full precision, as Helios takes it. */
   function set(fields) {
     const out = { cols: {} };
     for (const [k, [a, c]] of Object.entries(fields)) { out[k] = a; out.cols[k] = c; }
+    if (lastFlux && out.spec && lastFlux.length === out.spec.length) out.specLog = Float32Array.from(lastFlux, f => (f > 0 && isFinite(f) ? Math.log10(f) : NaN));
+    lastFlux = null;
     return out;
   }
+  let lastFlux = null;
   /** J = e nₑ (Vᵢ − Vₑ) on the electrons' times, µA/m², none across gaps in the ions (prepare_hso_demo.current). */
   function current(ti, vi, te, ne, ve) {
     const n = te.length, out = new Float32Array(n * 3).fill(NaN);
@@ -218,6 +225,140 @@
     return { t: T, cols: C };
   }
   const window_ = [T0 - 60e3, T0 + SPAN * 1000 + 60e3];
+
+  // ───────────────────────── FPI's energy tables, from the L2 files (Helios's FPIEnergyTables) ─────────────────────────
+  // FPI flies several sweeps — P1 (2015-09 → 2016-03), then tail, dayside and solar-wind tables switched by orbit and
+  // region — so a date cannot say which one a record used. As Helios does, each record's table is read from CDAWeb's
+  // original L2 fast-survey file (byte ranges: the header, Epoch and the energy variable, a few hundred KB per 2-hour
+  // file); HAPI does not serve the variable.
+  const CDA = "https://cdaweb.gsfc.nasa.gov/pub/data/mms";
+  /** A CDF read by byte range: zVariables by name, their records as numbers (TT2000 Epoch as UTC ms). */
+  function cdfFile(url) {
+    const CH = 65536, chunks = new Map();
+    const chunk = (k) => {
+      if (!chunks.has(k)) chunks.set(k, slot(async () => {
+        const r = await get(url, { headers: { Range: `bytes=${k * CH}-${(k + 1) * CH - 1}` } }, 30000);
+        if (!(r.status === 206 || r.status === 200)) throw new Error(`CDF ${r.status}`);
+        const b = new Uint8Array(await r.arrayBuffer()); bytes += b.length; emit();
+        return r.status === 200 ? b.subarray(k * CH, (k + 1) * CH) : b;
+      }, true));
+      return chunks.get(k);
+    };
+    const read = async (off, len) => {                     // len bytes at off, across chunks
+      const out = new Uint8Array(len);
+      for (let k = Math.floor(off / CH); k * CH < off + len; k++) {
+        const c = await chunk(k), s0 = Math.max(off, k * CH), s1 = Math.min(off + len, k * CH + c.length);
+        if (s1 > s0) out.set(c.subarray(s0 - k * CH, s1 - k * CH), s0 - off);
+      }
+      return new DataView(out.buffer);
+    };
+    const u64 = (dv, o) => Number(dv.getBigUint64(o));
+    let headP = null;
+    const head = () => (headP = headP || (async () => {
+      const m = await read(0, 8);
+      if (m.getUint32(0) !== 0xCDF30001 || m.getUint32(4) !== 0x0000FFFF) throw new Error("not an uncompressed CDF 3");
+      const cdr = await read(8, 32), gdr = u64(cdr, 12), enc = cdr.getInt32(28);
+      const little = [3, 4, 6, 13, 14, 15, 16, 17].includes(enc);
+      const g = await read(gdr, 64), vars = {};
+      for (let off = u64(g, 20); off;) {                     // the zVDR chain
+        const v = await read(off, 360), name = new TextDecoder().decode(new Uint8Array(v.buffer, 84, 256)).replace(/\0[\s\S]*$/, "");
+        const nd = v.getInt32(340), dims = []; for (let i = 0; i < nd; i++) dims.push((await read(off + 344 + 4 * i, 4)).getInt32(0));
+        vars[name] = { type: v.getInt32(20), maxRec: v.getInt32(24), vxr: u64(v, 28), flags: v.getInt32(44), elems: dims.reduce((p, q) => p * q, 1) };
+        off = u64(v, 12);
+      }
+      return { little, vars };
+    })());
+    /** Every record of a variable: a flat Float64Array (elems per record). */
+    async function variable(name) {
+      const { little, vars } = await head(), V = vars[name];
+      if (!V) throw new Error(`no ${name}`);
+      const size = { 1: 1, 2: 2, 4: 4, 8: 8, 11: 1, 12: 2, 14: 4, 21: 4, 22: 8, 31: 8, 33: 8, 41: 1, 44: 4, 45: 8 }[V.type];
+      const n = V.maxRec + 1, recBytes = size * V.elems, out = new Float64Array(n * V.elems).fill(NaN);
+      const put = (dv, at, first, count) => {
+        for (let r = 0; r < count; r++) for (let e = 0; e < V.elems; e++) {
+          const o = at + (r * V.elems + e) * size, i = (first + r) * V.elems + e;
+          out[i] = V.type === 33 ? tt2000(dv.getBigInt64(o, little)) : size === 8 ? (V.type === 8 ? Number(dv.getBigInt64(o, little)) : dv.getFloat64(o, little))
+            : V.type === 21 || V.type === 44 ? dv.getFloat32(o, little) : size === 4 ? dv.getInt32(o, little) : size === 2 ? dv.getInt16(o, little) : dv.getInt8(o);
+        }
+      };
+      const walk = async (vxr) => {
+        for (let off = vxr; off;) {
+          const h = await read(off, 28), N = h.getInt32(20), used = h.getInt32(24), t = await read(off + 28, 16 * N);
+          for (let k = 0; k < used; k++) {
+            const first = t.getInt32(4 * k), last = t.getInt32(4 * N + 4 * k), at = u64(t, 8 * N + 8 * k), rh = await read(at, 24), rt = rh.getInt32(8);
+            if (rt === 6) await walk(at);
+            else if (rt === 7) put(await read(at + 12, (last - first + 1) * recBytes), 0, first, last - first + 1);
+            else if (rt === 13) {                            // a gzip-compressed block
+              const cs = u64(rh, 16), z = await read(at + 24, cs);
+              const raw = await new Response(new Blob([z.buffer]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+              put(new DataView(raw), 0, first, last - first + 1);
+            }
+          }
+          off = u64(h, 12);
+        }
+      };
+      await walk(V.vxr);
+      return { data: out, elems: V.elems, n };
+    }
+    return { variable };
+  }
+  /** TT2000 (ns from J2000 TT) → UTC ms: TT − 32.184 s − the leap seconds then in force. */
+  function tt2000(ns) {
+    const ms = Number(ns / 1000000n), utcGuess = Date.UTC(2000, 0, 1, 12) + ms;
+    const leap = [[Date.UTC(2017, 0, 1), 37], [Date.UTC(2015, 6, 1), 36], [Date.UTC(2012, 6, 1), 35], [Date.UTC(2009, 0, 1), 34], [Date.UTC(2006, 0, 1), 33], [0, 32]];
+    const dat = leap.find(([t0]) => utcGuess - 69e3 >= t0)[1];
+    return utcGuess - 32184 - dat * 1000;
+  }
+  const fpiTablesMemo = new Map();
+  /** The tables flown over [a, b]: { t (s after T0), idx, tables[[32]] } from the fast L2 moments files. */
+  function fpiTables(n, sp, a, b) {
+    const key = `${n}|${sp}`;
+    if (fpiTablesMemo.has(key)) return fpiTablesMemo.get(key);
+    const p = (async () => {
+      const days = new Set([a, b].map(ms => new Date(ms).toISOString().slice(0, 10)));
+      const files = [];
+      for (const day of days) {
+        const [y, m, d] = day.split("-"), dir = `${CDA}/mms${n}/fpi/fast/l2/${sp}-moms/${y}/${m}/`;
+        const r = await slot(() => get(dir, undefined, 20000), true);
+        if (!r.ok) continue;
+        const html = await r.text(), best = {};
+        for (const f of html.match(new RegExp(`mms${n}_fpi_fast_l2_${sp}-moms_${y}${m}${d}\\d{6}_v[\\d.]+\\.cdf`, "g")) || []) {
+          const start = f.match(/_(\d{14})_/)[1], v = f.match(/_v([\d.]+)\.cdf/)[1].split(".").map(Number);
+          if (!best[start] || v.join(".").localeCompare(best[start].v.join("."), undefined, { numeric: true }) > 0) best[start] = { f, v };
+        }
+        for (const [start, { f }] of Object.entries(best)) {
+          const t0 = Date.UTC(+start.slice(0, 4), +start.slice(4, 6) - 1, +start.slice(6, 8), +start.slice(8, 10), +start.slice(10, 12));
+          if (t0 <= b && t0 + 2 * 3600e3 >= a) files.push(dir + f);
+        }
+      }
+      const tables = [], keys = new Map(), T = [], idx = [];
+      for (const url of files) {
+        const cdf = cdfFile(url), [ep, en] = await Promise.all([cdf.variable("Epoch"), cdf.variable(`mms${n}_${sp}_energy_fast`)]);
+        for (let r = 0; r < ep.n; r++) {
+          const row = Array.from(en.data.subarray(r * 32, r * 32 + 32), x => +x.toFixed(2));
+          if (!row.every(x => x > 0)) continue;
+          const k = row.join(",");
+          if (!keys.has(k)) { keys.set(k, tables.length); tables.push(row); }
+          T.push(sec(ep.data[r])); idx.push(keys.get(k));
+        }
+      }
+      return T.length ? { t: T, idx, tables } : null;
+    })().catch((e) => { console.warn("FPI energy tables", e); return null; });
+    fpiTablesMemo.set(key, p);
+    return p;
+  }
+  /** Relabel a record set with the tables flown: each record takes the nearest file record's table. */
+  function applyTables(S, tb) {
+    if (!tb || !S.t.length) return false;
+    S.etab = Float32Array.from(tb.tables.flat()); S.cols.etab = 32;
+    let k = 0;
+    for (let i = 0; i < S.t.length; i++) {
+      while (k < tb.t.length - 1 && Math.abs(tb.t[k + 1] - S.t[i]) <= Math.abs(tb.t[k] - S.t[i])) k++;
+      S.eidx[i] = tb.idx[k];
+    }
+    return true;
+  }
+  const P1_END = Date.UTC(2016, 2, 1);                       // after P1, a burst record's table is the fast table of its moment
 
   // ───────────────────────── MMS ─────────────────────────
   function fpiSet(r, sp, withST) {                         // columns: spectrum[32], n, V[3], (spin tone[3],) T∥, T⊥
@@ -262,10 +403,13 @@
       dis: fpiSet(di, "dis", false),
       des: fpiSet(de, "des", true),
     };
+    const [tbI, tbE] = await Promise.all([track(`MMS${n} FPI energy tables (L2 files)`, Promise.all([fpiTables(n, "dis", a, b), fpiTables(n, "des", a, b)]))]).then(x => x[0]);
+    applyTables(sv.dis, tbI); applyTables(sv.des, tbE);
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
     const bu = burst.then((B3) => {                          // the burst data follow the survey, drawn when they arrive
       if (!B3 || !(B3[0].n || B3[1].n || B3[2].n)) return null;
       const out = { fgm: set({ t: [f32(B3[0].t), 1], b: [stack(B3[0].cols, 0, 4), 4] }), dis: fpiBurstSet(B3[1], "dis", false), des: fpiBurstSet(B3[2], "des", true) };
+      if (AT >= P1_END) { applyTables(out.dis, tbI); applyTables(out.des, tbE); }   // P2 on: both parities fly the fast table
       out.des.j = current(out.dis.t, out.dis.v, out.des.t, out.des.n, out.des.v); out.des.cols.j = 3;
       return out;
     });
@@ -275,54 +419,61 @@
   // ───────────────────────── THEMIS ─────────────────────────
   async function themis(key) {
     const L = key.slice(2).toUpperCase(), l = L.toLowerCase(), [a, b] = window_, P = { B: "ARTEMIS-P1", C: "ARTEMIS-P2" }[L] || `THEMIS-${L}`;
+    // As Helios's fetchThemis: moments from MOM (spin cadence; non-Q values), field-aligned temperatures from its t3_mag,
+    // E from FIT@1 (bit-identical to EFI where both exist, better coverage), spectrograms from ESA reduced mode
+    const mom = (s) => [`th${l}_pe${s}m_density`, `th${l}_pe${s}m_velocity_gse`, `th${l}_pe${s}m_t3_mag`];
     const esa = (s) => [`th${l}_pe${s}_density`, `th${l}_pe${s}_avgtemp`, `th${l}_pe${s}_en_eflux`, `th${l}_pe${s}_magt3`, `th${l}_pe${s}_velocity_gse`];
-    const [fg, ir, er, ef, efi, fi] = await Promise.all([
+    const none = { t: new Float64Array(0), cols: [], n: 0 };
+    const [fg, ir, er, mi, me, efi] = await Promise.all([
       track(`${P} FGM`, hapi(`TH${L}_L2_FGM@0`, [`th${l}_fgs_btotal`, `th${l}_fgs_gse`], a, b, true)),
-      track(`${P} ESA ions`, hapi(`TH${L}_L2_ESA@2`, esa("ir"), a, b, true)),
-      track(`${P} ESA electrons`, hapi(`TH${L}_L2_ESA@3`, esa("er"), a, b, true)),
-      hapi(`TH${L}_L2_ESA@1`, [`th${l}_peef_density`, `th${l}_peef_magt3`, `th${l}_peef_velocity_gse`], a, b, true).catch(() => null),
-      hapi(`TH${L}_L2_EFI@0`, [`th${l}_efs_dot0_gse`], a, b, true).catch(() => null),
-      hapi(`TH${L}_L2_ESA@0`, [`th${l}_peif_density`, `th${l}_peif_magt3`, `th${l}_peif_velocity_gse`], a, b, true).catch(() => null),
+      track(`${P} ESA ion spectra`, hapi(`TH${L}_L2_ESA@2`, esa("ir"), a, b, true)),
+      track(`${P} ESA electron spectra`, hapi(`TH${L}_L2_ESA@3`, esa("er"), a, b, true)),
+      track(`${P} ion moments (MOM)`, hapi(`TH${L}_L2_MOM@0`, mom("i"), a, b, true).catch(() => none)),
+      track(`${P} electron moments (MOM)`, hapi(`TH${L}_L2_MOM@1`, mom("e"), a, b, true).catch(() => none)),
+      hapi(`TH${L}_L2_FIT@1`, [`th${l}_efs_dot0_gse`], a, b, true).catch(() => null),
     ]);
     const sv = {};
     const bm = stack(fg.cols, 0, 4), b4 = new Float32Array(fg.n * 4);
     for (let i = 0; i < fg.n; i++) { b4[i * 4] = bm[i * 4 + 1]; b4[i * 4 + 1] = bm[i * 4 + 2]; b4[i * 4 + 2] = bm[i * 4 + 3]; b4[i * 4 + 3] = bm[i * 4]; }
     sv.fgm = set({ t: [f32(fg.t), 1], b: [b4, 4] });
-    // the reduced-mode sweeps: which table a record uses follows from how many channels are live (prepare_hso_missions)
-    const species = (sp, r, tables, full, velOnly) => {
+    // the spectra: the reduced-mode sweeps, the table chosen by how many channels are live (prepare_hso_missions)
+    const spectra = (r, tables, sp) => {
       const n = r.n, flux = new Float32Array(n * 32).fill(NaN), eidx = new Uint8Array(n), tabs = [], keys = [];
-      let N = r.cols[0], magt3 = stack(r.cols, 34, 3), vel = stack(r.cols, 37, 3);
-      if (full && full.n) {                                // reduced mode has no electron velocity: moments from full mode
-        const at = (col) => { const out = new Float64Array(n); for (let i = 0; i < n; i++) out[i] = interp(full.t, col, r.t[i]); return out; };
-        const fv = stack([0, 1, 2].map(c => at(full.cols[4 + c])), 0, 3);
-        if (velOnly) { for (let i = 0; i < n * 3; i++) if (!isFinite(vel[i])) vel[i] = fv[i]; }   // ions: full mode only where reduced has no V
-        else { N = at(full.cols[0]); magt3 = stack([0, 1, 2].map(c => at(full.cols[1 + c])), 0, 3); vel = fv; }
-      }
       for (let i = 0; i < n; i++) {
         const row = []; for (let c = 0; c < 32; c++) row.push(r.cols[2 + c][i]);
         const live = row.filter(isFinite).length, tab = tables[live];
         if (!tab) continue;
-        const key = tab.length;
-        let k = keys.indexOf(key);
-        if (k < 0) { keys.push(key); tabs.push(tab); k = tabs.length - 1; }
+        let k = keys.indexOf(tab.length);
+        if (k < 0) { keys.push(tab.length); tabs.push(tab); k = tabs.length - 1; }
         eidx[i] = k;
-        const asc = row.slice().reverse().filter(isFinite);   // ascending energy, the dead top channel dropped
+        const asc = row.slice().reverse().filter(isFinite);
         for (let c = 0; c < Math.min(tab.length, asc.length); c++) flux[i * 32 + c] = asc[c];
       }
       if (!tabs.length) tabs.push(tables[32]);
       const etab = new Float32Array(tabs.length * 32);
       tabs.forEach((tb, k) => { for (let c = 0; c < 32; c++) etab[k * 32 + c] = c < tb.length ? tb[c] : tb[tb.length - 1] * 1.3 ** (c - tb.length + 1); });
-      const tpar = new Float32Array(n), tperp = new Float32Array(n);
-      for (let i = 0; i < n; i++) { tpar[i] = magt3[i * 3 + 2]; tperp[i] = 0.5 * (magt3[i * 3] + magt3[i * 3 + 1]); }
-      sv[sp] = set({ t: [f32(r.t), 1], n: [f32(N), 1], v: [vel, 3], tpar: [tpar, 1], tperp: [tperp, 1],
-                     spec: [spec8(flux, n, 32, sp), 32], etab: [etab, 32], eidx: [eidx, 1] });
+      return { spec: [spec8(flux, n, 32, sp), 32], etab: [etab, 32], eidx: [eidx, 1] };
     };
-    species("dis", ir, { 32: ION32, 31: ION32, 24: ION24, 23: ION24 }, fi, true);
-    species("des", er, { 32: ELEC32, 31: ELEC32 }, ef);
+    // the moments: MOM where it has data, ESA reduced mode where it does not
+    const moments = (m, r) => {
+      if (m && m.n && m.cols[0] && m.cols[0].some(isFinite)) {
+        const n = m.n, t3 = stack(m.cols, 4, 3), tpar = new Float32Array(n), tperp = new Float32Array(n);
+        for (let i = 0; i < n; i++) { tpar[i] = t3[i * 3 + 2]; tperp[i] = 0.5 * (t3[i * 3] + t3[i * 3 + 1]); }
+        return { t: [f32(m.t), 1], n: [f32(m.cols[0]), 1], v: [stack(m.cols, 1, 3), 3], tpar: [tpar, 1], tperp: [tperp, 1] };
+      }
+      const n = r.n, magt3 = stack(r.cols, 34, 3), tpar = new Float32Array(n), tperp = new Float32Array(n);
+      for (let i = 0; i < n; i++) { tpar[i] = magt3[i * 3 + 2]; tperp[i] = 0.5 * (magt3[i * 3] + magt3[i * 3 + 1]); }
+      return { t: [f32(r.t), 1], n: [f32(r.cols[0]), 1], v: [stack(r.cols, 37, 3), 3], tpar: [tpar, 1], tperp: [tperp, 1] };
+    };
+    // moments and spectra keep their own clocks: the moments as dis/des, the spectra as isp/esp
+    sv.dis = set(moments(mi, ir)); sv.des = set(moments(me, er));
+    sv.isp = set({ t: [f32(ir.t), 1], ...spectra(ir, { 32: ION32, 31: ION32, 24: ION24, 23: ION24 }, "dis") });
+    sv.esp = set({ t: [f32(er.t), 1], ...spectra(er, { 32: ELEC32, 31: ELEC32 }, "des") });
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
     if (efi && efi.n) sv.efi = set({ t: [f32(efi.t), 1], e: [stack(efi.cols, 0, 3), 3] });
     const label = { B: "ARTEMIS-P1", C: "ARTEMIS-P2" }[L] || `THEMIS-${L}`;
-    return { sv, bu: null, kind: "tha", label, notes: "THEMIS L2 (UC Berkeley) via CDAWeb HAPI, live: FGM, ESA reduced mode, EFI.", empty: !fg.n && !ir.n };
+    return { sv, bu: null, kind: "tha", label, relabel: { ionSpec: { spec: "isp" }, elecSpec: { spec: "esp" } }, empty: !fg.n && !ir.n,
+             notes: "THEMIS L2 (UC Berkeley) via CDAWeb HAPI, live, as Helios reads them: FGM; moments from MOM (spin cadence) with field-aligned temperatures; E from FIT; spectra from ESA reduced mode." };
   }
   function interp(t, v, x) {
     const n = t.length;
@@ -333,53 +484,97 @@
   }
 
   // ───────────────────────── Cluster ─────────────────────────
+  // Helios's Cluster data-quality rules (ClusterCIS.swift)
+  const CIS_FLUX_CEILING = 1e10, MAX_N = 1000, MAX_T_MK = 1160.45;
+  const unfill = (x) => (isFinite(x) && Math.abs(x) < 1e30 ? x : NaN);
+  /** A record outside physical bounds: N, V and T come from one distribution, so one absurd value drops the set. */
+  const plausible = (n, v, ta, te, vmax) => !((isFinite(n) && !(n > 0 && n < MAX_N)) || (v && v.every(isFinite) && !(Math.hypot(...v) <= vmax)) ||
+    [ta, te].some(t => isFinite(t) && !(t > 0 && t <= MAX_T_MK)));
+  /** Isolated density dropouts: a record more than 20× below the median of the others within ±60 s (at least two). */
+  function dropouts(t, n) {
+    const out = new Set();
+    for (let i = 0; i < t.length; i++) {
+      if (!isFinite(n[i])) continue;
+      const o = [];
+      for (let k = i - 1; k >= 0 && t[i] - t[k] <= 60; k--) if (isFinite(n[k])) o.push(n[k]);
+      for (let k = i + 1; k < t.length && t[k] - t[i] <= 60; k++) if (isFinite(n[k])) o.push(n[k]);
+      if (o.length < 2) continue;
+      o.sort((x, y) => x - y);
+      const m = o.length % 2 ? o[o.length >> 1] : (o[o.length / 2 - 1] + o[o.length / 2]) / 2;
+      if (n[i] * 20 < m) out.add(i);
+    }
+    return out;
+  }
+  /** One CIS 1-D spectrum, energies ascending: glitches above 10¹⁰ and the unswept half of a half-sweep record go to NaN;
+   *  zeros stay zeros, drawn blank (clean1D, zerosBlank). */
+  function cleanCIS(flux, n, nc) {
+    for (let i = 0; i < n * nc; i++) if (isFinite(flux[i]) && flux[i] > CIS_FLUX_CEILING) flux[i] = NaN;
+    const h = nc >> 1, low = [...Array(h).keys()], high = low.map(j => nc - h + j), orig = flux.slice();
+    const at = (i, j) => orig[i * nc + j];
+    const populated = (k, idx) => k >= 0 && k < n && idx.filter(j => at(k, j) > 0).length >= 3;
+    for (let i = 0; i < n; i++)
+      for (const [miss, other] of [[low, high], [high, low]])
+        if (miss.every(j => at(i, j) === 0) && other.some(j => at(i, j) > 0) && (populated(i - 1, miss) || populated(i + 1, miss)))
+          for (const j of miss) flux[i * nc + j] = NaN;
+    return flux;
+  }
   async function cluster(key) {
-    const N = key.slice(1), C = `C${N}`, [a, b] = window_;
-    const hiaSpec = (N === "1" || N === "3") ? Promise.all([
-      hapi(`${C}_CP_CIS-HIA_HS_1D_PEF`, [`flux__${C}_CP_CIS_HIA_HS_1D_PEF`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 })),
-      hapiBins(`${C}_CP_CIS-HIA_HS_1D_PEF`, `flux__${C}_CP_CIS_HIA_HS_1D_PEF`, true).catch(() => null)]) : Promise.resolve(null);
+    const N = +key.slice(1), C = `C${N}`, [a, b] = window_, none = { t: [], cols: [], n: 0 };
+    // the ion spectrogram: HIA on C1/C3, CODIF H⁺ on C4, none on C2 (clusterIonSpectrogram)
+    const specId = N === 1 || N === 3 ? [`${C}_CP_CIS-HIA_HS_1D_PEF`, `flux__${C}_CP_CIS_HIA_HS_1D_PEF`] : N === 4 ? ["C4_CP_CIS-CODIF_H1_1D_PEF", "flux__C4_CP_CIS_CODIF_H1_1D_PEF"] : null;
     const peace = track(`Cluster-${N} PEACE spectrogram (ESA CSA)`, peaceSpectra(C, a, b)).catch(() => null);
-    const [fg, cis, pea, cod, bins] = await Promise.all([
+    const cisP = ["N_p", "N_O1", "N_He1", "N_He2", "N_HIA", "V_p_xyz_gse", "V_HIA_xyz_gse", "T_p_par", "T_p_perp", "T_HIA_par", "T_HIA_perp"].map(q => `${q}__${C}_PP_CIS`);
+    const [fg, cis, pea, sp, bins] = await Promise.all([
       track(`Cluster-${N} FGM`, hapi(`${C}_CP_FGM_SPIN`, [`B_vec_xyz_gse__${C}_CP_FGM_SPIN`, `B_mag__${C}_CP_FGM_SPIN`], a, b, true)),
-      track(`Cluster-${N} CIS`, hapi(`${C}_PP_CIS`, (N === "1" || N === "3")
-        ? [`N_p__${C}_PP_CIS`, `N_HIA__${C}_PP_CIS`, `V_p_xyz_gse__${C}_PP_CIS`, `V_HIA_xyz_gse__${C}_PP_CIS`, `T_p_par__${C}_PP_CIS`, `T_p_perp__${C}_PP_CIS`, `T_HIA_par__${C}_PP_CIS`, `T_HIA_perp__${C}_PP_CIS`]
-        : [`N_p__${C}_PP_CIS`, `V_p_xyz_gse__${C}_PP_CIS`, `T_p_par__${C}_PP_CIS`, `T_p_perp__${C}_PP_CIS`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 }))),
-      track(`Cluster-${N} PEACE`, hapi(`${C}_PP_PEA`, [`N_e_den__${C}_PP_PEA`, `V_e_xyz_gse__${C}_PP_PEA`, `T_e_par__${C}_PP_PEA`, `T_e_perp__${C}_PP_PEA`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 }))),
-      hapi(`${C}_CP_CIS-CODIF_H1_1D_PEF`, [`flux__${C}_CP_CIS_CODIF_H1_1D_PEF`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 })),
-      hapiBins(`${C}_CP_CIS-CODIF_H1_1D_PEF`, `flux__${C}_CP_CIS_CODIF_H1_1D_PEF`, true).catch(() => null),
+      N === 2 ? none : track(`Cluster-${N} CIS`, hapi(`${C}_PP_CIS`, cisP, a, b, true).catch(() => none)),
+      track(`Cluster-${N} PEACE`, hapi(`${C}_PP_PEA`, [`N_e_den__${C}_PP_PEA`, `V_e_xyz_gse__${C}_PP_PEA`, `T_e_par__${C}_PP_PEA`, `T_e_perp__${C}_PP_PEA`], a, b, true).catch(() => none)),
+      specId ? hapi(specId[0], [specId[1]], a, b, true).catch(() => none) : none,
+      specId ? hapiBins(specId[0], specId[1], true).catch(() => null) : null,
     ]);
     const sv = { fgm: set({ t: [f32(fg.t), 1], b: [stack(fg.cols, 0, 4), 4] }) };
-    const mom = (r, c) => set({ t: [f32(r.t), 1], n: [f32(r.cols[c[0]]), 1], v: [stack(r.cols, c[1], 3), 3],
-                                tpar: [f32(r.cols[c[2]]).map(x => x * MK_EV), 1], tperp: [f32(r.cols[c[3]]).map(x => x * MK_EV), 1] });
-    const live = (col) => col && col.some(isFinite);
-    let relabel = null;
-    if (cis.n && (N === "1" || N === "3")) {                  // C1/C3 carry CODIF H⁺ and HIA (all ions): CODIF where it ran, else HIA
-      if (live(cis.cols[0])) sv.dis = mom(cis, [0, 2, 8, 9]);
-      else if (live(cis.cols[1])) { sv.dis = mom(cis, [1, 5, 10, 11]); relabel = { n: { lines: [{ ds: "dis", name: "n", c: 0, color: "#2a46d6", label: "N_{i}" }, { ds: "des", name: "n", c: 0, color: "#ee8a1c", label: "N_{e}" }] } }; }
-    } else if (cis.n && live(cis.cols[0])) sv.dis = mom(cis, [0, 1, 4, 5]);
-    if (pea.n && live(pea.cols[0])) sv.des = mom(pea, [0, 1, 4, 5]);
-    if (!sv.dis && sv.des) relabel = { n: { lines: [{ ds: "des", name: "n", c: 0, color: "#ee8a1c", label: "N_{e}" }] } };   // no ions that day
-    if (cod.n && bins) {                                     // CODIF H⁺ flux on its own clock, served high → low
-      const nc = bins.length, flux = new Float32Array(cod.n * nc);
-      for (let i = 0; i < cod.n; i++) for (let c = 0; c < nc; c++) flux[i * nc + c] = cod.cols[nc - 1 - c] ? cod.cols[nc - 1 - c][i] : NaN;
-      sv.isp = set({ t: [f32(cod.t), 1], spec: [spec8(flux, cod.n, nc, "dis"), nc], etab: [Float32Array.from(bins.slice().reverse()), nc], eidx: [new Uint8Array(cod.n), 1] });
-    }
-    if (!sv.isp) {                                            // no CODIF H⁺ spectra: HIA's (C1, C3), all ions
-      const h = await hiaSpec;
-      if (h && h[0].n && h[1]) {
-        const [r, hb] = h, nc = hb.length, flux = new Float32Array(r.n * nc);
-        for (let i = 0; i < r.n; i++) for (let c = 0; c < nc; c++) flux[i * nc + c] = r.cols[nc - 1 - c] ? r.cols[nc - 1 - c][i] : NaN;
-        if (flux.some(isFinite)) {
-          sv.isp = set({ t: [f32(r.t), 1], spec: [spec8(flux, r.n, nc, "dis"), nc], etab: [Float32Array.from(hb.slice().reverse()), nc], eidx: [new Uint8Array(r.n), 1] });
-          relabel = Object.assign(relabel || {}, { ionSpec: { spec: "isp", label: "Ions", title: "HIA ion spectrogram" } });
-        }
+    const col = (r, k) => Float32Array.from(r.cols[k] || [], unfill);
+    /** Moments from columns [n, v, T∥, T⊥] (T in MK), with the bounds and the dropout screen applied. */
+    const moments = (r, [cn, cv, ca, ce], vmax) => {
+      const n = col(r, cn), vx = col(r, cv), vy = col(r, cv + 1), vz = col(r, cv + 2), ta = col(r, ca), te = col(r, ce);
+      const drop = dropouts(r.t, n), v = new Float32Array(r.n * 3);
+      for (let i = 0; i < r.n; i++) {
+        if (drop.has(i) || !plausible(n[i], [vx[i], vy[i], vz[i]], ta[i], te[i], vmax)) { n[i] = vx[i] = vy[i] = vz[i] = ta[i] = te[i] = NaN; }
+        v[i * 3] = vx[i]; v[i * 3 + 1] = vy[i]; v[i * 3 + 2] = vz[i];
       }
+      if (![n, vx, ta, te].some(c => c.some(isFinite))) return null;
+      return set({ t: [f32(r.t), 1], n: [n, 1], v: [v, 3], tpar: [ta.map(x => x * MK_EV), 1], tperp: [te.map(x => x * MK_EV), 1] });
+    };
+    // the sensor is the spacecraft's (C1/C3 HIA, C4 CODIF), the other only when it alone has data
+    let sensor = null;
+    if (cis.n) {
+      const any = (k) => col(cis, k).some(isFinite), hia = any(4), cod = any(0), prefersHIA = N === 1 || N === 3;
+      sensor = prefersHIA ? (hia || !cod ? "HIA" : "CODIF") : (cod || !hia ? "CODIF" : "HIA");
+      const m = moments(cis, sensor === "HIA" ? [4, 8, 13, 14] : [0, 5, 11, 12], 3000);
+      if (m) sv.dis = m;
+      // heavy-ion composition: O⁺, He⁺, He⁺⁺ densities, fill and ≤ 0 dropped rather than plotted; each species keeps only
+      // the records it has, so its line joins them as Helios's composition chart does
+      const ct = f32(cis.t);
+      [["cmpO", 1], ["cmpHe1", 2], ["cmpHe2", 3]].forEach(([k, c]) => {
+        const v = col(cis, c), keep = [];
+        for (let i = 0; i < cis.n; i++) if (v[i] > 0 && v[i] < MAX_N) keep.push(i);
+        if (keep.length) sv[k] = set({ t: [Float32Array.from(keep, i => ct[i]), 1], v: [Float32Array.from(keep, i => v[i]), 1] });
+      });
+    }
+    if (pea.n) { const m = moments(pea, [0, 1, 4, 5], 10000); if (m) sv.des = m; }
+    if (sp.n && bins) {                                      // served high → low; ascending here
+      const nc = bins.length, flux = new Float32Array(sp.n * nc);
+      for (let i = 0; i < sp.n; i++) for (let c = 0; c < nc; c++) flux[i * nc + c] = sp.cols[nc - 1 - c] ? unfill(sp.cols[nc - 1 - c][i]) : NaN;
+      cleanCIS(flux, sp.n, nc);
+      if (flux.some(isFinite)) sv.isp = set({ t: [f32(sp.t), 1], spec: [spec8(flux, sp.n, nc, "dis", true), nc], etab: [Float32Array.from(bins.slice().reverse()), nc], eidx: [new Uint8Array(sp.n), 1] });
     }
     const esp = await peace;
     if (esp) sv.esp = esp;
     if (sv.dis && sv.des) { sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3; }
+    const relabel = { ionSpec: { spec: "isp", label: N === 4 ? "CODIF H^{+}" : "HIA ions", title: N === 4 ? "CODIF H⁺ spectrogram" : "HIA ion spectrogram" } };
     return { sv, bu: null, kind: "c4", label: `Cluster-${N}`, relabel, empty: !fg.n,
-             notes: "Cluster via CDAWeb HAPI, live: FGM spin, CIS (CODIF H⁺, or HIA on C1/C3 where CODIF is off) and PEACE prime parameters, CIS ion spectra; PEACE's pitch-angle DEFlux from ESA's Cluster Science Archive." };
+             notes: `Cluster via CDAWeb HAPI, live, as Helios reads it: FGM spin; CIS prime-parameter moments from ${sensor || "no CIS sensor"}` +
+                    `${N === 2 ? " (Cluster-2 has no working CIS)" : ""} and CIS composition; PEACE prime-parameter moments; the ${N === 4 ? "CODIF H⁺" : "HIA"} ion spectrogram; ` +
+                    "PEACE's pitch-angle DEFlux from ESA's Cluster Science Archive. Records outside physical bounds, isolated density dropouts and CIS glitch cells are dropped, as in Helios." };
   }
 
   // ───────────────────────── OMNI and the L1 monitors (Helios's HSODataClient choices) ─────────────────────────
@@ -902,9 +1097,10 @@
       let nets = s.cams.filter(c => ym >= c[1] && ym <= c[2]).map(c => c[0]);
       const urls = {};
       for (const net of Object.keys(KEO_DATASET)) if (keo[net] && keo[net][s.code]) urls[net] = keo[net][s.code];
-      // where UCalgary answered for a network, its cameras are the ones that published a keogram that day
+      // where UCalgary answered for a network, its cameras in service that month are the ones that published a keogram
+      // that day (Helios: in service at the instant, and once the listing is in, with a keogram that UT day)
       nets = nets.filter(net => !keo[net] || urls[net]);
-      for (const net of Object.keys(urls)) if (!nets.includes(net)) nets.push(net);
+      for (const net of Object.keys(urls)) if (!nets.includes(net)) delete urls[net];
       return { code: s.code, name: s.name, lat: s.lat, lon: s.lon, nets, keo: urls };
     }).filter(s => s.nets.length);
     // the stars: the demo's list is in GSE at its own moment; turned back to J2000 and on to GSE at this one

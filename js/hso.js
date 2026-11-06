@@ -17,8 +17,16 @@
   let T0 = SRC ? SRC.t0 : Date.UTC(2015, 9, 16, 11, 0, 0);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  // a jet-like scale for the spectrograms, as Helios and SPEDAS draw them
-  const LUT = (() => {
+  // a jet-like scale for the spectrograms, as Helios and SPEDAS draw them; the live page uses Helios's own
+  // (MMSStackPlot.jetColor, MATLAB's jet: dark blue, blue, cyan, yellow, red, dark red)
+  const LUT = (window.HSO_SOURCE) ? (() => {
+    const out = new Uint8ClampedArray(256 * 3), c = (x) => Math.min(Math.max(x, 0), 1);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255;
+      out[i * 3] = 255 * c(Math.min(4 * t - 1.5, -4 * t + 4.5)); out[i * 3 + 1] = 255 * c(Math.min(4 * t - 0.5, -4 * t + 3.5)); out[i * 3 + 2] = 255 * c(Math.min(4 * t + 0.5, -4 * t + 2.5));
+    }
+    return out;
+  })() : (() => {
     const stops = [[0, [0, 0, 131]], [0.12, [0, 30, 255]], [0.32, [0, 200, 255]], [0.5, [70, 255, 160]],
                    [0.66, [235, 255, 20]], [0.82, [255, 140, 0]], [1, [178, 0, 0]]];
     const out = new Uint8ClampedArray(256 * 3);
@@ -300,8 +308,37 @@
     ctx.stroke(); ctx.restore();
   }
   const scratch = document.createElement("canvas");
-  function spectrogram(ctx, R, a, b, D, ds, burst, dpr) {
+  /** Live: the spectrogram's color range as Helios sets it (MMSStackPlot.specRange): the 2–99.5th percentile of the
+   *  flux in the window (≤ 600 columns sampled), out to whole decades, at least 3 and at most 7 of them; a fixed
+   *  fallback (10³–10⁷ ions, 10⁴–10⁹ electrons) when fewer than 30 values. The demo keeps its fixed ranges. */
+  function specRange(D, ds, rangeKey, a, b, burst) {
+    const store = D.m.spectra[rangeKey].log10;
+    if (!LIVE) return store;
+    // the records in the window, survey and burst merged in time order, then ONE stride over them all (≤ 600 columns)
+    const recs = [];
+    for (const [S, i0, i1] of runs(D, ds, a, b, burst)) for (let i = Math.max(0, i0); i < Math.min(S.t.length, i1); i++) if (S.t[i] >= a && S.t[i] <= b) recs.push([S, i]);
+    const q = [], step = Math.max(1, Math.floor(recs.length / 600));
+    for (let k = 0; k < recs.length; k += step) {
+      const [S, i] = recs[k], nc = S.cols.spec;
+      for (let j = 0; j < nc; j++) {
+        if (S.specLog) { const l = S.specLog[i * nc + j]; if (isFinite(l)) q.push(l); }   // full precision where kept
+        else { const v = S.spec[i * nc + j]; if (v > 1) q.push(store[0] + (v - 1) / 254 * (store[1] - store[0])); }
+      }
+    }
+    if (q.length <= 30) return rangeKey === "dis" ? [3, 7] : [4, 9];
+    q.sort((x, y) => x - y);
+    const lg = (l) => l;
+    const hi = Math.ceil(lg(q[Math.floor(q.length * 0.995)]) - 1e-9);
+    let lo = Math.floor(lg(q[Math.floor(q.length * 0.02)]) + 1e-9);
+    if (hi - lo < 3) lo = hi - 3;
+    if (hi - lo > 7) lo = hi - 7;
+    return [lo, hi];
+  }
+  function spectrogram(ctx, R, a, b, D, ds, burst, dpr, win) {
     const W = Math.max(1, Math.round(R.w * dpr)), H = Math.max(1, Math.round(R.h * dpr));
+    // live: each 8-bit flux re-read on the window's own color range (specRange)
+    const store = win ? D.m.spectra[ds === "des" || ds === "esp" ? "des" : "dis"].log10 : null;
+    const cmap = win ? Uint16Array.from({ length: 256 }, (_, v) => v === 0 ? 0 : Math.round(clamp(((store[0] + (v - 1) / 254 * (store[1] - store[0])) - win[0]) / (win[1] - win[0]), 0, 1) * 255) * 3) : null;
     const img = new ImageData(W, H), px = img.data, [elo, ehi] = D.erange[ds], maps = new Map();
     const rows = (L, k) => {
       const key = (L === D.bu ? "b" : "s") + k;
@@ -320,6 +357,7 @@
     };
     const segs = burst && D.bu ? D.segs[ds] || [] : [];
     let si = 0;
+    const colMax = new Uint8Array(H);
     for (let x = 0; x < W; x++) {
       const t = a + (x + 0.5) / W * (b - a);
       while (si < segs.length && segs[si][1] < t) si++;
@@ -327,10 +365,23 @@
       const i = lower(tt, t + 1e-6) - 1;                     // the record whose accumulation covers t
       const ok = i >= 0 && t - tt[i] <= S.dt * 1.5;
       const rm = ok ? rows(L, S.eidx[i]) : null, base = i * nc;
+      // live, as Helios (MMSStackPlot.drawSpectrogram): where more records than pixels, each channel's MAX over the
+      // records in the pixel column, so a narrow high-flux structure survives being zoomed out
+      let many = false;
+      if (win) {
+        const ta = a + x / W * (b - a), tb = a + (x + 1) / W * (b - a), k0 = lower(tt, ta), k1 = lower(tt, tb);
+        if (k1 - k0 >= 2) {
+          many = true; colMax.fill(0);
+          for (let k = k0; k < k1; k++) {
+            const rk = rows(L, S.eidx[k]), bk = k * nc;
+            for (let y = 0; y < H; y++) { const v = S.spec[bk + rk[y]]; if (v > colMax[y]) colMax[y] = v; }
+          }
+        }
+      }
       for (let y = 0; y < H; y++) {
-        const o = (y * W + x) * 4, j = ok ? rm[y] : -1, q = j < 0 ? 0 : S.spec[base + j];
+        const o = (y * W + x) * 4, j = ok ? rm[y] : -1, q = many ? colMax[y] : j < 0 ? 0 : S.spec[base + j];
         if (q === 0) { px[o] = px[o + 1] = px[o + 2] = 255; px[o + 3] = 255; continue; }
-        const c = Math.round((q - 1) * 255 / 254) * 3;
+        const c = cmap ? cmap[q] : Math.round((q - 1) * 255 / 254) * 3;
         px[o] = LUT[c]; px[o + 1] = LUT[c + 1]; px[o + 2] = LUT[c + 2]; px[o + 3] = 255;
       }
     }
@@ -426,6 +477,8 @@
     omPcn: { title: "PC index (north)", label: "PCN", unit: "", w: 0.8, zero: true, lines: [Sc("omni", "pcn", 0, COL.mag, "PCN")] },
     swSpeed: { title: "Flow speed  |V|", label: "|V|", unit: "(km/s)", w: 0.9, lines: [Sc("dis", "speed", 0, COL.mag, "|V|")] },
     swT: { title: "Proton temperature", label: "T_{p}", unit: "(eV)", w: 0.9, floor: 0, lines: [Sc("dis", "tp", 0, COL.perp, "T_{p}")] },
+    comp: { title: "CIS composition  O⁺ / He⁺ / He⁺⁺", label: "CIS comp.", unit: "(cm⁻³)", w: 0.9, log: true,
+            lines: [Sc("cmpO", "v", 0, COL.x, "O^{+}"), Sc("cmpHe1", "v", 0, COL.z, "He^{+}"), Sc("cmpHe2", "v", 0, COL.y, "He^{++}")] },
   };
   const NA = (title) => ({ title, avail: false });
   // The sidebar's Plot selection, per mission: Helios's groups of subplots in its order (MMSPanels.swift), the stack a
@@ -457,14 +510,18 @@
     },
     tha: {
       sections: [["ESA", ["ionSpec", "elecSpec", "n", "ti", "te", "tanis", "p", "vi", "ve"]], ["Fields", ["b", "e"]], ["Currents", ["jfpi"]], ["SST · high energy", [NA("SST ion + e⁻ spectra")]]],
-      stack: ["b", "ionSpec", "elecSpec", "n", "ti", "te", "vi", "ve", "e"],
+      stack: LIVE ? ["b", "ionSpec", "elecSpec", "n", "ti", "te", "tanis", "vi", "ve", "e"] : ["b", "ionSpec", "elecSpec", "n", "ti", "te", "vi", "ve", "e"],   // live: Helios's THEMIS default
     },
     c4: {
-      sections: [["CIS · CODIF", ["ionSpec", "n", "ti", "vi"]], ["PEACE", ["elecSpec", "te", "ve", "jfpi"]], ["Fields", ["b"]],
-                 ["CIS · CODIF composition", [NA("CIS O⁺ spectrogram"), NA("CIS He⁺ spectrogram")]], ["WHISPER", [NA("Electron density (no data this day)")]]],
-      stack: ["b", "ionSpec", "elecSpec", "n", "ti", "te", "vi", "ve"],
-      relabel: { ionSpec: { spec: "isp", label: "H^{+}", title: "CODIF H⁺ spectrogram" }, elecSpec: { spec: "esp", title: "PEACE electron spectrogram" },
-                 n: { lines: [Sc("dis", "n", 0, COL.ni, "N_{H⁺}"), Sc("des", "n", 0, COL.ne, "N_{e}")] } },
+      sections: LIVE
+        ? [["CIS", ["ionSpec", "n", "ti", "tanis", "vi", "comp"]], ["PEACE", ["elecSpec", "te", "ve", "jfpi"]], ["Fields", ["b"]],
+           ["CIS · CODIF composition", [NA("CIS O⁺ spectrogram"), NA("CIS He⁺ spectrogram")]], ["WHISPER", [NA("Electron density")]]]
+        : [["CIS · CODIF", ["ionSpec", "n", "ti", "vi"]], ["PEACE", ["elecSpec", "te", "ve", "jfpi"]], ["Fields", ["b"]],
+           ["CIS · CODIF composition", [NA("CIS O⁺ spectrogram"), NA("CIS He⁺ spectrogram")]], ["WHISPER", [NA("Electron density (no data this day)")]]],
+      // live: Helios's Cluster default (its CIS composition chart included); panels with no data that day drop out
+      stack: LIVE ? ["b", "ionSpec", "elecSpec", "n", "ti", "te", "tanis", "vi", "ve", "comp"] : ["b", "ionSpec", "elecSpec", "n", "ti", "te", "vi", "ve"],
+      relabel: { ionSpec: { spec: "isp", label: "H^{+}", title: "CODIF H⁺ spectrogram" }, elecSpec: { spec: "esp", ...(LIVE ? { label: "PEACE e^{−}" } : {}), title: "PEACE electron spectrogram" },
+                 n: { lines: [Sc("dis", "n", 0, COL.ni, LIVE ? "N_{i}" : "N_{H⁺}"), Sc("des", "n", 0, COL.ne, "N_{e}")] } },
     },
   };
   Object.assign(MISSIONS, {
@@ -688,7 +745,18 @@
       const { ctx, w, h, dpr } = sizeCanvas(cv), a = app.a, b = app.b;
       sizeCanvas(over);
       const mission = cfg.mission, keys = cfg.stack || MISSIONS[mission].stack;
-      const rows = keys.map(k => Object.assign({ key: k }, kindOf(mission, k), D.relabel && D.relabel[k])).filter(r => r.title && r.avail !== false);
+      let rows = keys.map(k => Object.assign({ key: k }, kindOf(mission, k), D.relabel && D.relabel[k])).filter(r => r.title && r.avail !== false);
+      // live, other missions: as Helios, which fetches only the window, a subplot with nothing in the window is left out
+      if (LIVE && mission !== "mms") {
+        const inWin = (ds, acc) => runs(D, ds, a, b, true).some(([S, i0, i1]) => {
+          const f = acc ? acc(S) : null;
+          if (acc && !f) return false;
+          for (let i = Math.max(0, i0); i < Math.min(S.t.length, i1); i++) if (S.t[i] >= a && S.t[i] <= b && (!f || isFinite(f(i)))) return true;
+          return false;
+        });
+        const kept = rows.filter(r => (r.spec ? inWin(r.spec, null) : r.lines.some(line => inWin(line.ds, accessor(line, null)))));
+        if (kept.length) rows = kept;
+      }
       const R = cfg.lmn ? cfg.lmn.R : null;
       L = layout(w, h, rows);
       L.yOf = []; L.acc = [];
@@ -704,29 +772,33 @@
       for (const Rw of L.rows) {
         const r = Rw.row;
         if (r.spec) {
-          spectrogram(ctx, Rw, a, b, D, r.spec, true, dpr);
+          const win = specRange(D, r.spec, r.range, a, b, true);
+          spectrogram(ctx, Rw, a, b, D, r.spec, true, dpr, LIVE ? win : null);
           energyAxis(ctx, Rw, D.erange[r.spec]);
-          colorbar(ctx, Rw.x + Rw.w + 6, Rw.y + 4, 9, Rw.h - 8, D.m.spectra[r.range].log10);
+          colorbar(ctx, Rw.x + Rw.w + 6, Rw.y + 4, 9, Rw.h - 8, win);
           L.yOf.push(null); L.acc.push(null);
         } else {
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
           let lo = Infinity, hi = -Infinity;
           const accs = r.lines.map(line => accessor(line, R)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
-          accs.forEach((acc, i) => { [lo, hi] = extent(rrs[i], acc, lo, hi); });
+          const lg = (acc) => (S) => { const f = acc(S); return f && ((i) => { const v = f(i); return v > 0 ? Math.log10(v) : NaN; }); };
+          accs.forEach((acc, i) => { [lo, hi] = extent(rrs[i], r.log ? lg(acc) : acc, lo, hi); });
           if (!isFinite(lo)) { lo = -1; hi = 1; }
+          if (r.log) { lo = Math.floor(lo + 1e-9); hi = Math.ceil(hi - 1e-9); if (hi - lo < 1) hi = lo + 1; }   // log rows: whole decades
           if (r.floor !== undefined) lo = Math.min(lo, r.floor);
           if (r.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
-          const padY = (hi - lo) * 0.08 || 1;
+          const padY = r.log ? 0 : (hi - lo) * 0.08 || 1;
           lo -= r.floor !== undefined && lo >= r.floor ? 0 : padY; hi += padY;
-          const yOf = (v) => Rw.y + Rw.h - (v - lo) / (hi - lo) * Rw.h;
+          const yLin = (v) => Rw.y + Rw.h - (v - lo) / (hi - lo) * Rw.h;
+          const yOf = r.log ? (v) => (v > 0 ? yLin(Math.log10(v)) : NaN) : yLin;
           L.yOf.push(yOf); L.acc.push(accs);
-          const ticks = nice(lo, hi, Rw.h > 70 ? 4 : 3);
+          const ticks = r.log ? Array.from({ length: hi - lo + 1 }, (_, k) => lo + k) : nice(lo, hi, Rw.h > 70 ? 4 : 3);
           ctx.fillStyle = INK;
           for (const v of ticks) {
-            const y = yOf(v);
-            if (y < Rw.y + 6 || y > Rw.y + Rw.h - 4) continue;
+            const y = yLin(v);
+            if (y < Rw.y + (r.log ? -0.5 : 6) || y > Rw.y + Rw.h - (r.log ? -0.5 : 4)) continue;
             ctx.fillRect(Rw.x - 4, Math.round(y), 4, 1);
-            rich(ctx, String(+v.toPrecision(4)), Rw.x - 6, y, { size: 10, align: "right", color: INK2 });
+            rich(ctx, r.log ? `10^{${v}}` : String(+v.toPrecision(4)), Rw.x - 6, y, { size: r.log ? 9.5 : 10, align: "right", color: INK2 });
           }
           if (r.zero && lo < 0 && hi > 0) {
             ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(29,29,34,0.35)"; ctx.lineWidth = 1;
@@ -1176,9 +1248,10 @@
         c.fillStyle = INK; c.fillRect(B.x - 4, Math.round(y), 4, 1);
         rich(c, String(v), B.x - 6, y, { size: 9.5, align: "right", color: INK2 });
       }
-      spectrogram(c, I, S0, S1, D, "dis", false, dpr);
+      const win = specRange(D, "dis", "dis", S0, S1, false);
+      spectrogram(c, I, S0, S1, D, "dis", false, dpr, LIVE ? win : null);
       energyAxis(c, I, D.erange.dis);
-      colorbar(c, I.x + I.w + 6, I.y + 2, 8, I.h - 4, D.m.spectra.dis.log10);
+      colorbar(c, I.x + I.w + 6, I.y + 2, 8, I.h - 4, win);
       [["|B|", COL.mag], ["X", COL.x], ["Y", COL.y], ["Z", COL.z]].forEach(([s, color], i) =>
         rich(c, s, B.x + B.w + 6, B.y + 6 + i * (B.h - 10) / 3, { size: 9, weight: 600, color }));
       for (const R of [B, I]) { c.strokeStyle = "rgba(29,29,34,0.45)"; c.lineWidth = 1; c.strokeRect(Math.round(R.x) + 0.5, Math.round(R.y) + 0.5, Math.round(R.w) - 1, Math.round(R.h)); }
