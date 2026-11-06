@@ -908,3 +908,23 @@ p.tk-sup { margin: 0; }
 .live-or { margin: 18px 0 0; color: var(--ink-3); font: 500 11px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 .live-or + .live-pick { margin-top: 10px; }
 .live-ref { margin-top: 14px; color: var(--sun); font-size: 14px; }
+
+/* live.html: an all-sky imager's daily keogram over the HSO view (Helios's KeogramPanel, in brief) */
+.kg { position: absolute; z-index: 30; right: 14px; top: 96px; width: min(420px, calc(100% - 28px)); padding: 10px 12px 10px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 10px; background: rgba(11, 11, 14, 0.94); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5); color: #e9ebf0; font: 400 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
+.kg-h { display: flex; align-items: baseline; gap: 8px; }
+.kg-h b { color: #fff; font-weight: 700; letter-spacing: 0.04em; }
+.kg-h span { flex: 1; color: rgba(233, 235, 240, 0.62); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kg-x { padding: 0 4px; border: 0; background: none; color: rgba(233, 235, 240, 0.7); font-size: 16px; line-height: 1; cursor: pointer; }
+.kg-x:hover { color: #fff; }
+.kg-tabs { display: flex; gap: 4px; margin-top: 8px; }
+.kg-tabs button { padding: 2px 8px; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 6px; background: none; color: rgba(233, 235, 240, 0.7); font: inherit; cursor: pointer; }
+.kg-tabs button.on { border-color: #f7c55c; color: #f7c55c; }
+.kg-img { position: relative; margin-top: 8px; background: #000; }
+.kg-img img { display: block; width: 100%; height: auto; image-rendering: auto; }
+.kg-cur { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid #f7c55c; box-shadow: 0 0 6px rgba(247, 197, 92, 0.8); pointer-events: none; }
+.kg-cur[hidden] { display: none; }
+.kg-ax { position: relative; height: 14px; margin-top: 2px; color: rgba(233, 235, 240, 0.55); font-size: 9.5px; }
+.kg-ax span { position: absolute; transform: translateX(-50%); }
+.kg-ax span:first-child { transform: none; }
+.kg-ax span:last-child { transform: translateX(-100%); }
+.kg-c { margin: 6px 0 0; color: rgba(233, 235, 240, 0.5); font-size: 10px; }

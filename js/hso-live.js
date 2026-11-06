@@ -382,6 +382,93 @@
              notes: "Cluster via CDAWeb HAPI, live: FGM spin, CIS (CODIF H⁺, or HIA on C1/C3 where CODIF is off) and PEACE prime parameters, CIS ion spectra; PEACE's pitch-angle DEFlux from ESA's Cluster Science Archive." };
   }
 
+  // ───────────────────────── OMNI and the L1 monitors (Helios's HSODataClient choices) ─────────────────────────
+  const KELVIN_EV = 8.617333e-5, thermalEV = (w) => 5.2197e-3 * w * w;    // K → eV; proton thermal speed (km/s) → eV
+  const fillNaN = (col, fill) => (col ? Float32Array.from(col, x => (x >= fill * 0.999 || x <= -1e30 ? NaN : x)) : new Float32Array(0));
+  /** OMNI's 1-minute data at the bow shock's nose, as Helios's OMNI window rows (OmniPanel.rows). */
+  async function omniWindow() {
+    const [a, b] = window_;
+    const P = ["F", "BX_GSE", "BY_GSM", "BZ_GSM", "flow_speed", "proton_density", "T", "Pressure", "E", "Beta", "Mach_num", "Mgs_mach_num", "AE_INDEX", "SYM_H", "PC_N_INDEX"];
+    const F = [9999.99, 9999.99, 9999.99, 9999.99, 99999.9, 999.99, 9999999, 99.99, 999.99, 999.99, 999.9, 99.9, 99999, 99999, 999.99];
+    const r = await track("OMNI window", hapi("OMNI_HRO_1MIN", P, a - 3600e3, b + 3600e3, true));
+    const c = P.map((_, k) => fillNaN(r.cols[k], F[k]));
+    const n = r.n, r0 = new Float32Array(n), tp = new Float32Array(n);
+    for (let i = 0; i < n; i++) {                             // Shue et al. (1998) stand-off, from the minute's Bz and pressure
+      r0[i] = (10.22 + 1.29 * Math.tanh(0.184 * (c[3][i] + 8.14))) * Math.pow(c[7][i], -1 / 6.6);
+      tp[i] = c[6][i] * KELVIN_EV;
+    }
+    const one = (a_) => [a_, 1];
+    const sv = { omni: set({ t: one(f32(r.t)), bt: one(c[0]), bx: one(c[1]), by: one(c[2]), bz: one(c[3]), v: one(c[4]), np: one(c[5]), tp: one(tp),
+                             pdyn: one(c[7]), ey: one(c[8]), beta: one(c[9]), ma: one(c[10]), mms: one(c[11]), ae: one(c[12]), symh: one(c[13]), pcn: one(c[14]), r0: one(r0) }) };
+    return { sv, bu: null, kind: "omni", label: "OMNI", empty: !r.n,
+             notes: "OMNI 1-minute (NASA SPDF, via CDAWeb HAPI): IMF and plasma from the L1 monitors, time-shifted to the bow shock's nose; R₀ from Shue et al. (1998)." };
+  }
+  /** One L1 monitor, as Helios's fetchAce / fetchWind / fetchDscovr: science products first, browse products where
+   *  they stop. Rows: B (GSE), Nₚ, V (GSE), |V|, Tₚ. */
+  async function l1Window(key) {
+    const [a, b] = window_, name = { ace: "ACE", wind: "Wind", dscovr: "DSCOVR" }[key];
+    let B = null, rows = [];                                // rows: [t, n, vx, vy, vz, speed, T eV]
+    const vec = (r, j = 0) => r.n ? { t: r.t, x: fillNaN(r.cols[j], 1e30), y: fillNaN(r.cols[j + 1], 1e30), z: fillNaN(r.cols[j + 2], 1e30) } : null;
+    if (key === "ace") {
+      const [m, sw] = await Promise.all([hapi("AC_H0_MFI", ["BGSEc"], a, b, true), hapi("AC_H0_SWE", ["Np", "Vp", "Tpr", "V_GSE"], a, b, true)]);
+      B = vec(m) || vec(await hapi("AC_K0_MFI", ["BGSEc"], a, b, true));
+      if (sw.n) for (let i = 0; i < sw.n; i++) rows.push([sw.t[i], sw.cols[0][i], sw.cols[3][i], sw.cols[4][i], sw.cols[5][i], sw.cols[1][i], sw.cols[2][i] * KELVIN_EV]);
+      else { const k = await hapi("AC_K0_SWE", ["Np", "Vp", "Tpr"], a, b, true); for (let i = 0; i < k.n; i++) rows.push([k.t[i], k.cols[0][i], NaN, NaN, NaN, k.cols[1][i], k.cols[2][i] * KELVIN_EV]); }
+    } else if (key === "wind") {
+      const [m, sw] = await Promise.all([hapi("WI_H0_MFI@0", ["BGSE"], a, b, true),
+        hapi("WI_H1_SWE", ["fit_flag", "Proton_V_nonlin", "Proton_VX_nonlin", "Proton_VY_nonlin", "Proton_VZ_nonlin", "Proton_W_nonlin", "Proton_Np_nonlin"], a, b, true)]);
+      B = vec(m) || vec(await hapi("WI_K0_MFI", ["BGSEc"], a, b, true));
+      const ok = (x) => (x < 99990 ? x : NaN);
+      for (let i = 0; i < sw.n; i++) if (sw.cols[0][i] >= 1) rows.push([sw.t[i], ok(sw.cols[6][i]), ok(sw.cols[2][i]), ok(sw.cols[3][i]), ok(sw.cols[4][i]), ok(sw.cols[1][i]), thermalEV(ok(sw.cols[5][i]))]);
+      if (!rows.length) {
+        const k = await hapi("WI_K0_SWE", ["V_GSE", "THERMAL_SPD", "Np"], a, b, true);
+        for (let i = 0; i < k.n; i++) rows.push([k.t[i], k.cols[4][i], k.cols[0][i], k.cols[1][i], k.cols[2][i], Math.hypot(k.cols[0][i], k.cols[1][i], k.cols[2][i]), thermalEV(k.cols[3][i])]);
+      }
+    } else {
+      const [m, fc] = await Promise.all([hapi("DSCOVR_H0_MAG", ["B1GSE"], a, b, true), hapi("DSCOVR_H1_FC", ["V_GSE", "THERMAL_SPD", "Np", "THERMAL_TEMP"], a, b, true)]);
+      B = vec(m);
+      for (let i = 0; i < fc.n; i++) {
+        const tK = fc.cols[5][i];
+        rows.push([fc.t[i], fc.cols[4][i], fc.cols[0][i], fc.cols[1][i], fc.cols[2][i], Math.hypot(fc.cols[0][i], fc.cols[1][i], fc.cols[2][i]), tK > 0 ? tK * KELVIN_EV : thermalEV(fc.cols[3][i])]);
+      }
+    }
+    const sv = {};
+    if (B) {
+      const n = B.t.length, b4 = new Float32Array(n * 4);
+      for (let i = 0; i < n; i++) { b4[i * 4] = B.x[i]; b4[i * 4 + 1] = B.y[i]; b4[i * 4 + 2] = B.z[i]; b4[i * 4 + 3] = Math.hypot(B.x[i], B.y[i], B.z[i]); }
+      sv.fgm = set({ t: [f32(B.t), 1], b: [b4, 4] });
+    }
+    if (rows.length) {
+      const n = rows.length, col = (k) => Float32Array.from(rows, r => (isFinite(r[k]) && Math.abs(r[k]) < 1e30 && r[k] > -1e30 ? r[k] : NaN)), v = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) { const x = rows[i][2 + c]; v[i * 3 + c] = isFinite(x) && Math.abs(x) < 1e30 ? x : NaN; }
+      sv.dis = set({ t: [col(0), 1], n: [col(1), 1], v: [v, 3], speed: [col(5), 1], tp: [col(6), 1] });
+    }
+    track(`${name} (L1)`, Promise.resolve(sv.fgm || sv.dis ? {} : { empty: true }));
+    return { sv, bu: null, kind: "l1", label: name, empty: !sv.fgm && !sv.dis,
+             notes: `${name} at L1 via CDAWeb HAPI, live, at the spacecraft's own time (not shifted to Earth). ${key === "dscovr" ? "DSCOVR's Faraday-cup plasma is on CDAWeb for 2016-06 to 2019-06 only." : key === "ace" ? "SWE H0 plasma ends 2024-07-09; the K0 browse products cover 2017-07 onward." : "SWE H1 non-linear proton fits, K0 where they stop."}` };
+  }
+
+  // ───────────────────────── all-sky imagers: which cameras imaged that day, and their keograms (UCalgary) ─────────────────────────
+  const UC_API = "https://api.phys.ucalgary.ca/api/v1/data_distribution/urls";
+  const KEO_DATASET = { themis: "THEMIS_ASI_DAILY_KEOGRAM_JPG", rego: "REGO_DAILY_KEOGRAM_JPG", trexRGB: "TREX_RGB_DAILY_KEOGRAM", smile: "SMILE_ASI_DAILY_KEOGRAM" };
+  /** Each network's daily keograms for the moment's UT day: { network: { site: url } }, null where not answered. */
+  async function keogramLists() {
+    const d = new Date(AT).toISOString().slice(0, 10), out = {};
+    await Promise.all(Object.entries(KEO_DATASET).map(async ([net, ds]) => {
+      try {
+        const r = await get(`${UC_API}?name=${ds}&start=${d}T00:00:00&end=${d}T23:59:59`, undefined, 15000);
+        if (!r.ok) { out[net] = null; return; }
+        const map = {};
+        for (const u of (await r.json()).urls || []) {
+          const m = /\/\d{8}__([a-z0-9]{4})_[^/]*-keogram[^/]*$/i.exec(u);
+          if (m && /^https:\/\/data\.phys\.ucalgary\.ca\//.test(u)) map[m[1].toLowerCase()] = u;
+        }
+        out[net] = map;
+      } catch (e) { out[net] = null; }
+    }));
+    return out;
+  }
+
   // ───────────────────────── ESA's Cluster Science Archive: PEACE, as CEF in a gzipped tar ─────────────────────────
   const CSA = "https://csa.esac.esa.int/csa-sl-tap/data";
   /** The .cef files in a product delivery (a .tgz). */
@@ -622,6 +709,7 @@
   }
 
   async function scene() {
+    const keoP = track("All-sky imager keograms (UCalgary)", keogramLists()).catch(() => ({}));
     const [[m1, ...others], sites, starsBuf, fleetA, fleetB, fleetC] = await Promise.all([
       mec(),
       fetch("assets/data/live/asi-sites.json").then(r => r.json()),
@@ -693,7 +781,16 @@
     })) };
     // the all-sky imagers running that month (Helios's site list)
     const d = new Date(AT), ym = d.getUTCFullYear() * 100 + d.getUTCMonth() + 1;
-    const asi = sites.map(s => ({ code: s.code, name: s.name, lat: s.lat, lon: s.lon, nets: s.cams.filter(c => ym >= c[1] && ym <= c[2]).map(c => c[0]) })).filter(s => s.nets.length);
+    const keo = await keoP;
+    const asi = sites.map((s) => {
+      let nets = s.cams.filter(c => ym >= c[1] && ym <= c[2]).map(c => c[0]);
+      const urls = {};
+      for (const net of Object.keys(KEO_DATASET)) if (keo[net] && keo[net][s.code]) urls[net] = keo[net][s.code];
+      // where UCalgary answered for a network, its cameras are the ones that published a keogram that day
+      nets = nets.filter(net => !keo[net] || urls[net]);
+      for (const net of Object.keys(urls)) if (!nets.includes(net)) nets.push(net);
+      return { code: s.code, name: s.name, lat: s.lat, lon: s.lon, nets, keo: urls };
+    }).filter(s => s.nets.length);
     // the stars: the demo's list is in GSE at its own moment; turned back to J2000 and on to GSE at this one
     const demoMs = Date.UTC(2015, 9, 16, 13, 7, 2), R = mul(j2000ToGSEApprox(AT), T_(j2000ToGSEApprox(demoMs)));
     const sv = new DataView(starsBuf), out = new DataView(new ArrayBuffer(starsBuf.byteLength));
@@ -799,7 +896,7 @@
     get bytes() { return bytes; },
     load: () => context(),
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
-    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : cluster(key))),
+    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : cluster(key))),
     scene,
     vdf: (n) => vdfStore(n),
     burstHalf: BURST_HALF,

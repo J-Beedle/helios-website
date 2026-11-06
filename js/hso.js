@@ -407,6 +407,25 @@
     jpar: { title: "J∥  (parallel current)", label: "J_{∥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.par, "J_{∥}", jAlong(false))] },
     jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, floor: 0, lines: [derive("des", COL.perp, "J_{⊥}", jAlong(true))] },
     e: { title: "E — electric field", label: "E", unit: "(mV/m)", w: 1, zero: true, lines: XYZ("efi", "e") },
+    // the OMNI window (Helios's OmniPanel.rows) and the L1 monitors' plasma
+    omBt: { title: "IMF |B|", label: "|B|", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "bt", 0, COL.mag, "|B|")] },
+    omBz: { title: "IMF Bz (GSM)", label: "B_{z}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "bz", 0, COL.z, "B_{z} GSM")] },
+    omBy: { title: "IMF By (GSM)", label: "B_{y}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "by", 0, COL.y, "B_{y} GSM")] },
+    omBx: { title: "IMF Bx (GSE)", label: "B_{x}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "bx", 0, COL.x, "B_{x} GSE")] },
+    omV: { title: "Flow speed", label: "V", unit: "(km/s)", w: 0.8, lines: [Sc("omni", "v", 0, COL.mag, "V")] },
+    omNp: { title: "Proton density", label: "N_{p}", unit: "(cm⁻³)", w: 0.8, floor: 0, lines: [Sc("omni", "np", 0, COL.ni, "N_{p}")] },
+    omT: { title: "Proton temperature", label: "T_{p}", unit: "(eV)", w: 0.8, floor: 0, lines: [Sc("omni", "tp", 0, COL.perp, "T_{p}")] },
+    omP: { title: "Dynamic pressure", label: "P_{dyn}", unit: "(nPa)", w: 0.8, floor: 0, lines: [Sc("omni", "pdyn", 0, COL.mag, "P_{dyn}")] },
+    omEy: { title: "Ey = −V Bz", label: "E_{y}", unit: "(mV/m)", w: 0.8, zero: true, lines: [Sc("omni", "ey", 0, COL.mag, "E_{y}")] },
+    omBeta: { title: "Plasma β", label: "β", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "beta", 0, COL.mag, "β")] },
+    omMa: { title: "Alfvén Mach number", label: "M_{A}", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "ma", 0, COL.mag, "M_{A}")] },
+    omMms: { title: "Magnetosonic Mach number", label: "M_{ms}", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "mms", 0, COL.mag, "M_{ms}")] },
+    omR0: { title: "Magnetopause R₀ (Shue 1998)", label: "R_{0}", unit: "(R_E)", w: 0.8, lines: [Sc("omni", "r0", 0, COL.mag, "R_{0}")] },
+    omSymh: { title: "SYM-H", label: "SYM-H", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "symh", 0, COL.mag, "SYM-H")] },
+    omAe: { title: "AE", label: "AE", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "ae", 0, COL.mag, "AE")] },
+    omPcn: { title: "PC index (north)", label: "PCN", unit: "", w: 0.8, zero: true, lines: [Sc("omni", "pcn", 0, COL.mag, "PCN")] },
+    swSpeed: { title: "Flow speed  |V|", label: "|V|", unit: "(km/s)", w: 0.9, lines: [Sc("dis", "speed", 0, COL.mag, "|V|")] },
+    swT: { title: "Proton temperature", label: "T_{p}", unit: "(eV)", w: 0.9, floor: 0, lines: [Sc("dis", "tp", 0, COL.perp, "T_{p}")] },
   };
   const NA = (title) => ({ title, avail: false });
   // The sidebar's Plot selection, per mission: Helios's groups of subplots in its order (MMSPanels.swift), the stack a
@@ -448,7 +467,19 @@
                  n: { lines: [Sc("dis", "n", 0, COL.ni, "N_{H⁺}"), Sc("des", "n", 0, COL.ne, "N_{e}")] } },
     },
   };
-  for (const k of ["tha", "c4"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
+  Object.assign(MISSIONS, {
+    omni: {
+      sections: [["IMF", ["omBt", "omBz", "omBy", "omBx"]], ["Plasma", ["omV", "omNp", "omT", "omP", "omBeta"]],
+                 ["Coupling", ["omEy", "omMa", "omMms", "omR0"]], ["Indices", ["omSymh", "omAe", "omPcn"]]],
+      stack: ["omBt", "omBz", "omBy", "omV", "omNp", "omP", "omMa", "omR0"],
+    },
+    l1: {
+      sections: [["MAG", ["b"]], ["Plasma", ["n", "vi", "swSpeed", "swT"]]],
+      stack: ["b", "n", "vi", "swSpeed", "swT"],
+      relabel: { n: { title: "Proton density", lines: [Sc("dis", "n", 0, COL.ni, "N_{p}")] }, vi: { title: "Proton velocity  V (GSE)", label: "V_{p}" } },
+    },
+  });
+  for (const k of ["tha", "c4", "omni", "l1"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
   /** The subplot `key` as the given mission draws it. */
   function kindOf(mission, key) {
     const k = KINDS[key], r = MISSIONS[mission].relabel && MISSIONS[mission].relabel[key];
@@ -1229,11 +1260,15 @@
     thb: { name: "ARTEMIS-P1", col: "#f2d36b", mission: "tha", family: THM_FAM }, thc: { name: "ARTEMIS-P2", col: "#e8b04a", mission: "tha", family: THM_FAM },
     c1: { name: "Cluster-1", col: "#a8f0c0", mission: "c4", family: CL_FAM }, c2: { name: "Cluster-2", col: "#62d9a0", mission: "c4", family: CL_FAM },
     c3: { name: "Cluster-3", col: "#3fbf86", mission: "c4", family: CL_FAM },
+    omni: { name: "OMNI", col: "#f7c55c", mission: "omni", family: ["omni"] },
+    ace: { name: "ACE", col: "#e07b00", mission: "l1", family: ["ace", "wind", "dscovr"] },
+    wind: { name: "Wind", col: "#008c8c", mission: "l1", family: ["ace", "wind", "dscovr"] },
+    dscovr: { name: "DSCOVR", col: "#7f33b3", mission: "l1", family: ["ace", "wind", "dscovr"] },
   });
   /** The craft a click on the view opens: the demo carries one probe of each other mission, and stands it in for the rest. */
   const representative = (name) => {
     if (LIVE) {
-      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc" }[name];
+      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr" }[name];
       if (art) return art;
       const m = /^THEMIS-([ADE])$/.exec(name) || /^Cluster-([1-4])$/.exec(name);
       return m ? (/\d/.test(m[1]) ? `c${m[1]}` : `th${m[1].toLowerCase()}`) : null;
@@ -1870,6 +1905,7 @@
     // the view, and its time bar
     const scene = window.HSOView({
       root: body, S, stars, orbit: D.ctx.orbit, omni: D.ctx.omni, clock, stamp: (t) => `${clock(t).slice(0, 5)} UTC`, ...viewOpts(),
+      ...liveClicks((k) => open(k, scrubbed ? scene.time : null), body, () => scene),
       onMMS: (n, t) => open(n, scrubbed ? t : null),
       onOther: (name, t) => {
         const key = representative(name);
@@ -2052,6 +2088,48 @@
     const d = new Date(T0 + 7200e3);
     return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}` } : {};
   }
+  /** Live: a station's daily keogram (UCalgary's summary JPEG, 00–24 UT) over the HSO view, Helios's KeogramPanel in
+   *  brief, with a cursor at the view's time; a tab for each network that published one that day. */
+  const NET_LABEL = { themis: "THEMIS", rego: "REGO", trexRGB: "TREx RGB", smile: "SMILE" };
+  function keogramPanel(host, scene, site) {
+    const old = host.querySelector(".kg");
+    if (old) old.remove();
+    const nets = Object.keys(site.keo || {});
+    const el = document.createElement("div");
+    el.className = "kg";
+    const day = new Date(SRC.at).toISOString().slice(0, 10), dayStart = Date.parse(day + "T00:00:00Z");
+    if (!nets.length) {
+      el.innerHTML = `<div class="kg-h"><b>${site.code.toUpperCase()}</b><span>${esc(site.name)}</span><button class="kg-x" aria-label="Close">×</button></div><p class="kg-c">No keogram published for ${day}: the camera did not image that night, or UCalgary did not answer.</p>`;
+    } else {
+      el.innerHTML = `<div class="kg-h"><b>${site.code.toUpperCase()}</b><span>${esc(site.name)} · ${day} · 00–24 UT</span><button class="kg-x" aria-label="Close">×</button></div>
+        ${nets.length > 1 ? `<div class="kg-tabs">${nets.map((n, i) => `<button data-net="${n}" class="${i ? "" : "on"}">${NET_LABEL[n] || n}</button>`).join("")}</div>` : ""}
+        <div class="kg-img"><img alt="${esc(site.name)} keogram" src="${site.keo[nets[0]]}"><i class="kg-cur"></i></div>
+        <div class="kg-ax">${[0, 3, 6, 9, 12, 15, 18, 21, 24].map(h => `<span style="left:${h / 24 * 100}%">${String(h).padStart(2, "0")}</span>`).join("")}</div>
+        <p class="kg-c">${NET_LABEL[nets[0]] || nets[0]} daily keogram · University of Calgary · the line is the view's time</p>`;
+      el.querySelectorAll("[data-net]").forEach(b => b.addEventListener("click", () => {
+        el.querySelectorAll("[data-net]").forEach(x => x.classList.toggle("on", x === b));
+        el.querySelector("img").src = site.keo[b.dataset.net];
+        el.querySelector(".kg-c").textContent = `${NET_LABEL[b.dataset.net] || b.dataset.net} daily keogram · University of Calgary · the line is the view's time`;
+      }));
+    }
+    el.querySelector(".kg-x").addEventListener("click", () => el.remove());
+    host.appendChild(el);
+    const cur = el.querySelector(".kg-cur");
+    const tick = () => {
+      if (!el.isConnected) return;
+      if (cur) {
+        const f = (T0 + scene.time * 1000 - dayStart) / 864e5;
+        cur.hidden = f < 0 || f > 1;
+        cur.style.left = `${clamp(f, 0, 1) * 100}%`;
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  /** The live view's extra handlers: Earth opens OMNI, an imager its keogram. */
+  function liveClicks(openKey, host, getScene) {
+    return LIVE ? { onEarth: () => openKey("omni"), onStation: (site) => keogramPanel(host, getScene(), site) } : {};
+  }
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const stamp = (t) => { const d = new Date(T0 + t * 1000); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} · ${clock(t).slice(0, 5)} UTC`; };
 
@@ -2127,6 +2205,7 @@
       if (!S) throw new Error("no scene");
       scene = window.HSOView({
         root: $("#scene-body"), S, stars, orbit: D.ctx.orbit, omni: D.ctx.omni, clock, stamp: (t) => `${clock(t).slice(0, 5)} UTC`, ...viewOpts(),
+        ...liveClicks((k) => { openPanel(); win.setCraft(k); }, $("#scene-body"), () => scene),
         onMMS: (n) => { openPanel(); win.setCraft(n); },
         onOther: (name) => {
           const key = representative(name);

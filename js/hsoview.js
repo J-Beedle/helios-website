@@ -1193,6 +1193,10 @@
       for (const d of formDots) if (Math.hypot(d.q[0] - x, d.q[1] - y) < 6.5) return { dot: d };
       let best = null;
       for (const r of rings) { const d = Math.hypot(r.q[0] - x, r.q[1] - y); if (d < 14 && (!best || d < best.d)) best = { ring: r, d }; }
+      if (!best && o.onEarth && P) {                       // the Earth itself: the host's solar-wind window
+        const e = P.earth, rr = Math.max(9, P.scale * (rung === "mag" ? earthRE : 1) * 1.1);
+        if (Math.hypot(e[0] - x, e[1] - y) < rr) return { earth: true };
+      }
       return best;
     };
     function nearestOrbit(x, y) {
@@ -1249,7 +1253,7 @@
       if (!P || e.pointerType === "touch") return;
       const h = hit(x, y);
       cv.style.cursor = h ? "pointer" : "";
-      cv.title = h ? (h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
+      cv.title = h ? (h.earth ? "Earth · open the OMNI solar wind window" : h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
         ? `${h.ring.name} · ${h.ring.m.s.nets.map(k => NET_NAME[k]).join(" + ")} · Sun ${h.ring.m.elev.toFixed(0)}° · ${h.ring.m.imaging ? "imaging" : "daylight"}`
         : `Open ${h.ring.name} data window`) : "";
       const prev = hover;
@@ -1265,9 +1269,10 @@
       if (was.moved || e.type === "pointercancel") return;
       const h = hit(was.px, was.py);
       if (!h) return;
-      if (h.dot) o.onMMS(h.dot.n, time);
+      if (h.earth) o.onEarth(time);
+      else if (h.dot) o.onMMS(h.dot.n, time);
       else if (h.ring.kind === "mms") o.onMMS(1, time);
-      else if (h.ring.kind === "station") say(`In Helios, this opens ${h.ring.name}'s keogram for the day.`);
+      else if (h.ring.kind === "station") { if (o.onStation) o.onStation(h.ring.m.s, time); else say(`In Helios, this opens ${h.ring.name}'s keogram for the day.`); }
       else if (!(o.onOther && o.onOther(h.ring.name, time))) say(`In Helios, this opens ${h.ring.name}'s data. The demo carries MMS1–4, THEMIS-A and Cluster 4.`);
     };
     cv.addEventListener("pointerup", end);
