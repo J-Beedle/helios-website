@@ -867,6 +867,7 @@
           break;
         }
       }
+      if (o.feet && window.FieldLines) drawFeet(ctx, taken);
       // the way to the Sun, at the limb
       const sq = P.pt([1, 0, 0]), dx = sq[0] - e[0], dy = sq[1] - e[1], ln = Math.hypot(dx, dy);
       if (ln > r * 0.6) {
@@ -889,13 +890,225 @@
         text(ctx, "daylight", x + 121, y + 30, `9.5px ${MONO}`, rgba(DS.textBright), "left");
         let lx = x + 10;
         for (const k of ["themis", "rego"]) { circle(ctx, lx + 4, y + 46, 3.5, rgba(NET[k])); text(ctx, NET_NAME[k], lx + 11, y + 46, `9px ${MONO}`, rgba(DS.textSecondary), "left"); lx += 70; }
-        text(ctx, `Kp ${(S.kp ?? 2).toFixed(1)} oval (Starkov 1994) · drag to turn`, x + 10, y + 62, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
+        text(ctx, o.feet ? `Kp ${(S.kp ?? 2).toFixed(1)}: oval Starkov, feet IGRF+T89` : `Kp ${(S.kp ?? 2).toFixed(1)} oval (Starkov 1994) · drag to turn`, x + 10, y + 62, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
         if (o.sky) {
           for (let i = 0; i < 40; i++) { ctx.fillStyle = skyColor(i / 39); ctx.fillRect(x + 10 + i * 2, y + 74, 2, 7); }
           text(ctx, `sky: ${skyShown} THEMIS camera${skyShown === 1 ? "" : "s"}, 1 min`, x + 96, y + 78, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
         }
       }
     }
+
+    // ── the spacecraft footpoints (live), as Helios's FieldLineGlobeLayer draws them: each craft inside the drawn
+    //    magnetopause traced through IGRF-14 + T89 at the moment's Kp to 110 km (js/fieldlines.js); a filled dot where its
+    //    line is closed, a ring where open; the ±1 h track on a 5-minute grid, the hour behind faint; the camera that sees
+    //    each foot highest circled in the craft's color, and a dashed ring round every camera that sees one ──
+    const FEET_LIFT = 1 + 110 / 6371.2, FOV_DEG = 4.5079, TRACK_STEP = 300, TRACK_HALF = 3600;
+    const FAMILY = { cluster: ["C", CAT.cluster], rbsp: ["RBSP-", CAT.rbsp], geotail: ["", CAT.geotail], goes: ["G", CAT.goes], arase: ["", CAT.arase] };
+    const FAMILY_ORDER = ["MMS", "TH", "G", "", "C", "RBSP-"];
+    let feetNow = null, feetWorker = null, feetJob = 0;
+    const trackCache = new Map();                          // `${craft}|${grid t}` → line, or "pending"
+    function mpTails(B) {
+      if (B.tails) return B.tails;
+      const tails = [];
+      for (let k = 0; k < 72; k++) {
+        const phi = k / 72 * TAU, n = 240, r1 = Lin.radius(Math.PI / 2, phi, B.lin), th0 = Math.PI / 2 * (n - 1) / n, r0 = Lin.radius(th0, phi, B.lin);
+        const dx = 0 - r0 * Math.cos(th0);
+        tails.push({ rhoT: r1, alpha: Math.abs(dx) > 1e-9 ? -(r1 - r0 * Math.sin(th0)) / dx : 0 });
+      }
+      return (B.tails = tails);
+    }
+    /** The craft the overlay maps at t: MMS (its four feet coincide at this scale: one trace, captioned 1234),
+     *  THEMIS, and the fleet's magnetospheric missions, each with its family, tag and color. */
+    function feetSeeds(t) {
+      const out = [{ id: "mms", label: "MMS1–4", fam: "MMS", tag: "1234", color: PROBE[1], p: orbitAt(t) }];
+      for (const x of S.themis) out.push({ id: `th${x.id}`, label: `THEMIS-${x.id}`, fam: "TH", tag: x.id, color: THEMIS[x.id] ?? 0x888888, p: posAt(x, t) });
+      for (const f of S.fleet) {
+        const fm = FAMILY[f.cat];
+        if (!fm) continue;
+        const tag = f.cat === "cluster" ? f.id.slice(-1) : f.cat === "rbsp" ? f.id.slice(-1) : f.cat === "goes" ? f.id.replace(/\D/g, "") : f.id;
+        out.push({ id: f.id, label: f.id, fam: fm[0], tag, color: fm[1], p: posAt(f, t) });
+      }
+      return out;
+    }
+    // inside the magnetopause drawn now (track samples too: the boundary is the minute on screen's, not recomputed per sample)
+    const inside = (p) => { const g = geometry(time); return insideMP(p, g.B, mpTails(g.B)); };
+    /** The feet at the minute on screen, traced here (~1 ms a line). */
+    function feetAt(t) {
+      const key = Math.round(t / 60);
+      if (feetNow && feetNow.key === key) return feetNow;
+      const ms = o.feet.epoch(key * 60), F = FieldLines.makeField(ms, frameAt("geo", key * 60), S.kp ?? 2), craft = [];
+      for (const c of feetSeeds(key * 60)) {
+        if (!c.p || !(len3(c.p) > 1.05) || !inside(c.p)) continue;
+        craft.push(Object.assign({}, c, { line: FieldLines.trace(F, c.p) }));
+      }
+      return (feetNow = { key, craft, model: F.model });
+    }
+    /** The ±1 h tracks: grid samples not yet traced go to the worker in one batch; the layer redraws when they land. */
+    function requestTracks(t) {
+      const a = Math.ceil((t - TRACK_HALF) / TRACK_STEP), b = Math.floor((t + TRACK_HALF) / TRACK_STEP), jobs = [];
+      for (let k = a; k <= b; k++) {
+        const tk = k * TRACK_STEP, seeds = [];
+        if (S.frames.t.length && (tk < S.frames.t[0] - 300 || tk > S.frames.t[S.frames.t.length - 1] + 300)) continue;
+        for (const c of feetSeeds(tk)) {
+          const ck = `${c.id}|${tk}`;
+          if (trackCache.has(ck)) continue;
+          trackCache.set(ck, "pending");
+          if (!c.p || !(len3(c.p) > 1.05) || !inside(c.p)) { trackCache.set(ck, null); continue; }
+          seeds.push({ id: c.id, gse: c.p });
+        }
+        if (seeds.length) jobs.push({ key: tk, ms: o.feet.epoch(tk), geo: frameAt("geo", tk), kp: S.kp ?? 2, seeds });
+      }
+      if (!jobs.length) return;
+      if (!feetWorker) {
+        try {
+          feetWorker = new Worker(o.feet.worker);
+          feetWorker.onmessage = (ev) => {
+            for (const [tk, r] of Object.entries(ev.data.results)) for (const [id, line] of Object.entries(r.lines)) trackCache.set(`${id}|${tk}`, line);
+            request();
+          };
+        } catch (e) { feetWorker = false; }
+      }
+      if (feetWorker) feetWorker.postMessage({ id: ++feetJob, jobs });
+    }
+    const central = (la1, lo1, la2, lo2) => {
+      const p1 = la1 * DEG, p2 = la2 * DEG, a = Math.sin((p2 - p1) / 2), b = Math.sin((lo2 - lo1) * DEG / 2);
+      return 2 * Math.asin(Math.min(1, Math.sqrt(a * a + Math.cos(p1) * Math.cos(p2) * b * b))) / DEG;
+    };
+    /** A point at 110 km over (lat, lon) in the scene, and whether it faces the camera. */
+    function footPt(Mg, lat, lon) {
+      const la = lat * DEG, lo = lon * DEG, n = mul(Mg, [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)]);
+      return { q: P.pt(n.map(v => v * FEET_LIFT)), vis: dot(n, P.basis.toward) > 0.02, n };
+    }
+    function drawFeet(ctx, taken) {
+      feetHits = [];
+      const now = feetAt(time), Mg = frameAt("geo", time);
+      requestTracks(time);
+      // the tracks: runs joined only ≤ 1.5 grid steps and ≤ 5° apart, each leg along the great circle
+      for (const c of now.craft) {
+        for (const hemi of ["north", "south"]) {
+          const a = Math.ceil((time - TRACK_HALF) / TRACK_STEP), b = Math.floor((time + TRACK_HALF) / TRACK_STEP), smp = [];
+          for (let k = a; k <= b; k++) { const l = trackCache.get(`${c.id}|${k * TRACK_STEP}`); smp.push([k * TRACK_STEP, l && l !== "pending" ? l[hemi] : null]); }
+          smp.push([time, c.line[hemi]]);
+          smp.sort((x, y) => x[0] - y[0]);
+          const runs = [];
+          let cur = [];
+          for (const [t, f] of smp) {
+            if (!f) { if (cur.length > 1) runs.push(cur); cur = []; continue; }
+            const last = cur[cur.length - 1];
+            if (last && (t - last[0] > 1.5 * TRACK_STEP || central(last[1].lat, last[1].lon, f.lat, f.lon) > 5)) { if (cur.length > 1) runs.push(cur); cur = []; }
+            cur.push([t, f]);
+          }
+          if (cur.length > 1) runs.push(cur);
+          for (const run of runs) for (const [part, alpha, w, dash] of [[run.filter(x => x[0] <= time), 0.38, 0.9, [2.5, 3]], [run.filter(x => x[0] >= time), 0.75, 1.1, [4, 3]]]) {
+            if (part.length < 2) continue;
+            ctx.beginPath();
+            let pen = false;
+            for (let i = 0; i + 1 < part.length; i++) {
+              const f0 = part[i][1], f1 = part[i + 1][1], steps = Math.max(1, Math.ceil(central(f0.lat, f0.lon, f1.lat, f1.lon)));
+              for (let s2 = 0; s2 <= steps; s2++) {
+                const u = s2 / steps, la = f0.lat + (f1.lat - f0.lat) * u;
+                let dl = f1.lon - f0.lon; if (dl > 180) dl -= 360; if (dl < -180) dl += 360;
+                const fp = footPt(Mg, la, f0.lon + dl * u);
+                if (!fp.vis) { pen = false; continue; }
+                if (pen) ctx.lineTo(...fp.q); else { ctx.moveTo(...fp.q); pen = true; }
+              }
+            }
+            stroke(ctx, rgba(c.color, alpha), w, dash);
+          }
+        }
+      }
+      // the cameras that see a foot: the nearest per foot gets its field of view in the craft's color; every one a ring
+      const hits = new Map(), best = new Map();
+      for (const c of now.craft) for (const hemi of ["north", "south"]) {
+        const f = c.line[hemi];
+        if (!f) continue;
+        for (const st of S.asi) {
+          const g = central(f.lat, f.lon, st.lat, st.lon);
+          if (g > FOV_DEG) continue;
+          if (!hits.has(st.code)) hits.set(st.code, { st, colors: [] });
+          const hcol = hits.get(st.code).colors;
+          if (!hcol.includes(c.color)) hcol.push(c.color);
+          const k = `${c.id}|${hemi}`;
+          if (!best.has(k) || g < best.get(k).g) best.set(k, { g, code: st.code, color: c.color });
+        }
+      }
+      const circled = new Map();
+      for (const v of best.values()) if (!circled.has(v.code)) circled.set(v.code, v.color);
+      for (const { st, colors } of hits.values()) {
+        const c0 = footPt(Mg, st.lat, st.lon);
+        if (!c0.vis) continue;
+        if (circled.has(st.code)) {
+          const col = circled.get(st.code), la = st.lat * DEG, lo = st.lon * DEG, gr = FOV_DEG * DEG;
+          ctx.beginPath();
+          for (let k = 0; k <= 60; k++) {
+            const az = k / 60 * TAU, la2 = Math.asin(Math.sin(la) * Math.cos(gr) + Math.cos(la) * Math.sin(gr) * Math.cos(az));
+            const lo2 = lo + Math.atan2(Math.sin(az) * Math.sin(gr) * Math.cos(la), Math.cos(gr) - Math.sin(la) * Math.sin(la2));
+            const q = footPt(Mg, la2 / DEG, lo2 / DEG).q;
+            if (k) ctx.lineTo(...q); else ctx.moveTo(...q);
+          }
+          ctx.closePath(); ctx.fillStyle = rgba(col, 0.07); ctx.fill(); stroke(ctx, rgba(col, 0.75), 1.1, [5, 3]);
+        }
+        colors.slice(0, 3).forEach((col, i) => {
+          const rr = 10 + i * 3.2;
+          ctx.beginPath(); ctx.arc(c0.q[0], c0.q[1], rr, 0, TAU); stroke(ctx, rgba(DS.screenAlt, 0.8), 3);
+          ctx.beginPath(); ctx.arc(c0.q[0], c0.q[1], rr, 0, TAU); stroke(ctx, rgba(col, 0.95), 1.7, [2.6, 1.8]);
+        });
+      }
+      // the feet: closed a filled dot, open a ring; MMS last, on top
+      const marks = [];
+      for (const c of now.craft.slice().sort((a, b) => (a.fam === "MMS") - (b.fam === "MMS"))) {
+        for (const hemi of ["north", "south"]) {
+          const f = c.line[hemi];
+          if (!f) continue;
+          const fp = footPt(Mg, f.lat, f.lon);
+          if (!fp.vis) continue;
+          const q = fp.q;
+          if (c.line.topology === "closed") { circle(ctx, q[0], q[1], 4.6, rgba(DS.screenAlt)); circle(ctx, q[0], q[1], 3.3, rgba(c.color)); }
+          else {
+            ctx.beginPath(); ctx.arc(q[0], q[1], 4, 0, TAU); stroke(ctx, rgba(DS.screenAlt), 3);
+            ctx.beginPath(); ctx.arc(q[0], q[1], 4, 0, TAU); stroke(ctx, rgba(c.color), 1.6);
+          }
+          marks.push({ c, q, hemi, f });
+          feetHits.push({ q, c, hemi, f });
+        }
+      }
+      // captions: feet within 9 px share one ("TH ADE", "C134"), each craft's part in its color, placed right, left, above
+      // or below, the first spot clear of the other captions, the dots and the station labels
+      const groups = [];
+      for (const m of marks) {
+        const g = groups.find(gr => gr.some(x => Math.hypot(x.q[0] - m.q[0], x.q[1] - m.q[1]) < 9));
+        if (g) g.push(m); else groups.push([m]);
+      }
+      const box = marks.map(m => [m.q[0] - 5, m.q[1] - 5, 10, 10]).concat(taken);
+      ctx.font = `700 9px ${MONO}`;
+      for (const g of groups) {
+        const parts = [];
+        for (const fam of FAMILY_ORDER) {
+          const ms = g.filter(m => m.c.fam === fam), seen = [];
+          for (const m of ms) if (!seen.some(x => x.c.id === m.c.id)) seen.push(m);
+          if (!seen.length) continue;
+          seen.sort((a, b) => (a.c.tag < b.c.tag ? -1 : 1));
+          if (parts.length) parts.push([" ", "rgba(255,255,255,0.82)"]);
+          if (fam) parts.push([fam + (fam === "MMS" ? " " : ""), "rgba(255,255,255,0.82)"]);
+          if (fam === "MMS") { for (const d of seen[0].c.tag) parts.push([d, rgba(PROBE[d])]); continue; }
+          const multi = seen.length > 1 && seen.some(m => m.c.tag.length > 1);
+          seen.forEach((m, i) => { if (multi && i) parts.push(["·", "rgba(255,255,255,0.6)"]); parts.push([m.c.tag, rgba(m.c.color)]); });
+        }
+        const w = parts.reduce((s2, [tx]) => s2 + ctx.measureText(tx).width, 0), h = 10;
+        const xs = g.map(m => m.q[0]), ys = g.map(m => m.q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+        const my = (y0 + y1) / 2, mx = (x0 + x1) / 2;
+        const cands = [[x1 + 8, my - h / 2], [x0 - 8 - w, my - h / 2], [mx - w / 2, y0 - 8 - h], [mx - w / 2, y1 + 8]];
+        const fits = (rc) => rc[0] >= 4 && rc[1] >= 4 && rc[0] + w <= P.W - 4 && rc[1] + h <= P.H - 4;
+        const rc = cands.find(c2 => fits(c2) && !box.some(t => c2[0] < t[0] + t[2] && c2[0] + w > t[0] && c2[1] < t[1] + t[3] && c2[1] + h > t[1])) || cands.find(fits);
+        if (!rc) continue;
+        ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.95)"; ctx.shadowBlur = 3;
+        let x = rc[0];
+        for (const [tx, col] of parts) { text(ctx, tx, x, rc[1] + h / 2, `700 9px ${MONO}`, col, "left"); x += ctx.measureText(tx).width; }
+        ctx.restore();
+        box.push([rc[0] - 1.5, rc[1] - 1, w + 3, h + 2]);
+      }
+    }
+    let feetHits = [];
 
     // ── the sky images (live): SkyRaster's palette after svs.gsfc.nasa.gov/3590, the median sky a translucent blue,
     //    brighter sky through green to pale green; one path per color step, so a few dozen fills draw every camera ──
@@ -1340,7 +1553,9 @@
       if (!P || e.pointerType === "touch") return;
       const h = hit(x, y);
       cv.style.cursor = h ? "pointer" : "";
-      cv.title = h ? (h.earth ? "Earth · open the OMNI solar wind window" : h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
+      const fh = !h && rung === "leo" ? feetHits.find(m => Math.hypot(m.q[0] - x, m.q[1] - y) < 6) : null;
+      cv.title = fh ? `${fh.c.label} · ${fh.hemi === "north" ? "northern" : "southern"} foot at 110 km: ${Math.abs(fh.f.lat).toFixed(1)}°${fh.f.lat >= 0 ? "N" : "S"} ${Math.abs(fh.f.lon).toFixed(1)}°${fh.f.lon >= 0 ? "E" : "W"} · ${fh.c.line.topology === "closed" ? "closed line" : "open line"} · ${feetNow ? feetNow.model : ""}`
+        : h ? (h.earth ? "Earth · open the OMNI solar wind window" : h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
         ? `${h.ring.name} · ${h.ring.m.s.nets.map(k => NET_NAME[k]).join(" + ")} · Sun ${h.ring.m.elev.toFixed(0)}° · ${h.ring.m.imaging ? "imaging" : "daylight"}`
         : `Open ${h.ring.name} data window`) : "";
       const prev = hover;

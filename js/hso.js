@@ -2159,7 +2159,8 @@
   /** What the HSO view needs beyond the scene: the live page has no SDO map yet, and its own day. */
   function viewOpts() {
     const d = new Date(T0 + 7200e3);
-    return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true } : {};
+    return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true,
+                   feet: { epoch: (t) => T0 + t * 1000, worker: "js/fieldlines.js?v=36" } } : {};
   }
   /** Live: a station's daily keogram (UCalgary's summary JPEG, 00–24 UT) over the HSO view, Helios's KeogramPanel in
    *  brief, with a cursor at the view's time; a tab for each network that published one that day. */
