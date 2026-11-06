@@ -928,3 +928,7 @@ p.tk-sup { margin: 0; }
 .kg-ax span:first-child { transform: none; }
 .kg-ax span:last-child { transform: translateX(-100%); }
 .kg-c { margin: 6px 0 0; color: rgba(233, 235, 240, 0.5); font-size: 10px; }
+.hso-zoom { position: absolute; z-index: 6; right: 14px; top: 50%; display: grid; gap: 4px; transform: translateY(-50%); }
+.hso-zoom[hidden] { display: none; }
+.hso-zoom button { width: 30px; height: 30px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; background: rgba(11, 11, 14, 0.82); color: #e9ebf0; font: 600 16px/1 ui-monospace, Menlo, monospace; cursor: pointer; }
+.hso-zoom button:hover { border-color: rgba(255, 255, 255, 0.4); }

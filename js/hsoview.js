@@ -337,7 +337,7 @@
       sun: { center: [AU, 0, 0], extent: [1.78 * AU, 1.78 * AU] },
     };
     let rung = "mag", zoomFrom = null;
-    const leoCam = { lat: 57, lon: -102 };                // LEOCamera.earthHome
+    const leoCam = { lat: 57, lon: -102, zoom: 1 };      // LEOCamera.earthHome; zoom 1…8 (LEOCamera.zoomRange), live page only
     function leoBasis() {
       const M = frameAt("geo", time), la = leoCam.lat * DEG, lo = leoCam.lon * DEG;
       const n = mul(M, [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)]);
@@ -347,7 +347,7 @@
     }
     function framing(W, fh) {
       const R = RUNGS[rung];
-      if (R) return { scale: Math.min(W * 0.92 / (2 * R.extent[0]), fh * 0.92 / (2 * R.extent[1])), c: R.center };
+      if (R) return { scale: Math.min(W * 0.92 / (2 * R.extent[0]), fh * 0.92 / (2 * R.extent[1])) * (rung === "leo" ? leoCam.zoom : 1), c: R.center };
       const m = 0.14;
       const minX = Math.min(16, 0, -2, box.minX), maxX = Math.max(16, 0, -2, box.maxX);
       const minY = Math.min(-15, box.minY), maxY = Math.max(15, box.maxY);
@@ -818,6 +818,8 @@
           stroke(ctx, "rgba(150,245,190,0.55)", 0.9);
         }
       }
+      // the sky images (live): each dark THEMIS camera's one-minute frame at 110 km, as Helios's AuroraLayer lays them
+      if (o.sky) drawSky(ctx);
       // the all-sky imagers running that day: filled where the sky is dark enough to image (Sun below −10°)
       const M = frameAt("geo", time), taken = [];
       stationMarks = [];
@@ -861,7 +863,7 @@
       // the legend
       if (P.W >= 420) {
         const lines = ["ALL-SKY IMAGERS", "imaging now   daylight", `${stationMarks.length} in view · ${S.asi.length} that day`, "Drag to turn the globe"];
-        const x = 12, y = P.H - 112, w = 200, h = 74;
+        const x = 12, w = 200, h = o.sky ? 90 : 74, y = P.H - 38 - h;
         roundRect(ctx, x, y, w, h, 8); ctx.fillStyle = "rgba(11,11,14,0.86)"; ctx.fill(); stroke(ctx, rgba(DS.hairline, 0.12), 1);
         text(ctx, lines[0], x + 10, y + 13, `700 9.5px ${MONO}`, rgba(DS.textSecondary), "left");
         circle(ctx, x + 14, y + 30, 4, rgba(NET.themis)); ctx.beginPath(); ctx.arc(x + 14, y + 30, 4, 0, TAU); stroke(ctx, "rgba(255,255,255,0.85)", 0.8);
@@ -871,6 +873,74 @@
         let lx = x + 10;
         for (const k of ["themis", "rego"]) { circle(ctx, lx + 4, y + 46, 3.5, rgba(NET[k])); text(ctx, NET_NAME[k], lx + 11, y + 46, `9px ${MONO}`, rgba(DS.textSecondary), "left"); lx += 70; }
         text(ctx, `Kp ${(S.kp ?? 2).toFixed(1)} oval (Starkov 1994) · drag to turn`, x + 10, y + 62, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
+        if (o.sky) {
+          for (let i = 0; i < 40; i++) { ctx.fillStyle = skyColor(i / 39); ctx.fillRect(x + 10 + i * 2, y + 74, 2, 7); }
+          text(ctx, `sky: ${skyShown} THEMIS camera${skyShown === 1 ? "" : "s"}, 1 min`, x + 96, y + 78, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
+        }
+      }
+    }
+
+    // ── the sky images (live): SkyRaster's palette after svs.gsfc.nasa.gov/3590, the median sky a translucent blue,
+    //    brighter sky through green to pale green; one path per color step, so a few dozen fills draw every camera ──
+    const SKY_STOPS = [[0, 0.16, 0.34, 0.90, 0.20], [0.25, 0.20, 0.46, 0.96, 0.30], [0.5, 0.22, 0.86, 0.62, 0.62], [0.75, 0.36, 1, 0.52, 0.86], [1, 0.84, 1, 0.86, 0.96]];
+    const skyColor = (v) => {
+      let k = 1;
+      while (k < SKY_STOPS.length - 1 && v > SKY_STOPS[k][0]) k++;
+      const p = SKY_STOPS[k - 1], q = SKY_STOPS[k], f = clamp((v - p[0]) / (q[0] - p[0]), 0, 1), c = (i) => p[i] + (q[i] - p[i]) * f;
+      return `rgba(${Math.round(c(1) * 255)},${Math.round(c(2) * 255)},${Math.round(c(3) * 255)},${c(4).toFixed(3)})`;
+    };
+    const skyFrames = new Map(), SKY_BINS = 24;
+    let skyShown = 0;
+    function drawSky(ctx) {
+      const Mg = frameAt("geo", time), lift = 1 + 110 / 6371.2;
+      const toScreen = (a, b) => {                          // geographic (deg) at 110 km → the view, or null behind the Earth
+        const ca = Math.cos(a * DEG), v = mul(Mg, [ca * Math.cos(b * DEG), ca * Math.sin(b * DEG), Math.sin(a * DEG)]).map(x => x * lift);
+        return P.depth(v) < 0.02 ? null : P.pt(v);
+      };
+      skyShown = 0;
+      for (const s of S.asi) {
+        if (!s.nets.includes("themis")) continue;
+        const la = s.lat * DEG, lo = s.lon * DEG, n = mul(Mg, [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)]);
+        if (dot(n, P.basis.toward) <= -0.1 || Math.asin(clamp(n[0], -1, 1)) / DEG >= -10) continue;   // the far side, or daylight
+        const key = `${s.code}|${Math.floor(time / 10)}`;
+        let f = skyFrames.get(key);
+        if (f === undefined) {
+          skyFrames.set(key, null);
+          if (skyFrames.size > 400) skyFrames.delete(skyFrames.keys().next().value);
+          o.sky(s.code, time).then((r) => { skyFrames.set(key, r || false); request(); });
+          // until it arrives, the last frame drawn for the station
+          for (const [k, v] of skyFrames) if (v && k.startsWith(s.code + "|")) f = v;
+        }
+        if (!f) continue;
+        skyShown++;
+        const paths = Array.from({ length: SKY_BINS }, () => new Path2D());
+        const sx = new Float32Array(65 * 65), sy = new Float32Array(65 * 65), ok = new Uint8Array(65 * 65);
+        for (let i = 0; i < 65 * 65; i++) {
+          const a = f.lat[i], b = f.lon[i];
+          if (!isFinite(a) || !isFinite(b)) continue;
+          const q = toScreen(a, b);
+          if (!q) continue;
+          sx[i] = q[0]; sy[i] = q[1]; ok[i] = 1;
+        }
+        for (let r = 0; r < 64; r++) for (let c = 0; c < 64; c++) {
+          const v = f.value[r * 64 + c];
+          if (!isFinite(v)) continue;
+          const i0 = r * 65 + c, i1 = i0 + 1, i2 = i0 + 66, i3 = i0 + 65;
+          if (!(ok[i0] && ok[i1] && ok[i2] && ok[i3])) continue;
+          const path = paths[Math.min(SKY_BINS - 1, Math.floor(v * SKY_BINS))];
+          path.moveTo(sx[i0], sy[i0]); path.lineTo(sx[i1], sy[i1]); path.lineTo(sx[i2], sy[i2]); path.lineTo(sx[i3], sy[i3]); path.closePath();
+        }
+        // each camera inside its own 10° circle: a smooth rim in place of the tile's pixel staircase
+        ctx.save();
+        const rim = f.rim ? f.rim.map(([a, b]) => toScreen(a, b)) : null;
+        if (rim && rim.every(Boolean)) {
+          const clip = new Path2D();
+          rim.forEach((q, j) => (j ? clip.lineTo(q[0], q[1]) : clip.moveTo(q[0], q[1])));
+          clip.closePath();
+          ctx.clip(clip);
+        }
+        for (let k = 0; k < SKY_BINS; k++) { ctx.fillStyle = skyColor((k + 0.5) / SKY_BINS); ctx.fill(paths[k]); }
+        ctx.restore();
       }
     }
 
@@ -1320,6 +1390,25 @@
     presetSync();
 
     new ResizeObserver(() => { skyCache = null; request(); }).observe(root);
+    // LEO zoom (live): pinch or ⌘/Ctrl-scroll over the globe, or the + / − buttons; plain scrolling still scrolls the page
+    if (o.leoZoom) {
+      const setZoom = (z) => { leoCam.zoom = clamp(z, 1, 8); leoCache = null; request(); };
+      cv.addEventListener("wheel", (e) => {
+        if (rung !== "leo" || !(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        setZoom(leoCam.zoom * Math.exp(-e.deltaY * 0.01));
+      }, { passive: false });
+      const box_ = document.createElement("div");
+      box_.className = "hso-zoom";
+      box_.innerHTML = '<button aria-label="Zoom in" title="Zoom in (or pinch, or ⌘-scroll)">+</button><button aria-label="Zoom out" title="Zoom out">−</button>';
+      const [zin, zout] = box_.querySelectorAll("button");
+      zin.addEventListener("click", () => setZoom(leoCam.zoom * 1.5));
+      zout.addEventListener("click", () => setZoom(leoCam.zoom / 1.5));
+      root.appendChild(box_);
+      const sync = () => { box_.hidden = rung !== "leo"; };
+      for (const b of rungBtns) b.addEventListener("click", () => setTimeout(sync, 0));
+      sync();
+    }
     return {
       get time() { return time; },
       setTime(t) { time = t; request(); },

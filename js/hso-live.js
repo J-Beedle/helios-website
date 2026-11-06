@@ -469,6 +469,122 @@
     return out;
   }
 
+  // ───────────────────────── the sky images: THEMIS one-minute frames laid on the globe (Helios's AuroraLayer) ─────────────────────────
+  // UCalgary's hourly montages (10 × 6 tiles of 64 × 64, one a minute) through each installation's skymap, reduced by
+  // helios_website_tools/prepare_asi_skymaps.py to the tile: corners at 110 km and elevations. Each frame on Helios's
+  // scale (SkyImageFrame.values): gray → counts on the montage's log curve, ÷ the frame's median sky, × 64/254.
+  const MONTAGE_DS = "THEMIS_ASI_HOURLY_MONTAGE_JPG";
+  let skyIndex = null;
+  const montageLists = new Map(), montageImgs = new Map(), skymaps = new Map(), frames = new Map();
+  /** One UT day's hourly montages for every THEMIS site: { site: { hour: url } }. */
+  function montageList(day) {
+    if (!montageLists.has(day)) montageLists.set(day, (async () => {
+      const r = await get(`${UC_API}?name=${MONTAGE_DS}&start=${day}T00:00:00&end=${day}T23:59:59`, undefined, 15000);
+      if (!r.ok) return {};
+      const out = {};
+      for (const u of (await r.json()).urls || []) {
+        const m = /\/ut(\d\d)\/\d{8}_\d\d_([a-z]{4})_themis\d+_full-montage\.pgm\.jpg$/i.exec(u);
+        if (m && /^https:\/\/data\.phys\.ucalgary\.ca\//.test(u)) (out[m[2].toLowerCase()] = out[m[2].toLowerCase()] || {})[+m[1]] = u;
+      }
+      return out;
+    })().catch(() => ({})));
+    return montageLists.get(day);
+  }
+  /** The installation's reduced skymap for a date: corners (65 × 65 lat, lon) and elevations (64 × 64). */
+  async function skymap(site, ymd) {
+    skyIndex = skyIndex || fetch("assets/data/live/skymaps/themis.json").then(r => r.json()).catch(() => ({}));
+    const list = (await skyIndex)[site] || [];
+    let pick = null;
+    for (const [start, end, file] of list) if (start <= ymd && (end === "+" || end >= ymd) && (!pick || start >= pick[0])) pick = [start, file];
+    if (!pick) for (const [start, , file] of list) if (start <= ymd && (!pick || start >= pick[0])) pick = [start, file];
+    if (!pick) return null;
+    if (!skymaps.has(pick[1])) skymaps.set(pick[1], fetch(`assets/data/live/skymaps/themis/${pick[1]}`).then(r => r.arrayBuffer()).then((buf) => {
+      const q = new Int16Array(buf, 0, 65 * 65 * 2), el = new Uint8Array(buf, 65 * 65 * 4, 64 * 64);
+      const lat = new Float32Array(65 * 65), lon = new Float32Array(65 * 65);
+      for (let i = 0; i < 65 * 65; i++) { lat[i] = q[i] === -32768 ? NaN : q[i] / 100; lon[i] = q[65 * 65 + i] === -32768 ? NaN : q[65 * 65 + i] / 100; }
+      const elev = Float32Array.from(el, e => (e === 255 ? NaN : e));
+      // each corner's elevation as the camera sees it (spherical Earth, emission at 110 km), from the zenith's place:
+      // the rim pixels whose own (block-mean) elevation passes 10° can still reach a corner far below it
+      let zi = 0;
+      for (let i = 1; i < 4096; i++) if (!(elev[zi] >= elev[i]) && isFinite(elev[i])) zi = i;
+      const zr = Math.floor(zi / 64), zc = zi % 64, zc4 = [zr * 65 + zc, zr * 65 + zc + 1, (zr + 1) * 65 + zc, (zr + 1) * 65 + zc + 1];
+      const zlat = zc4.reduce((a, i) => a + lat[i], 0) / 4 * DEG, zlon = zc4.reduce((a, i) => a + lon[i], 0) / 4 * DEG, k = 6371.2 / (6371.2 + 110);
+      const cornerEl = new Float32Array(65 * 65).fill(NaN);
+      for (let i = 0; i < 65 * 65; i++) {
+        if (!isFinite(lat[i])) continue;
+        const a = lat[i] * DEG, b = lon[i] * DEG, cg = Math.sin(a) * Math.sin(zlat) + Math.cos(a) * Math.cos(zlat) * Math.cos(b - zlon), g = Math.acos(Math.max(-1, Math.min(1, cg)));
+        cornerEl[i] = Math.atan2(cg - k, Math.sin(g)) / DEG;
+      }
+      // the 10° rim: the ground circle the camera sees at 10° elevation, at 110 km (the clip that smooths the edge)
+      const e10 = 10 * DEG, gam = Math.acos(k * Math.cos(e10)) - e10, rim = [];
+      for (let j = 0; j <= 96; j++) {
+        const az = j / 96 * 2 * Math.PI;
+        const la2 = Math.asin(Math.sin(zlat) * Math.cos(gam) + Math.cos(zlat) * Math.sin(gam) * Math.cos(az));
+        const lo2 = zlon + Math.atan2(Math.sin(az) * Math.sin(gam) * Math.cos(zlat), Math.cos(gam) - Math.sin(zlat) * Math.sin(la2));
+        rim.push([la2 / DEG, lo2 / DEG]);
+      }
+      return { lat, lon, el: elev, cornerEl, rim };
+    }).catch(() => null));
+    return skymaps.get(pick[1]);
+  }
+  /** A montage's pixels (gray), decoded once. */
+  function montagePixels(url) {
+    if (!montageImgs.has(url)) montageImgs.set(url, new Promise((res) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => {
+        const c = document.createElement("canvas"); c.width = im.width; c.height = im.height;
+        const g = c.getContext("2d"); g.drawImage(im, 0, 0);
+        const d = g.getImageData(0, 0, im.width, im.height).data, gray = new Uint8Array(im.width * im.height);
+        for (let i = 0; i < gray.length; i++) gray[i] = d[i * 4];
+        bytes += 120e3; emit();
+        res({ w: im.width, h: im.height, gray });
+      };
+      im.onerror = () => res(null);
+      im.src = url;
+    }));
+    if (montageImgs.size > 120) montageImgs.delete(montageImgs.keys().next().value);   // the oldest hours go
+    return montageImgs.get(url);
+  }
+  const counts = (g) => 1000 * Math.pow(10, (g - 109.1) / 195.7);
+  const isStamp = (r, c) => r >= 50 && r < 64 && c >= 12 && c < 48;          // the HH:MM burned into each tile
+  /** One site's frame at a time (s after T0): { lat, lon (corners), value (64 × 64, NaN off the sky) } or null. */
+  function skyFrame(site, t) {
+    const ms = T0 + t * 1000, d = new Date(ms), day = d.toISOString().slice(0, 10), hour = d.getUTCHours(), minute = d.getUTCMinutes();
+    const key = `${site}|${day}|${hour}|${minute}`;
+    if (frames.has(key)) return frames.get(key);
+    const p = (async () => {
+      const [list, map] = await Promise.all([montageList(day), skymap(site, day.replace(/-/g, ""))]);
+      const url = list[site] && list[site][hour];
+      if (!url || !map) return null;
+      const img = await montagePixels(url);
+      if (!img || img.w !== 640 || img.h !== 384) return null;
+      const x0 = (minute % 10) * 64, y0 = Math.floor(minute / 10) * 64, c = new Float64Array(64 * 64).fill(NaN), sky = [];
+      const draw = new Uint8Array(64 * 64);                  // drawn: any corner above 10° (the rim clip trims the rest)
+      let sum = 0, sq = 0;
+      for (let r = 0; r < 64; r++) for (let k = 0; k < 64; k++) {
+        const g = img.gray[(y0 + r) * 640 + x0 + k];
+        sum += g; sq += g * g;
+        const e = map.el[r * 64 + k], ce = map.cornerEl, i0 = r * 65 + k;
+        if (!(Math.max(ce[i0], ce[i0 + 1], ce[i0 + 65], ce[i0 + 66]) >= 10)) continue;
+        draw[r * 64 + k] = 1;
+        if (isStamp(r, k)) continue;                           // under the time stamp: drawn at the median sky (below)
+        c[r * 64 + k] = counts(g);
+        if (e >= 10) sky.push(c[r * 64 + k]);                  // the median from the sky above 10°, as Helios
+      }
+      const mean = sum / 4096;
+      if (sky.length < 64 || (mean >= 250 && Math.sqrt(Math.max(0, sq / 4096 - mean * mean)) < 2)) return null;   // not imaged that minute
+      sky.sort((a, b) => a - b);
+      const k = (64 / 254) / Math.max(1, sky[sky.length >> 1]), value = new Float32Array(64 * 64);
+      // sky that only the stamp covers is drawn at the median level, as Helios's SkyRaster does
+      for (let i = 0; i < 4096; i++) value[i] = !draw[i] ? NaN : isFinite(c[i]) ? Math.min(1, c[i] * k) : 64 / 254;
+      return { lat: map.lat, lon: map.lon, value, rim: map.rim };
+    })().catch(() => null);
+    frames.set(key, p);
+    if (frames.size > 600) frames.delete(frames.keys().next().value);
+    return p;
+  }
+
   // ───────────────────────── ESA's Cluster Science Archive: PEACE, as CEF in a gzipped tar ─────────────────────────
   const CSA = "https://csa.esac.esa.int/csa-sl-tap/data";
   /** The .cef files in a product delivery (a .tgz). */
@@ -899,6 +1015,7 @@
     mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : cluster(key))),
     scene,
     vdf: (n) => vdfStore(n),
+    sky: skyFrame,
     burstHalf: BURST_HALF,
     tasks: () => [...tasks],
   };
