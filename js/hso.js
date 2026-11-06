@@ -657,7 +657,7 @@
       const { ctx, w, h, dpr } = sizeCanvas(cv), a = app.a, b = app.b;
       sizeCanvas(over);
       const mission = cfg.mission, keys = cfg.stack || MISSIONS[mission].stack;
-      const rows = keys.map(k => Object.assign({ key: k }, kindOf(mission, k))).filter(r => r.title && r.avail !== false);
+      const rows = keys.map(k => Object.assign({ key: k }, kindOf(mission, k), D.relabel && D.relabel[k])).filter(r => r.title && r.avail !== false);
       const R = cfg.lmn ? cfg.lmn.R : null;
       L = layout(w, h, rows);
       L.yOf = []; L.acc = [];
@@ -1216,7 +1216,7 @@
 
   // ───────────────────────── the data window ─────────────────────────
   const PROBE_COL = { 1: "#ebebeb", 2: "#ed7821", 3: "#128c66", 4: "#4fa8ed" };
-  const MMS_FAM = [1, 2, 3, 4], THM_FAM = LIVE ? ["tha", "thd", "the"] : ["tha", "THEMIS-D", "THEMIS-E"];
+  const MMS_FAM = [1, 2, 3, 4], THM_FAM = LIVE ? ["tha", "thd", "the", "thb", "thc"] : ["tha", "THEMIS-D", "THEMIS-E"];
   const CL_FAM = LIVE ? ["c1", "c2", "c3", "c4"] : ["Cluster-1", "Cluster-2", "Cluster-3", "c4"];
   const CRAFT = {
     1: { name: "MMS1", col: PROBE_COL[1], mission: "mms", family: MMS_FAM }, 2: { name: "MMS2", col: PROBE_COL[2], mission: "mms", family: MMS_FAM },
@@ -1226,12 +1226,18 @@
   };
   if (LIVE) Object.assign(CRAFT, {
     thd: { name: "THEMIS-D", col: "#ff9a52", mission: "tha", family: THM_FAM }, the: { name: "THEMIS-E", col: "#c18cff", mission: "tha", family: THM_FAM },
+    thb: { name: "ARTEMIS-P1", col: "#f2d36b", mission: "tha", family: THM_FAM }, thc: { name: "ARTEMIS-P2", col: "#e8b04a", mission: "tha", family: THM_FAM },
     c1: { name: "Cluster-1", col: "#a8f0c0", mission: "c4", family: CL_FAM }, c2: { name: "Cluster-2", col: "#62d9a0", mission: "c4", family: CL_FAM },
     c3: { name: "Cluster-3", col: "#3fbf86", mission: "c4", family: CL_FAM },
   });
   /** The craft a click on the view opens: the demo carries one probe of each other mission, and stands it in for the rest. */
   const representative = (name) => {
-    if (LIVE) { const m = /^THEMIS-([ADE])$/.exec(name) || /^Cluster-([1-4])$/.exec(name); return m ? (/\d/.test(m[1]) ? `c${m[1]}` : `th${m[1].toLowerCase()}`) : null; }
+    if (LIVE) {
+      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc" }[name];
+      if (art) return art;
+      const m = /^THEMIS-([ADE])$/.exec(name) || /^Cluster-([1-4])$/.exec(name);
+      return m ? (/\d/.test(m[1]) ? `c${m[1]}` : `th${m[1].toLowerCase()}`) : null;
+    }
     return /^THEMIS/.test(name) ? "tha" : /^Cluster/.test(name) ? "c4" : null;
   };
   const WINDOW_CHOICES = [5, 10, 30, 90, 180];             // ±minutes, as HSOScreen.windowChoices
@@ -1388,7 +1394,7 @@
       catch (e) { busy.textContent = `${Cr.name}'s data could not be loaded.`; busy.hidden = false; return; }
       busy.hidden = true;
       const data = D.craft[k], newMission = !W.n || CRAFT[W.n].mission !== Cr.mission;
-      Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind });
+      Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind, relabel: data.relabel || null });
       W.n = k;
       if (newMission || LIVE) {                              // live: only the subplots that probe has data for that day
         C.mission = Cr.mission; C.stack = MISSIONS[Cr.mission].stack.slice();

@@ -145,10 +145,10 @@
     return { t: Float64Array.from(t), cols, n: rows.length };
   }
   /** A long request cut into pieces fetched side by side, joined in order. */
-  async function hapiChunked(id, params, a, b, k) {
+  async function hapiChunked(id, params, a, b, k, first) {
     // whole-second edges, each piece ending where the next begins (HAPI's time.max is exclusive and to the second here)
     const edge = (i) => (i === 0 ? Math.floor(a / 1000) * 1000 : i === k ? Math.ceil(b / 1000) * 1000 : Math.round((a + i * (b - a) / k) / 1000) * 1000);
-    const parts = await Promise.all(Array.from({ length: k }, (_, i) => hapi(id, params, edge(i), edge(i + 1), false, i < k - 1)));
+    const parts = await Promise.all(Array.from({ length: k }, (_, i) => hapi(id, params, edge(i), edge(i + 1), first, i < k - 1)));
     const n = parts.reduce((s, p) => s + p.n, 0), nc = Math.max(0, ...parts.map(p => p.cols.length)), t = new Float64Array(n);
     const cols = Array.from({ length: nc }, () => new Float64Array(n));
     let o = 0;
@@ -156,8 +156,8 @@
     return { t, cols, n };
   }
   /** One parameter's bins (HAPI info), for spectra the server labels itself. */
-  async function hapiBins(id, param) {
-    const r = await slot(() => get(`${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`));   // HAPI is read inside, after the relay
+  async function hapiBins(id, param, first) {
+    const r = await slot(() => get(`${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`), first);   // HAPI is read inside, after the relay
     if (!r.ok) return null;
     const p = (await r.json()).parameters.find(x => x.name === param);
     return p && p.bins && p.bins[0].centers;
@@ -252,9 +252,9 @@
       track(`MMS${n} burst FPI electrons`, hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3)),
     ]).catch((e) => { console.warn(e); return null; });
     const [fg, di, de] = await Promise.all([
-      track(`MMS${n} FGM`, hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8)),
-      track(`MMS${n} FPI ions`, hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b)),
-      track(`MMS${n} FPI electrons`, hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b)),
+      track(`MMS${n} FGM`, hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8, true)),   // ahead of any burst loading
+      track(`MMS${n} FPI ions`, hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, true)),
+      track(`MMS${n} FPI electrons`, hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, true)),
     ]);
     const B = boxcar(fg.t, fg.cols.slice(0, 4), 1.0);
     const sv = {
@@ -274,15 +274,15 @@
 
   // ───────────────────────── THEMIS ─────────────────────────
   async function themis(key) {
-    const L = key.slice(2).toUpperCase(), l = L.toLowerCase(), [a, b] = window_;
+    const L = key.slice(2).toUpperCase(), l = L.toLowerCase(), [a, b] = window_, P = { B: "ARTEMIS-P1", C: "ARTEMIS-P2" }[L] || `THEMIS-${L}`;
     const esa = (s) => [`th${l}_pe${s}_density`, `th${l}_pe${s}_avgtemp`, `th${l}_pe${s}_en_eflux`, `th${l}_pe${s}_magt3`, `th${l}_pe${s}_velocity_gse`];
     const [fg, ir, er, ef, efi, fi] = await Promise.all([
-      track(`THEMIS-${L} FGM`, hapi(`TH${L}_L2_FGM@0`, [`th${l}_fgs_btotal`, `th${l}_fgs_gse`], a, b)),
-      track(`THEMIS-${L} ESA ions`, hapi(`TH${L}_L2_ESA@2`, esa("ir"), a, b)),
-      track(`THEMIS-${L} ESA electrons`, hapi(`TH${L}_L2_ESA@3`, esa("er"), a, b)),
-      hapi(`TH${L}_L2_ESA@1`, [`th${l}_peef_density`, `th${l}_peef_magt3`, `th${l}_peef_velocity_gse`], a, b).catch(() => null),
-      hapi(`TH${L}_L2_EFI@0`, [`th${l}_efs_dot0_gse`], a, b).catch(() => null),
-      hapi(`TH${L}_L2_ESA@0`, [`th${l}_peif_density`, `th${l}_peif_magt3`, `th${l}_peif_velocity_gse`], a, b).catch(() => null),
+      track(`${P} FGM`, hapi(`TH${L}_L2_FGM@0`, [`th${l}_fgs_btotal`, `th${l}_fgs_gse`], a, b, true)),
+      track(`${P} ESA ions`, hapi(`TH${L}_L2_ESA@2`, esa("ir"), a, b, true)),
+      track(`${P} ESA electrons`, hapi(`TH${L}_L2_ESA@3`, esa("er"), a, b, true)),
+      hapi(`TH${L}_L2_ESA@1`, [`th${l}_peef_density`, `th${l}_peef_magt3`, `th${l}_peef_velocity_gse`], a, b, true).catch(() => null),
+      hapi(`TH${L}_L2_EFI@0`, [`th${l}_efs_dot0_gse`], a, b, true).catch(() => null),
+      hapi(`TH${L}_L2_ESA@0`, [`th${l}_peif_density`, `th${l}_peif_magt3`, `th${l}_peif_velocity_gse`], a, b, true).catch(() => null),
     ]);
     const sv = {};
     const bm = stack(fg.cols, 0, 4), b4 = new Float32Array(fg.n * 4);
@@ -321,7 +321,8 @@
     species("des", er, { 32: ELEC32, 31: ELEC32 }, ef);
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
     if (efi && efi.n) sv.efi = set({ t: [f32(efi.t), 1], e: [stack(efi.cols, 0, 3), 3] });
-    return { sv, bu: null, kind: "tha", label: `THEMIS-${L}`, notes: "THEMIS L2 (UC Berkeley) via CDAWeb HAPI, live: FGM, ESA reduced mode, EFI.", empty: !fg.n && !ir.n };
+    const label = { B: "ARTEMIS-P1", C: "ARTEMIS-P2" }[L] || `THEMIS-${L}`;
+    return { sv, bu: null, kind: "tha", label, notes: "THEMIS L2 (UC Berkeley) via CDAWeb HAPI, live: FGM, ESA reduced mode, EFI.", empty: !fg.n && !ir.n };
   }
   function interp(t, v, x) {
     const n = t.length;
@@ -334,25 +335,131 @@
   // ───────────────────────── Cluster ─────────────────────────
   async function cluster(key) {
     const N = key.slice(1), C = `C${N}`, [a, b] = window_;
+    const hiaSpec = (N === "1" || N === "3") ? Promise.all([
+      hapi(`${C}_CP_CIS-HIA_HS_1D_PEF`, [`flux__${C}_CP_CIS_HIA_HS_1D_PEF`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 })),
+      hapiBins(`${C}_CP_CIS-HIA_HS_1D_PEF`, `flux__${C}_CP_CIS_HIA_HS_1D_PEF`, true).catch(() => null)]) : Promise.resolve(null);
+    const peace = track(`Cluster-${N} PEACE spectrogram (ESA CSA)`, peaceSpectra(C, a, b)).catch(() => null);
     const [fg, cis, pea, cod, bins] = await Promise.all([
-      track(`Cluster-${N} FGM`, hapi(`${C}_CP_FGM_SPIN`, [`B_vec_xyz_gse__${C}_CP_FGM_SPIN`, `B_mag__${C}_CP_FGM_SPIN`], a, b)),
-      track(`Cluster-${N} CIS`, hapi(`${C}_PP_CIS`, [`N_p__${C}_PP_CIS`, `V_p_xyz_gse__${C}_PP_CIS`, `T_p_par__${C}_PP_CIS`, `T_p_perp__${C}_PP_CIS`], a, b).catch(() => ({ t: [], cols: [], n: 0 }))),
-      track(`Cluster-${N} PEACE`, hapi(`${C}_PP_PEA`, [`N_e_den__${C}_PP_PEA`, `V_e_xyz_gse__${C}_PP_PEA`, `T_e_par__${C}_PP_PEA`, `T_e_perp__${C}_PP_PEA`], a, b).catch(() => ({ t: [], cols: [], n: 0 }))),
-      hapi(`${C}_CP_CIS-CODIF_H1_1D_PEF`, [`flux__${C}_CP_CIS_CODIF_H1_1D_PEF`], a, b).catch(() => ({ t: [], cols: [], n: 0 })),
-      hapiBins(`${C}_CP_CIS-CODIF_H1_1D_PEF`, `flux__${C}_CP_CIS_CODIF_H1_1D_PEF`).catch(() => null),
+      track(`Cluster-${N} FGM`, hapi(`${C}_CP_FGM_SPIN`, [`B_vec_xyz_gse__${C}_CP_FGM_SPIN`, `B_mag__${C}_CP_FGM_SPIN`], a, b, true)),
+      track(`Cluster-${N} CIS`, hapi(`${C}_PP_CIS`, (N === "1" || N === "3")
+        ? [`N_p__${C}_PP_CIS`, `N_HIA__${C}_PP_CIS`, `V_p_xyz_gse__${C}_PP_CIS`, `V_HIA_xyz_gse__${C}_PP_CIS`, `T_p_par__${C}_PP_CIS`, `T_p_perp__${C}_PP_CIS`, `T_HIA_par__${C}_PP_CIS`, `T_HIA_perp__${C}_PP_CIS`]
+        : [`N_p__${C}_PP_CIS`, `V_p_xyz_gse__${C}_PP_CIS`, `T_p_par__${C}_PP_CIS`, `T_p_perp__${C}_PP_CIS`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 }))),
+      track(`Cluster-${N} PEACE`, hapi(`${C}_PP_PEA`, [`N_e_den__${C}_PP_PEA`, `V_e_xyz_gse__${C}_PP_PEA`, `T_e_par__${C}_PP_PEA`, `T_e_perp__${C}_PP_PEA`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 }))),
+      hapi(`${C}_CP_CIS-CODIF_H1_1D_PEF`, [`flux__${C}_CP_CIS_CODIF_H1_1D_PEF`], a, b, true).catch(() => ({ t: [], cols: [], n: 0 })),
+      hapiBins(`${C}_CP_CIS-CODIF_H1_1D_PEF`, `flux__${C}_CP_CIS_CODIF_H1_1D_PEF`, true).catch(() => null),
     ]);
     const sv = { fgm: set({ t: [f32(fg.t), 1], b: [stack(fg.cols, 0, 4), 4] }) };
-    const mom = (r) => set({ t: [f32(r.t), 1], n: [f32(r.cols[0]), 1], v: [stack(r.cols, 1, 3), 3],
-                             tpar: [f32(r.cols[4]).map(x => x * MK_EV), 1], tperp: [f32(r.cols[5]).map(x => x * MK_EV), 1] });
-    if (cis.n) sv.dis = mom(cis);
-    if (pea.n) sv.des = mom(pea);
+    const mom = (r, c) => set({ t: [f32(r.t), 1], n: [f32(r.cols[c[0]]), 1], v: [stack(r.cols, c[1], 3), 3],
+                                tpar: [f32(r.cols[c[2]]).map(x => x * MK_EV), 1], tperp: [f32(r.cols[c[3]]).map(x => x * MK_EV), 1] });
+    const live = (col) => col && col.some(isFinite);
+    let relabel = null;
+    if (cis.n && (N === "1" || N === "3")) {                  // C1/C3 carry CODIF H⁺ and HIA (all ions): CODIF where it ran, else HIA
+      if (live(cis.cols[0])) sv.dis = mom(cis, [0, 2, 8, 9]);
+      else if (live(cis.cols[1])) { sv.dis = mom(cis, [1, 5, 10, 11]); relabel = { n: { lines: [{ ds: "dis", name: "n", c: 0, color: "#2a46d6", label: "N_{i}" }, { ds: "des", name: "n", c: 0, color: "#ee8a1c", label: "N_{e}" }] } }; }
+    } else if (cis.n && live(cis.cols[0])) sv.dis = mom(cis, [0, 1, 4, 5]);
+    if (pea.n && live(pea.cols[0])) sv.des = mom(pea, [0, 1, 4, 5]);
+    if (!sv.dis && sv.des) relabel = { n: { lines: [{ ds: "des", name: "n", c: 0, color: "#ee8a1c", label: "N_{e}" }] } };   // no ions that day
     if (cod.n && bins) {                                     // CODIF H⁺ flux on its own clock, served high → low
       const nc = bins.length, flux = new Float32Array(cod.n * nc);
       for (let i = 0; i < cod.n; i++) for (let c = 0; c < nc; c++) flux[i * nc + c] = cod.cols[nc - 1 - c] ? cod.cols[nc - 1 - c][i] : NaN;
       sv.isp = set({ t: [f32(cod.t), 1], spec: [spec8(flux, cod.n, nc, "dis"), nc], etab: [Float32Array.from(bins.slice().reverse()), nc], eidx: [new Uint8Array(cod.n), 1] });
     }
+    if (!sv.isp) {                                            // no CODIF H⁺ spectra: HIA's (C1, C3), all ions
+      const h = await hiaSpec;
+      if (h && h[0].n && h[1]) {
+        const [r, hb] = h, nc = hb.length, flux = new Float32Array(r.n * nc);
+        for (let i = 0; i < r.n; i++) for (let c = 0; c < nc; c++) flux[i * nc + c] = r.cols[nc - 1 - c] ? r.cols[nc - 1 - c][i] : NaN;
+        if (flux.some(isFinite)) {
+          sv.isp = set({ t: [f32(r.t), 1], spec: [spec8(flux, r.n, nc, "dis"), nc], etab: [Float32Array.from(hb.slice().reverse()), nc], eidx: [new Uint8Array(r.n), 1] });
+          relabel = Object.assign(relabel || {}, { ionSpec: { spec: "isp", label: "Ions", title: "HIA ion spectrogram" } });
+        }
+      }
+    }
+    const esp = await peace;
+    if (esp) sv.esp = esp;
     if (sv.dis && sv.des) { sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3; }
-    return { sv, bu: null, kind: "c4", label: `Cluster-${N}`, notes: "Cluster via CDAWeb HAPI, live: FGM spin, CIS-CODIF H⁺ and PEACE prime parameters, CODIF H⁺ spectra. The PEACE spectrogram (ESA's CSA) is not in this prototype.", empty: !fg.n };
+    return { sv, bu: null, kind: "c4", label: `Cluster-${N}`, relabel, empty: !fg.n,
+             notes: "Cluster via CDAWeb HAPI, live: FGM spin, CIS (CODIF H⁺, or HIA on C1/C3 where CODIF is off) and PEACE prime parameters, CIS ion spectra; PEACE's pitch-angle DEFlux from ESA's Cluster Science Archive." };
+  }
+
+  // ───────────────────────── ESA's Cluster Science Archive: PEACE, as CEF in a gzipped tar ─────────────────────────
+  const CSA = "https://csa.esac.esa.int/csa-sl-tap/data";
+  /** The .cef files in a product delivery (a .tgz). */
+  async function csaFiles(dataset, a, b) {
+    const url = `${CSA}?RETRIEVAL_TYPE=product&DATASET_ID=${dataset}&START_DATE=${iso(a)}&END_DATE=${iso(b)}&DELIVERY_FORMAT=CEF&DELIVERY_INTERVAL=ALL`;
+    const gz = await slot(async () => { const r = await get(url, undefined, 90000); if (!r.ok) throw new Error(`CSA ${r.status}`); return r.arrayBuffer(); }, true);
+    bytes += gz.byteLength; emit();
+    if (new Uint8Array(gz)[0] !== 0x1f) return [];          // not gzip: no data for the interval
+    const tar = new Uint8Array(await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+    const files = [], dec = new TextDecoder(), str = (x, y) => dec.decode(tar.subarray(x, y)).replace(/\0[\s\S]*$/, "");
+    let longName = null;
+    for (let o = 0; o + 512 <= tar.length;) {                // ustar: a 512-byte header, the file, padding to 512
+      let name = str(o, o + 100);
+      if (!name) break;
+      const size = parseInt(str(o + 124, o + 136).trim() || "0", 8), type = String.fromCharCode(tar[o + 156]);
+      if (type === "L") { longName = str(o + 512, o + 512 + size); o += 512 + Math.ceil(size / 512) * 512; continue; }   // GNU: the next entry's long name
+      if (longName) { name = longName; longName = null; }
+      if (/\.cef$/i.test(name)) files.push(dec.decode(tar.subarray(o + 512, o + 512 + size)));
+      o += 512 + Math.ceil(size / 512) * 512;
+    }
+    return files;
+  }
+  /** One CEF file: the record-varying variables' places from the header (a variable with DATA there is a constant),
+   *  then each record's tokens. Returns { consts, layout, records }. */
+  function parseCEF(txt) {
+    const cut = txt.indexOf("DATA_UNTIL"), head = txt.slice(0, cut), layout = {}, consts = {};
+    let off = 0;
+    for (const m of head.matchAll(/START_VARIABLE\s*=\s*(\S+)([\s\S]*?)END_VARIABLE/g)) {
+      const name = m[1].split("__")[0], body = m[2], sz = /SIZES\s*=\s*([\d,\s]+)/.exec(body);
+      const n = sz ? sz[1].split(",").map(x => +x.trim() || 1).reduce((p, q) => p * q, 1) : 1, data = /^\s*DATA\s*=\s*([^\n!]+(?:\n[ \t]+[-\d.,eE \t]+)*)/m.exec(body);
+      if (data) consts[name] = data[1].replace(/[\s"]/g, "").split(",").filter(Boolean).map(Number);
+      else { layout[name] = [off, n]; off += n; }
+    }
+    const body = txt.slice(txt.indexOf("\n", cut) + 1), records = [];
+    for (const r of body.split("$")) {
+      const line = r.trim();
+      if (!line || line[0] === "!") continue;
+      const tok = line.replace(/\n/g, " ").split(",").map(x => x.trim()).filter(Boolean);
+      if (tok.length === off) records.push(tok);
+    }
+    return { consts, layout, records };
+  }
+  /** PEACE's pitch-angle DEFlux, averaged over pitch angle (sin-weighted) into an omni spectrogram on its own clock, as
+   *  the demo's prepare_hso_missions.py builds Cluster 4's; energy tables per record, ascending. */
+  async function peaceSpectra(C, a, b) {
+    const files = await csaFiles(`${C}_CP_PEA_PITCH_SPIN_DEFlux`, a, b);
+    if (!files.length) return null;
+    const T = [], rows = [], tabs = [], keys = new Map(), eidx = [];
+    for (const f of files) {
+      const { consts, layout, records } = parseCEF(f), pitch = consts.Sweep_PitchAngle;
+      const [oE, nE] = layout.Sweep_Energy || [], [oD, nD] = layout.Data || [];
+      if (!pitch || oE === undefined || oD === undefined) continue;
+      const np = pitch.length, ne = nE, w = pitch.map(p => Math.sin(p * DEG));
+      for (const tok of records) {
+        const ms = hapiTime(tok[0]);
+        if (ms < a || ms > b) continue;
+        const E = [];
+        for (let k = 0; k < ne; k++) { const e = +tok[oE + k]; E.push(e > 0 ? e : NaN); }
+        const omni = new Float64Array(ne).fill(NaN);
+        for (let k = 0; k < ne; k++) {
+          let s = 0, ws = 0;
+          for (let p = 0; p < np; p++) { const v = +tok[oD + p * ne + k]; if (v >= 0 && v < 1e30) { s += v * w[p]; ws += w[p]; } }
+          if (ws > 0) omni[k] = s / ws;
+        }
+        const order = E.map((e, k) => [isFinite(e) ? e : Infinity, k]).sort((p, q) => p[0] - q[0]).map(x => x[1]);
+        const Es = order.map(k => E[k]), Fs = order.map(k => omni[k]);
+        const last = Es.filter(isFinite).pop() || 1;                          // unused levels continue the sweep upward
+        let extra = 0;
+        const tab = Es.map(e => (isFinite(e) ? +e.toFixed(1) : +(last * 1.15 ** ++extra).toFixed(1)));
+        const key = tab.join(",");
+        if (!keys.has(key)) { keys.set(key, tabs.length); tabs.push(tab); }
+        T.push(sec(ms)); rows.push(Fs); eidx.push(keys.get(key));
+      }
+    }
+    if (!T.length) return null;
+    const n = T.length, nc = tabs[0].length, flux = new Float32Array(n * nc);
+    rows.forEach((r, i) => { for (let k = 0; k < nc; k++) flux[i * nc + k] = r[k]; });
+    return set({ t: [Float32Array.from(T), 1], spec: [spec8(flux, n, nc, "des"), nc], etab: [Float32Array.from(tabs.flat()), nc], eidx: [Uint8Array.from(eidx), 1] });
   }
 
   // ───────────────────────── frames and the Sun ─────────────────────────
