@@ -477,6 +477,10 @@
     omPcn: { title: "PC index (north)", label: "PCN", unit: "", w: 0.8, zero: true, lines: [Sc("omni", "pcn", 0, COL.mag, "PCN")] },
     swSpeed: { title: "Flow speed  |V|", label: "|V|", unit: "(km/s)", w: 0.9, lines: [Sc("dis", "speed", 0, COL.mag, "|V|")] },
     swT: { title: "Proton temperature", label: "T_{p}", unit: "(eV)", w: 0.9, floor: 0, lines: [Sc("dis", "tp", 0, COL.perp, "T_{p}")] },
+    // GOES (Helios's GOES window): integral particle fluxes and the X-ray flux, each line set by the source (relabel)
+    gP: { title: "Protons > E", label: "p^{+} > E", unit: "(cm⁻²s⁻¹sr⁻¹)", w: 1, log: true, lines: [] },
+    gE: { title: "Electrons > E", label: "e^{−} > E", unit: "(cm⁻²s⁻¹sr⁻¹)", w: 0.9, log: true, lines: [] },
+    gX: { title: "X-rays (XRS)", label: "XRS", unit: "(W/m²)", w: 0.9, log: true, lines: [Sc("gxrs", "f", 0, COL.z, "1–8 Å"), Sc("gxrs", "f", 1, COL.x, "0.5–4 Å")] },
     comp: { title: "CIS composition  O⁺ / He⁺ / He⁺⁺", label: "CIS comp.", unit: "(cm⁻³)", w: 0.9, log: true,
             lines: [Sc("cmpO", "v", 0, COL.x, "O^{+}"), Sc("cmpHe1", "v", 0, COL.z, "He^{+}"), Sc("cmpHe2", "v", 0, COL.y, "He^{++}")] },
   };
@@ -536,7 +540,9 @@
       relabel: { n: { title: "Proton density", lines: [Sc("dis", "n", 0, COL.ni, "N_{p}")] }, vi: { title: "Proton velocity  V (GSE)", label: "V_{p}" } },
     },
   });
-  for (const k of ["tha", "c4", "omni", "l1"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
+  MISSIONS.goes = { sections: [["MAG", ["b"]], ["Particles", ["gP", "gE"]], ["X-rays", ["gX"]]], stack: ["b", "gP", "gE", "gX"],
+                    relabel: { b: { title: "B — magnetic field (GSE)" } } };
+  for (const k of ["tha", "c4", "omni", "l1", "goes"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
   /** The subplot `key` as the given mission draws it. */
   function kindOf(mission, key) {
     const k = KINDS[key], r = MISSIONS[mission].relabel && MISSIONS[mission].relabel[key];
@@ -544,7 +550,7 @@
   }
   /** Whether a window's data carry subplot `key`. */
   function has(D, mission, key) {
-    const k = KINDS[key] && kindOf(mission, key);
+    const k = KINDS[key] && Object.assign({}, kindOf(mission, key), D.relabel && D.relabel[key]);
     if (!k) return false;
     const ok = (S) => !!S && (!LIVE || S.t.length > 0);       // live: a record set with nothing that day does not count
     return k.spec ? ok(D.sv[k.spec]) : k.lines.some(l => ok(D.sv[l.ds]));
@@ -1337,12 +1343,16 @@
     ace: { name: "ACE", col: "#e07b00", mission: "l1", family: ["ace", "wind", "dscovr"] },
     wind: { name: "Wind", col: "#008c8c", mission: "l1", family: ["ace", "wind", "dscovr"] },
     dscovr: { name: "DSCOVR", col: "#7f33b3", mission: "l1", family: ["ace", "wind", "dscovr"] },
+    g16: { name: "GOES-16", col: "#34d27b", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g17: { name: "GOES-17", col: "#2bb86a", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
+    g18: { name: "GOES-18", col: "#5fe39a", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g19: { name: "GOES-19", col: "#1f9d57", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
   });
   /** The craft a click on the view opens: the demo carries one probe of each other mission, and stands it in for the rest. */
   const representative = (name) => {
     if (LIVE) {
       const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr" }[name];
       if (art) return art;
+      const g = /^GOES-(1[6-9])$/.exec(name);
+      if (g) return `g${g[1]}`;
       const m = /^THEMIS-([ADE])$/.exec(name) || /^Cluster-([1-4])$/.exec(name);
       return m ? (/\d/.test(m[1]) ? `c${m[1]}` : `th${m[1].toLowerCase()}`) : null;
     }
@@ -2160,7 +2170,7 @@
   function viewOpts() {
     const d = new Date(T0 + 7200e3);
     return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true,
-                   feet: { epoch: (t) => T0 + t * 1000, worker: "js/fieldlines.js?v=37" } } : {};
+                   feet: { epoch: (t) => T0 + t * 1000, worker: "js/fieldlines.js?v=38" } } : {};
   }
   /** Live: a station's daily keogram (UCalgary's summary JPEG, 00–24 UT) over the HSO view, Helios's KeogramPanel in
    *  brief, with a cursor at the view's time; a tab for each network that published one that day. */

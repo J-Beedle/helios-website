@@ -643,6 +643,72 @@
              notes: `${name} at L1 via CDAWeb HAPI, live, at the spacecraft's own time (not shifted to Earth). ${key === "dscovr" ? "DSCOVR's Faraday-cup plasma is on CDAWeb for 2016-06 to 2019-06 only." : key === "ace" ? "SWE H0 plasma ends 2024-07-09; the K0 browse products cover 2017-07 onward." : "SWE H1 non-linear proton fits, K0 where they stop."}` };
   }
 
+  // ───────────────────────── GOES (Helios's GOES adapter: LASP's Space Weather Portal LaTiS) ─────────────────────────
+  const LATIS = "https://lasp.colorado.edu/space-weather-portal/latis/dap";
+  /** One LaTiS dataset over [a, b] as rows of numbers (time first, s after T0); fill (≤ −99999) as NaN. */
+  function latis(ds, a, b) {
+    const t0 = iso(a).slice(0, 19), t1 = iso(b).slice(0, 19);
+    return slot(async () => {
+      const r = await get(`${LATIS}/${ds}.csv?time%3E=${t0}&time%3C=${t1}&format_time(yyyy-MM-dd%27T%27HH:mm:ss%27Z%27)`);
+      if (!r.ok) return [];
+      const text = await r.text();
+      bytes += text.length; emit();
+      return text.split("\n").slice(1).filter(Boolean).map(ln => {
+        const f = ln.split(",");
+        return [sec(Date.parse(f[0])), ...f.slice(1).map(x => { const v = parseFloat(x); return isFinite(v) && v > -99999 && Math.abs(v) < 1e30 ? v : NaN; })];
+      }).filter(r => isFinite(r[0]));
+    }, true);
+  }
+  /** GOES-16 … 19, as Helios's fetchGoes: the named satellite's own NOAA L2 1-min field in GSE where LaTiS has it
+   *  (~2018 → ~2025-04), else SWPC's primary (secondary for GOES-18) feed in the payload Hp/He/Hn frame; integral
+   *  particle fluxes from that feed (they exist only per feed); the named satellite's XRS. */
+  async function goesWindow(key) {
+    const sat = key.slice(1), [a, b] = window_, feed = sat === "18" ? "goess" : "goesp", feedName = feed === "goess" ? "SWPC secondary feed" : "SWPC primary feed";
+    const [own, part, xrs] = await Promise.all([
+      track(`GOES-${sat} magnetometer (NOAA L2)`, latis(`noaa_goes${sat}_magn_1m`, a, b)),
+      track(`GOES ${feed === "goess" ? "secondary" : "primary"} feed particles`, latis(`${feed}_part_flux_P5M`, a, b)),
+      track(`GOES-${sat} X-rays (XRS)`, latis(`noaa_goes${sat}_xrs_1m`, a, b)),
+    ]);
+    let rows = own.filter(r => [1, 2, 3].every(c => Math.abs(r[c]) < 9000)), fromFeed = false;
+    if (!rows.length) {
+      rows = (await track(`GOES ${feed === "goess" ? "secondary" : "primary"} feed magnetometer`, latis(`${feed}_mag_p1m`, a, b))).map(r => [r[0], r[1], r[2], r[3], NaN, NaN, NaN, r[4]]);
+      fromFeed = rows.length > 0;
+    }
+    const sv = {};
+    if (rows.length) {
+      const n = rows.length, b4 = new Float32Array(n * 4);
+      for (let i = 0; i < n; i++) { const r = rows[i]; b4[i * 4] = r[1]; b4[i * 4 + 1] = r[2]; b4[i * 4 + 2] = r[3]; b4[i * 4 + 3] = isFinite(r[7]) ? r[7] : Math.hypot(r[1], r[2], r[3]); }
+      sv.fgm = set({ t: [Float32Array.from(rows, r => r[0]), 1], b: [b4, 4] });
+    }
+    // integral fluxes, ascending by threshold: P1 P5 P10 P30 P50 (P60) P100 (P500); E 0.8, 2, 4 MeV
+    const many = (cols) => {
+      const keep = cols.filter(c => part.some(r => r[c] > 0));
+      if (!keep.length) return null;
+      const n = part.length, f = new Float32Array(n * keep.length);
+      part.forEach((r, i) => keep.forEach((c, k) => { f[i * keep.length + k] = r[c] > 0 ? r[c] : NaN; }));
+      return { set: set({ t: [Float32Array.from(part, r => r[0]), 1], f: [f, keep.length] }), keep };
+    };
+    const P = many([1, 2, 3, 4, 5, 10, 6, 11]), E = many([7, 8, 9]);
+    const PL = { 1: ">1", 2: ">5", 3: ">10", 4: ">30", 5: ">50", 10: ">60", 6: ">100", 11: ">500" }, EL = { 7: ">0.8", 8: ">2", 9: ">4" };
+    if (P) sv.gpro = P.set;
+    if (E) sv.gele = E.set;
+    if (xrs.length) {
+      const n = xrs.length, f = new Float32Array(n * 2);
+      xrs.forEach((r, i) => { f[i * 2] = r[2] > 0 ? r[2] : NaN; f[i * 2 + 1] = r[1] > 0 ? r[1] : NaN; });   // long (1–8 Å), short (0.5–4 Å)
+      sv.gxrs = set({ t: [Float32Array.from(xrs, r => r[0]), 1], f: [f, 2] });
+    }
+    const PCOL = ["#d8282a", "#ee8a1c", "#c9a400", "#1e8a36", "#0e9aa7", "#2a46d6", "#8e44ad", "#151515"], ECOL = ["#2a46d6", "#1e8a36", "#d8282a"];
+    const relabel = {
+      gP: { lines: (P ? P.keep : []).map((c, k) => ({ ds: "gpro", name: "f", c: k, color: PCOL[k % 8], label: `${PL[c]} MeV` })), title: `Protons > E · ${feed === "goess" ? "secondary" : "primary"} feed` },
+      gE: { lines: (E ? E.keep : []).map((c, k) => ({ ds: "gele", name: "f", c: k, color: ECOL[k % 3], label: `${EL[c]} MeV` })), title: `Electrons > E · ${feed === "goess" ? "secondary" : "primary"} feed` },
+    };
+    if (fromFeed) relabel.b = { title: "B — payload frame (Hp, He, Hn)", lines: [{ ds: "fgm", name: "b", c: 3, color: "#151515", label: "|B|" },
+      { ds: "fgm", name: "b", c: 0, color: "#2a46d6", label: "H_{p}", vec: true }, { ds: "fgm", name: "b", c: 1, color: "#1e8a36", label: "H_{e}", vec: true },
+      { ds: "fgm", name: "b", c: 2, color: "#d8282a", label: "H_{n}", vec: true }] };
+    return { sv, bu: null, kind: "goes", label: `GOES-${sat}`, relabel, empty: !sv.fgm && !sv.gpro && !sv.gxrs,
+             notes: `GOES-${sat} via LASP's Space Weather Portal (LaTiS), as Helios reads it. ${fromFeed ? `The field is the ${feedName}'s, in the payload Hp/He/Hn frame: GOES-${sat}'s own L2 magnetometer file is not available for this interval.` : `The field is GOES-${sat}'s own NOAA L2 1-minute product, in GSE.`} Integral particle fluxes exist only as the ${feedName}, which may be another satellite.` };
+  }
+
   // ───────────────────────── all-sky imagers: which cameras imaged that day, and their keograms (UCalgary) ─────────────────────────
   const UC_API = "https://api.phys.ucalgary.ca/api/v1/data_distribution/urls";
   const KEO_DATASET = { themis: "THEMIS_ASI_DAILY_KEOGRAM_JPG", rego: "REGO_DAILY_KEOGRAM_JPG", trexRGB: "TREX_RGB_DAILY_KEOGRAM", smile: "SMILE_ASI_DAILY_KEOGRAM" };
@@ -1029,7 +1095,10 @@
       track("Fleet: Cluster", ssc(["cluster1", "cluster2", "cluster3", "cluster4"], AT - 27 * 3600e3, AT + 27 * 3600e3)).catch(() => ({})),
       track("Fleet: Geotail and the L1 monitors", ssc(["geotail", "ace", "dscovr", "wind"], AT - 62 * 3600e3, AT + 62 * 3600e3)).catch(() => ({})),
     ]);
-    const fleetData = Object.assign({}, fleetA, fleetB, fleetC);
+    const GOES_SINCE = { goes16: Date.UTC(2017, 0, 1), goes17: Date.UTC(2018, 2, 1), goes18: Date.UTC(2022, 2, 1), goes19: Date.UTC(2024, 5, 1) };
+    const goes = await track("Fleet: GOES-16 to 19", Promise.all(Object.entries(GOES_SINCE).filter(([, t]) => AT >= t)
+      .map(([id]) => ssc([id], AT - 13 * 3600e3, AT + 13 * 3600e3).catch(() => ({}))))).then(xs => Object.assign({}, ...xs)).catch(() => ({}));
+    const fleetData = Object.assign({}, fleetA, fleetB, fleetC, goes);
     // MMS1's track every 4 minutes over ±43 h, one period of it drawn; MMS2–4 beside it in km
     const T = [], P = [];
     for (let i = 0; i < m1.n; i++) {
@@ -1068,14 +1137,15 @@
     const FLEET = [["moon", "Moon", "moon", 0], ["artemisp1", "ARTEMIS-P1", "artemis", 150], ["artemisp2", "ARTEMIS-P2", "artemis", 150],
                    ["ace", "ACE", "l1", 0], ["dscovr", "DSCOVR", "l1", 0], ["wind", "Wind", "l1", 0], ["sdo", "SDO", "sdo", 130],
                    ["cluster1", "Cluster-1", "cluster", 240], ["cluster2", "Cluster-2", "cluster", 240], ["cluster3", "Cluster-3", "cluster", 240],
-                   ["cluster4", "Cluster-4", "cluster", 240], ["rbspa", "RBSP-A", "rbsp", 114], ["rbspb", "RBSP-B", "rbsp", 114], ["geotail", "Geotail", "geotail", 209]];
+                   ["cluster4", "Cluster-4", "cluster", 240], ["rbspa", "RBSP-A", "rbsp", 114], ["rbspb", "RBSP-B", "rbsp", 114], ["geotail", "Geotail", "geotail", 209],
+                   ["goes16", "GOES-16", "goes", 97], ["goes17", "GOES-17", "goes", 97], ["goes18", "GOES-18", "goes", 97], ["goes19", "GOES-19", "goes", 97]];
     const span_ = { artemis: 13, sdo: 12, cluster: 27, rbsp: 4.5, geotail: 62 };
     const fleet = [];
     for (const [id, name, cat, m] of FLEET) {
       const o = fleetData[id];
       if (!o || !o.t.length || o.t[0] > HALF || o.t[o.t.length - 1] < HALF) continue;
       const pos = posAt(o, HALF);
-      let orbit = m ? thin(o, HALF - (span_[cat] || 12) * 3600, HALF + (span_[cat] || 12) * 3600, m) : [];
+      let orbit = m && !(cat === "goes" && fleet.some(f => f.cat === "goes")) ? thin(o, HALF - (span_[cat] || 12) * 3600, HALF + (span_[cat] || 12) * 3600, m) : [];
       if (cat === "moon") orbit = lunarRing(pos, posAt(o, HALF - 12 * 3600), posAt(o, HALF + 12 * 3600));
       fleet.push({ id: name, cat, pos: r3(pos), orbit, timeline: timeline(o) });
     }
@@ -1208,7 +1278,7 @@
     get bytes() { return bytes; },
     load: () => context(),
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
-    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : cluster(key))),
+    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))),
     scene,
     vdf: (n) => vdfStore(n),
     sky: skyFrame,
