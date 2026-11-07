@@ -1286,6 +1286,154 @@
     return { slices, tag, note, start: V.t[recs[0]], end: V.t[recs[k - 1]] + recDt(V) };
   }
 
+  // ───────────────────────── HPCA cuts (Helios's sliceHPCA: pyspedas mms_part_slice2d, interpolation='2d') ─────────────────────────
+  // Every bin of the half-spin as a velocity point (zeros included — slice2d_2di triangulates them), kept when within the
+  // species' slab half-angle of the plane, the bulk velocity subtracted; a Delaunay triangulation, linear interpolation
+  // onto a 150² grid over the points' own extent, then slice2d_smooth (σ = ln w − 0.25 cells, NaN propagates).
+  const DEG = Math.PI / 180;
+  const HPCA_RECIPE = { H: { theta: 20, smooth: 5, vMax: 1500, zLo: -28, zHi: -19, m: 1.04535e-2, name: "H⁺" },
+                        He: { theta: 20, smooth: 15, vMax: 1500, zLo: -30, zHi: -20, m: 4.18138e-2, name: "He⁺" },
+                        O: { theta: 45, smooth: 25, vMax: 750, zLo: -27, zHi: -21, m: 0.167255, name: "O⁺" } };
+  const speedHPCA = (E, m) => { const c = 2.99792458e8, r = E / (m * c * c / 1e6) + 1, b2 = 1 - 1 / (r * r); return c * (b2 > 0 ? Math.sqrt(b2) : 0) / 1000; };
+  /** Bowyer–Watson with the sweep refinement (a triangle whose circumcircle lies wholly left of the sweep is final). */
+  function delaunay(x, y) {
+    const n = x.length;
+    if (n < 3) return [];
+    let mnx = Infinity, mxx = -Infinity, mny = Infinity, mxy = -Infinity;
+    for (let i = 0; i < n; i++) { mnx = Math.min(mnx, x[i]); mxx = Math.max(mxx, x[i]); mny = Math.min(mny, y[i]); mxy = Math.max(mxy, y[i]); }
+    const px = Array.from(x), py = Array.from(y), mx = (mnx + mxx) / 2, my = (mny + mxy) / 2, span = Math.max(mxx - mnx, mxy - mny, 1e-9);
+    px.push(mx - 20 * span, mx, mx + 20 * span); py.push(my - span, my + 20 * span, my - span);
+    const circ = (a, b, c) => {
+      const ax = px[a], ay = py[a], bx = px[b], by = py[b], cx = px[c], cy = py[c], d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+      if (Math.abs(d) < 1e-18) return null;
+      const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+      const ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d, uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+      return [ux, uy, (ax - ux) ** 2 + (ay - uy) ** 2];
+    };
+    const T = [], c0 = circ(n, n + 1, n + 2);
+    if (!c0) return [];
+    T.push({ a: n, b: n + 1, c: n + 2, cx: c0[0], cy: c0[1], r2: c0[2], alive: true });
+    let active = [0];
+    const order = Array.from({ length: n }, (_, i) => i).sort((p, q) => px[p] - px[q]);
+    const edges = new Map();
+    for (const i of order) {
+      const X = px[i], Y = py[i], next = [];
+      edges.clear();
+      for (const ti of active) {
+        const t = T[ti], dx = X - t.cx, dy = Y - t.cy, d2 = dx * dx + dy * dy;
+        if (d2 <= t.r2 * (1 + 1e-12)) {
+          t.alive = false;
+          for (const [u, v] of [[t.a, t.b], [t.b, t.c], [t.c, t.a]]) { const k = Math.min(u, v) * 1048576 + Math.max(u, v); edges.set(k, (edges.get(k) || 0) + 1); }
+        } else if (dx > 0 && dx * dx > t.r2) continue;
+        else next.push(ti);
+      }
+      for (const [k, cnt] of edges) {
+        if (cnt !== 1) continue;
+        const u = Math.floor(k / 1048576), v = k % 1048576, c = circ(u, v, i);
+        if (!c) continue;
+        T.push({ a: u, b: v, c: i, cx: c[0], cy: c[1], r2: c[2], alive: true });
+        next.push(T.length - 1);
+      }
+      active = next;
+    }
+    return T.filter(t => t.alive && t.a < n && t.b < n && t.c < n);
+  }
+  /** LinearNDInterpolator onto n² cell centers over ±vMax; NaN outside the hull. Near-duplicates averaged first. */
+  function interpGrid(x, y, v, n, vMax) {
+    const grid = new Float64Array(n * n).fill(NaN), q = 2 * vMax / n / 64, acc = new Map();
+    for (let i = 0; i < x.length; i++) {
+      const k = Math.round(x[i] / q) * 4194304 + Math.round(y[i] / q), e = acc.get(k);
+      if (e) { e[0] += x[i]; e[1] += y[i]; e[2] += v[i]; e[3]++; } else acc.set(k, [x[i], y[i], v[i], 1]);
+    }
+    const pts = [...acc.values()].map(e => [e[0] / e[3], e[1] / e[3], e[2] / e[3]]);
+    if (pts.length < 3) return grid;
+    const ux = pts.map(p => p[0]), uy = pts.map(p => p[1]), uv = pts.map(p => p[2]), cell = 2 * vMax / n, idx = (c) => (c + vMax) / cell - 0.5;
+    for (const t of delaunay(ux, uy)) {
+      const x0 = ux[t.a], y0 = uy[t.a], x1 = ux[t.b], y1 = uy[t.b], x2 = ux[t.c], y2 = uy[t.c], den = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+      if (Math.abs(den) < 1e-18) continue;
+      const a0 = Math.max(0, Math.floor(idx(Math.min(x0, x1, x2)))), a1 = Math.min(n - 1, Math.ceil(idx(Math.max(x0, x1, x2))));
+      const b0 = Math.max(0, Math.floor(idx(Math.min(y0, y1, y2)))), b1 = Math.min(n - 1, Math.ceil(idx(Math.max(y0, y1, y2))));
+      for (let ib = b0; ib <= b1; ib++) {
+        const Y = -vMax + (ib + 0.5) * cell;
+        for (let ia = a0; ia <= a1; ia++) {
+          const X = -vMax + (ia + 0.5) * cell, l0 = ((y1 - y2) * (X - x2) + (x2 - x1) * (Y - y2)) / den, l1 = ((y2 - y0) * (X - x2) + (x0 - x2) * (Y - y2)) / den, l2 = 1 - l0 - l1;
+          if (l0 >= -1e-9 && l1 >= -1e-9 && l2 >= -1e-9) grid[ib * n + ia] = l0 * uv[t.a] + l1 * uv[t.b] + l2 * uv[t.c];
+        }
+      }
+    }
+    return grid;
+  }
+  /** slice2d_smooth(width): a Gaussian kernel, c = ln(w) − 0.25 cells, zero padding past the grid, NaN propagating. */
+  function slice2dSmooth(src, n, width) {
+    let w = Math.max(2, width); if (w % 2 === 0) w--;
+    if (w < 3) return src;
+    const half = w >> 1, c = Math.log(w) - 0.25, ker = [];
+    for (let i = -half; i <= half; i++) ker.push(Math.exp(-0.5 * (i / c) ** 2));
+    const ks = ker.reduce((p, q) => p + q, 0);
+    const pass = (inp, horiz) => {
+      const out = new Float64Array(n * n).fill(NaN);
+      for (let ib = 0; ib < n; ib++) for (let ia = 0; ia < n; ia++) {
+        let s = 0, bad = false;
+        for (let o = -half; o <= half; o++) {
+          const ja = horiz ? ia + o : ia, jb = horiz ? ib : ib + o;
+          if (ja < 0 || ja >= n || jb < 0 || jb >= n) continue;
+          const v = inp[jb * n + ja];
+          if (!isFinite(v)) { bad = true; break; }
+          s += ker[o + half] / ks * v;
+        }
+        if (!bad) out[ib * n + ia] = s;
+      }
+      return out;
+    };
+    return pass(pass(src, true), false);
+  }
+  /** Three plane cuts of one HPCA half-spin. o: { frame, lmn, gsm, subtract } as the FPI cuts take them. The look
+   *  directions are in the despun spin-plane frame (x toward the Sun, z the spin axis: within a few degrees of GSE). */
+  function cutHPCA(A, o) {
+    const R = HPCA_RECIPE[A.sp], slab = Math.sin(R.theta * DEG), bulk = o.subtract ? A.bulk : [0, 0, 0];
+    let rot = null, labels = LABELS.dbcs, tag = "despun (≈GSE)";
+    if (o.frame === "instrument" && o.lmn) { rot = o.lmn; labels = LABELS.lmn; tag = "LMN"; }
+    else if (o.frame === "gsm" && o.gsm) { rot = o.gsm; tag = "GSM"; }
+    else if (o.frame === "fac") {
+      if (A.b) {
+        const b = unit3(A.b), c = cross3(b, unit3(A.bulk.some(x => x) ? A.bulk : [1, 0, 0])), m = Math.hypot(...c);
+        if (m > 1e-9) { const cc = c.map(x => x / m); rot = [b, cross3(cc, b), cc]; labels = LABELS.fac; tag = "B-aligned"; }
+      } else tag = "despun (no B for B-aligned)";
+    }
+    const P = [[], [], []];                                 // per plane: a, b, f
+    for (let a = 0; a < 16; a++) for (let k = 0; k < 16; k++) {
+      const lat = (90 - A.colat[k]) * DEG, cl = Math.cos(lat), sl = Math.sin(lat);
+      for (let e = 0; e < 63; e++) {
+        const i = (a * 16 + k) * 63 + e, f = A.psd[i], ph = A.phi[i] * DEG;
+        if (!(isFinite(f) && f >= 0)) continue;
+        const v = speedHPCA(A.energy[e], R.m);
+        let w = [v * cl * Math.cos(ph) - bulk[0], v * cl * Math.sin(ph) - bulk[1], v * sl - bulk[2]];
+        if (rot) w = apply3(rot, w);
+        const mag = Math.hypot(...w);
+        if (!(mag > 0)) continue;
+        [[0, 1, 2], [0, 2, 1], [1, 2, 0]].forEach(([ax, ay, off], pl) => { if (Math.abs(w[off]) / mag <= slab) { P[pl].push(w[ax], w[ay], f); } });
+      }
+    }
+    const n = 150;
+    const slices = P.map((pts, pl) => {
+      const xs = [], ys = [], fs = [];
+      for (let j = 0; j < pts.length; j += 3) { xs.push(pts[j]); ys.push(pts[j + 1]); fs.push(pts[j + 2]); }
+      let ext = 1; for (let j = 0; j < xs.length; j++) ext = Math.max(ext, Math.abs(xs[j]), Math.abs(ys[j]));
+      const vg = ext * n / (n - 1), g = slice2dSmooth(interpGrid(xs, ys, fs, n, vg), n, R.smooth);
+      // onto the display grid (±recipe |v|), nearest cell
+      const f = new Float64Array(n * n).fill(NaN), cell = 2 * vg / n;
+      for (let ib = 0; ib < n; ib++) for (let ia = 0; ia < n; ia++) {
+        const X = -R.vMax + (ia + 0.5) * 2 * R.vMax / n, Y = -R.vMax + (ib + 0.5) * 2 * R.vMax / n;
+        const ja = Math.floor((X + vg) / cell), jb = Math.floor((Y + vg) / cell);
+        if (ja >= 0 && ja < n && jb >= 0 && jb < n) f[ib * n + ia] = g[jb * n + ja];
+      }
+      const [ax, ay] = [[0, 1], [0, 2], [1, 2]][pl];
+      return { f, n, vMax: R.vMax, labels: [labels[ax], labels[ay]], mark: null, points: xs.length };
+    });
+    const note = [tag, o.subtract ? `axes −V(HPCA ${R.name})` : "s/c frame", `±${R.theta}° slab · 2-D interpolation · smooth ${R.smooth}`, "survey half-spin · azimuths from MEC"].join(" · ");
+    return { slices, tag, note, start: A.t0, end: A.t0 + 10, zLo: R.zLo, zHi: R.zHi };
+  }
+
   const SUP = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻" };
   const sup = (n) => String(n).split("").map(ch => SUP[ch]).join("");
   const jet = (t) => { const x = clamp(t, 0, 1), c = (m) => clamp(1.5 - Math.abs(4 * (x - m)), 0, 1); return [c(0.75), c(0.5), c(0.25)]; };
@@ -1910,7 +2058,7 @@
         h += `</section>`;
       }
       h += tk.dis("data", "Data · in this page", W.open.has("data"),
-        tk.note(LIVE ? `Fetched live from CDAWeb (HAPI) and SSCWeb for this moment: ${(D.bytes / 1e6).toFixed(1)} MB so far. Survey data for four hours, burst data within ${SRC.burstHalf / 60} minutes of the moment, electron and ion distributions around each VDF cut, and HPCA, EDP and DSP data when a subplot first needs them.`
+        tk.note(LIVE ? `Fetched live from CDAWeb (HAPI) and SSCWeb for this moment: ${(D.bytes / 1e6).toFixed(1)} MB so far. Survey data for four hours, burst data within ${SRC.burstHalf / 60} minutes of the moment, electron, ion and HPCA distributions around each VDF cut, and HPCA, EDP and DSP data when a subplot first needs them.`
           : `Cut down from public Level 2 data for this demo and loaded with the page: ${(D.bytes / 1e6).toFixed(1)} MB so far. Helios fetches any window live and keeps saved events and pinned windows on disk.`));
       return h;
     }
@@ -2129,7 +2277,7 @@
     function addMenu() {
       const t = addTime(), last = W.vdf.cuts[W.vdf.cuts.length - 1], off = 'disabled title="In the app"';
       return `<p class="pm-h">Add a cut at ${clock(t, true)}</p><button role="menuitem" ${LIVE ? 'data-add="i"' : off}>Ions</button><button role="menuitem" data-add="e">Electrons</button>`
-        + ["H⁺", "He⁺⁺", "He⁺", "O⁺"].map(s => `<button role="menuitem" ${off}>HPCA ${s}</button>`).join("")
+        + [["H", "H⁺"], ["Hepp", "He⁺⁺"], ["He", "He⁺"], ["O", "O⁺"]].map(([k, s]) => `<button role="menuitem" ${!LIVE ? off : k === "Hepp" ? 'disabled title="Helios cuts H⁺, He⁺ and O⁺"' : `data-add="${k}"`}>HPCA ${s}</button>`).join("")
         + `<p class="pm-h">Four-spacecraft ∇fₑ — Vlasov terms (Shuster et al.)</p><button role="menuitem" ${off}>The ∇fₑ terms · in the app</button>`
         + (last ? `<hr><button role="menuitem" data-add="next">Another fₑ electrons cut, 1 s later</button>` : "")
         + (HAS_CRESCENT ? `<hr><button role="menuitem" data-add="crescent" title="${esc(CRESCENT_HELP)}">The Burch et al. 2016 crescent, ${clock(CRESCENT_T[W.n] ?? CRESCENT_T[2], true)}</button>` : "")
@@ -2141,7 +2289,7 @@
       if (!b) return;
       shut();
       const V = W.vdf, k = b.dataset.add;
-      if (k === "e" || k === "i") W.addCut(addTime(), k);
+      if (k === "e" || k === "i" || HPCA_RECIPE[k]) W.addCut(addTime(), k);
       else if (k === "next") W.addCut(V.cuts[V.cuts.length - 1].t + 1);
       else if (k === "crescent") W.crescent();
       else if (k === "clear") { V.cuts = []; renderCuts(); relayout(); }
@@ -2156,11 +2304,11 @@
       }
       return { frame: V.frame, lmn: f && L.on ? [f.l, f.m, f.n] : null, gsm, records: V.records, subtract: V.subtract, vmax: V.vmax, sigma: V.sigma };
     };
-    const SPN = (c) => (c.sp === "i" ? "fᵢ ions" : "fₑ electrons");
+    const SPN = (c) => (HPCA_RECIPE[c.sp] ? `f ${HPCA_RECIPE[c.sp].name} · HPCA` : c.sp === "i" ? "fᵢ ions" : "fₑ electrons");
     function renderCuts() {
       const V = W.vdf;
       $(".vd-empty", el).hidden = V.cuts.length > 0;
-      $(".fc-chips", el).innerHTML = V.cuts.map((c, i) => `<span class="fc-chip" title="${SPN(c)} at ${clock(c.t, true)} — edit in its column, drag its line, or × there to remove"><i style="background:${c.color}">${i + 1}</i>${c.sp === "i" ? "i⁺" : "e⁻"}</span>`).join("");
+      $(".fc-chips", el).innerHTML = V.cuts.map((c, i) => `<span class="fc-chip" title="${SPN(c)} at ${clock(c.t, true)} — edit in its column, drag its line, or × there to remove"><i style="background:${c.color}">${i + 1}</i>${HPCA_RECIPE[c.sp] ? HPCA_RECIPE[c.sp].name : c.sp === "i" ? "i⁺" : "e⁻"}</span>`).join("");
       cols.innerHTML = V.cuts.map((c, i) => `<div class="vd-col" data-id="${c.id}">
           <div class="vd-head"><span class="vd-n" style="background:${c.color}" title="Cut ${i + 1}: its line on the figure is this color">${i + 1}</span><b class="vd-title">${SPN(c)}</b>
             <input class="vd-time" value="${clock(c.t, true)}" spellcheck="false" aria-label="Cut ${i + 1}'s time" title="This cut's time — click, type HH:mm:ss.fff and press Return" style="--c:${c.color}">
@@ -2173,6 +2321,7 @@
     function drawCut(c) {
       const box = $(`.vd-col[data-id="${c.id}"]`, cols);
       if (!box) return;
+      if (HPCA_RECIPE[c.sp]) return drawHPCACut(c, box);
       const V = W.vdf.data && W.vdf.data[c.sp || "e"], cv = $(".vd-cv", box), msg = $(".vd-msg", box), timeIn = $(".vd-time", box), ion = c.sp === "i";
       if (document.activeElement !== timeIn) timeIn.value = clock(c.t, true);
       const o = vdfOpts(), out = V ? cutFPI(V, c.t, ion ? Object.assign({}, o, { vmax: W.vdf.vmaxI || 1500, sigma: 0 }) : o) : null;
@@ -2206,13 +2355,47 @@
       }
       out.slices.forEach((s, k) => drawSlice(ctx, 0, k * 216, w, 216, s, zlo, zhi, W.vdf.contours));
     }
+    /** An HPCA cut: the survey half-spin nearest the cut's time, fetched once per time, cut with the species' recipe. */
+    function drawHPCACut(c, box) {
+      const cv = $(".vd-cv", box), msg = $(".vd-msg", box), timeIn = $(".vd-time", box), R = HPCA_RECIPE[c.sp];
+      if (document.activeElement !== timeIn) timeIn.value = clock(c.t, true);
+      $(".vd-title", box).textContent = SPN(c);
+      const show = (text) => { cv.hidden = true; msg.hidden = false; msg.textContent = text; $(".vd-rec", box).textContent = "—"; $(".vd-note", box).textContent = ""; };
+      if (!LIVE || CRAFT[W.n].mission !== "mms") return show("HPCA distributions are fetched live for MMS.");
+      // the same half-spin (pyspedas picks the one whose center, sector 0 + 9.375 s, is nearest) needs no new request
+      const same = c.hp && c.hp.n === W.n && c.hp.A && !c.hp.A.error && Math.abs(c.t - (c.hp.A.t0 + 9.375)) <= 5;
+      if (same) c.hp.t = c.t;
+      if (!c.hp || c.hp.t !== c.t || c.hp.n !== W.n) {
+        const want = { t: c.t, n: W.n, A: null };
+        c.hp = want;
+        show(`fetching the HPCA ${R.name} survey half-spin from CDAWeb…`);
+        clearTimeout(c.hpTimer);                             // a dragged line asks once it settles
+        c.hpTimer = setTimeout(() => SRC.hpcaDist(W.n, c.sp, c.t).then((A) => { if (c.hp === want) { want.A = A; drawCut(c); } }), 300);
+        return;
+      }
+      if (!c.hp.A) return show(`fetching the HPCA ${R.name} survey half-spin from CDAWeb…`);
+      if (c.hp.A.error) return show(c.hp.A.error);
+      const o = vdfOpts(), key = JSON.stringify([o.frame, o.subtract, !!o.lmn, !!o.gsm]);
+      if (c.hp.key !== key) { c.hp.out = cutHPCA(c.hp.A, o); c.hp.key = key; }
+      const out = c.hp.out;
+      cv.hidden = false; msg.hidden = true;
+      $(".vd-title", box).textContent = `${SPN(c)} · ${out.tag}`;
+      $(".vd-rec", box).textContent = `half-spin ${new Date(T0 + out.start * 1000).toISOString().slice(0, 10)}  ${clock(out.start)}–${clock(out.end).slice(3)} UT`;
+      $(".vd-note", box).textContent = out.note;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2), w = 250, h = 3 * 216;
+      cv.width = w * dpr; cv.height = h * dpr; cv.style.width = `${w}px`; cv.style.height = `${h}px`;
+      const ctx = cv.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+      out.slices.forEach((sl, k) => drawSlice(ctx, 0, k * 216, w, 216, sl, out.zLo, out.zHi, 8));
+    }
     cols.addEventListener("click", (e) => {
       const b = e.target.closest(".vd-step, .vd-x"), col = e.target.closest(".vd-col");
       if (!b || !col) return;
       const c = W.vdf.cuts.find(x => x.id === +col.dataset.id);
       if (!c) return;
       if (b.classList.contains("vd-x")) { W.vdf.cuts.splice(W.vdf.cuts.indexOf(c), 1); renderCuts(); relayout(); return; }
-      moveCut(c, c.t + (c.sp === "i" ? 0.15 : 0.03) * +b.dataset.step);
+      moveCut(c, c.t + (HPCA_RECIPE[c.sp] ? 10 : c.sp === "i" ? 0.15 : 0.03) * +b.dataset.step);
     });
     cols.addEventListener("change", (e) => {
       if (!e.target.matches(".vd-time")) return;

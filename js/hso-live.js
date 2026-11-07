@@ -1362,6 +1362,90 @@
     return { sets: { hpm: set(out) }, empty: !r.n };
   }
 
+  // ───────────────────────── HPCA distributions (Helios's assembleHPCAFromHAPI + HPCAPitchAngle) ─────────────────────────
+  // One half-spin of survey phase-space density from CDAWeb (16 sweeps = the 16 azimuth sectors, each 16 anodes × 63
+  // energies), its azimuth table rebuilt from MEC's spin phase — φ = μ + ψ(t) + c₀ + s(sector) + h(anode) + o(energy),
+  // the structure Helios measured on the SDC's ancillary to 0.02° — so nothing is asked of the rate-limited SDC.
+  const HPCA_AZ = {
+    sector: [0.0, 11.4445, 22.889, 34.3336, 45.7781, 57.2226, 68.6671, 80.1117, 91.5562, 103.0007, 114.4452, 125.8897, 137.3343, 148.7788, 160.2233, 171.6678],
+    anodeHalf: [180, 180, 180, 180, 180, 180, 0, 0, 0, 0, 0, 0, 0, 0, 180, 180],
+    energy: [0.0, 0.173, 0.3461, 0.5191, 0.6922, 0.8652, 1.0382, 1.2113, 1.3843, 1.5574, 1.7304, 1.9035, 2.0765, 2.2495, 2.4226, 2.5956,
+      2.7687, 2.9417, 3.1147, 3.2878, 3.4608, 3.6339, 3.8069, 3.9799, 4.153, 4.326, 4.4991, 4.6721, 4.8452, 5.0182, 5.1912, 5.3643, 5.5373,
+      5.7104, 5.8834, 6.0564, 6.2295, 6.4025, 6.5756, 6.7486, 6.9216, 7.0947, 7.2677, 7.4408, 7.6138, 7.7869, 7.9599, 8.1329, 8.306, 8.479,
+      8.6521, 8.8251, 8.9981, 9.1712, 9.3453, 9.5215, 9.6998, 9.8809, 10.0651, 10.2532, 10.446, 10.6445, 10.8498],
+    base: 354.56, rate: 18.3112, nominal: 18.31, mount: { 1: 140.63, 2: 140.63, 3: 140.69, 4: 140.52 },
+    colat: [123.75, 101.25, 78.75, 56.25, 33.75, 11.25, 11.25, 33.75, 56.25, 78.75, 101.25, 123.75, 146.25, 168.75, 168.75, 146.25],
+  };
+  const HPCA_VAR = { H: "hplus", He: "heplus", O: "oplus" };
+  /** ψ: the BCS x-axis' azimuth in the spin plane from the projected Sun (GSE x), degrees. */
+  function sunPhase(qb, qg) {
+    const Rb = rot(...qb), Rg = rot(...qg), M = mul(Rb, T_(Rg));          // GSE → BCS
+    const z = [M[6], M[7], M[8]], xb = [M[0], M[1], M[2]];
+    let rx = [1 - z[0] * z[0], -z[0] * z[1], -z[0] * z[2]];
+    const rm = Math.hypot(...rx);
+    if (!(rm > 1e-6)) return NaN;
+    rx = rx.map(v => v / rm);
+    const ry = [z[1] * rx[2] - z[2] * rx[1], z[2] * rx[0] - z[0] * rx[2], z[0] * rx[1] - z[1] * rx[0]];
+    return Math.atan2(xb[0] * ry[0] + xb[1] * ry[1] + xb[2] * ry[2], xb[0] * rx[0] + xb[1] * rx[1] + xb[2] * rx[2]) / DEG;
+  }
+  const hpcaMemo = new Map();
+  /** The half-spin nearest t (s after T0) for species "H", "He" or "O": { t0, psd, phi, bulk (DBCS ≈ the despun
+   *  frame), b (GSE) } — or { error }. */
+  function hpcaDist(n, sp, t) {
+    const key = `${n}|${sp}|${Math.round(t * 10)}`;
+    if (hpcaMemo.has(key)) return hpcaMemo.get(key);
+    const sc = `mms${n}`, at = T0 + t * 1000;
+    const p = track(`MMS${n} HPCA ${{ H: "H⁺", He: "He⁺", O: "O⁺" }[sp]} distribution ${new Date(at).toISOString().slice(11, 19)}`, (async () => {
+      const r = await hapi(`MMS${n}_HPCA_SRVY_L2_ION`, [`${sc}_hpca_start_azimuth`, `${sc}_hpca_${HPCA_VAR[sp]}_phase_space_density`], at - 30e3, at + 30e3, true);
+      if (!r.n) return { error: "No HPCA survey distribution within 30 s of this time." };
+      // pyspedas's pick: the half-spin whose center (sector-0 sweep + 9.375 s) is nearest
+      let i0 = -1, best = Infinity;
+      for (let i = 0; i < r.n; i++) if (r.cols[0][i] === 0) { const d = Math.abs(r.t[i] + 9.375 - t); if (d < best) { best = d; i0 = i; } }
+      if (i0 < 0 || best > 60 || i0 + 15 >= r.n) return { error: "No whole HPCA half-spin near this time." };
+      const psd = new Float64Array(16 * 16 * 63).fill(NaN);
+      for (let a = 0; a < 16; a++) {
+        const i = i0 + a;
+        if (r.cols[0][i] !== a || r.t[i] - r.t[i0] >= 12) return { error: "The half-spin's 16 sectors are not all there." };
+        for (let k = 0; k < 16; k++) for (let e = 0; e < 63; e++) { const v = r.cols[1 + k * 63 + e][i]; if (isFinite(v) && v >= 0 && v < 1e20) psd[(a * 16 + k) * 63 + e] = v; }
+      }
+      const t0 = r.t[i0], ms0 = T0 + t0 * 1000;
+      const [mec, mom, fg] = await Promise.all([
+        hapi(`MMS${n}_MEC_SRVY_L2_EPHT89D`, [`${sc}_mec_quat_eci_to_bcs`, `${sc}_mec_quat_eci_to_gse`], ms0 - 210e3, ms0 + 210e3, true),
+        hapi(`MMS${n}_HPCA_SRVY_L2_MOMENTS`, [`${sc}_hpca_${HPCA_VAR[sp]}_ion_bulk_velocity`], ms0 - 30e3, ms0 + 40e3, true).catch(() => null),
+        hapi(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], ms0 - 2e3, ms0 + 12e3, true).catch(() => null),
+      ]);
+      // the spin phase: MEC's 30-s samples unwrapped with the nominal rate, interpolated to the sector-0 sweep
+      const ts = [], ps = [];
+      for (let i = 0; i < mec.n; i++) {
+        const q = mec.cols.slice(0, 8).map(c => c[i]);
+        if (!q.every(v => isFinite(v) && Math.abs(v) <= 1.5)) continue;
+        const ph = sunPhase(q.slice(0, 4), q.slice(4, 8));
+        if (isFinite(ph)) { ts.push(mec.t[i]); ps.push(ph); }
+      }
+      if (ts.length < 2) return { error: "No MEC attitude near this time for HPCA's spin phase." };
+      const un = [ps[0]];
+      for (let i = 1; i < ts.length; i++) {
+        let d = (ps[i] - ps[i - 1]) % 360; if (d < 0) d += 360;
+        un.push(un[i - 1] + d + 360 * Math.round((HPCA_AZ.nominal * (ts[i] - ts[i - 1]) - d) / 360));
+      }
+      let j = 1; while (j < ts.length - 1 && ts[j] < t0) j++;
+      const psi = un[j - 1] + (un[j] - un[j - 1]) * (t0 - ts[j - 1]) / (ts[j] - ts[j - 1]);
+      const rate = (un[un.length - 1] - un[0]) / (ts[ts.length - 1] - ts[0]), scale = rate > 5 && rate < 60 ? rate / HPCA_AZ.rate : 1;
+      const phi = new Float64Array(16 * 16 * 63), base = (HPCA_AZ.mount[n] ?? 140.63) + psi;
+      for (let a = 0; a < 16; a++) for (let k = 0; k < 16; k++) {
+        const c = base + HPCA_AZ.base + HPCA_AZ.sector[a] * scale + HPCA_AZ.anodeHalf[k];
+        for (let e = 0; e < 63; e++) { let v = (c + HPCA_AZ.energy[e] * scale) % 360; if (v < 0) v += 360; phi[(a * 16 + k) * 63 + e] = v; }
+      }
+      let bulk = [0, 0, 0];
+      if (mom && mom.n) { const i = nearest(mom.t, t0 + 5); const v = [0, 1, 2].map(c => mom.cols[c][i]); if (v.every(x => isFinite(x) && Math.abs(x) < 1e4)) bulk = v; }
+      let b = null;
+      if (fg && fg.n) { const s = [0, 0, 0]; let m = 0; for (let i = 0; i < fg.n; i++) if (fg.t[i] >= t0 && fg.t[i] <= t0 + 10 && [0, 1, 2].every(c => isFinite(fg.cols[c][i]))) { for (let c = 0; c < 3; c++) s[c] += fg.cols[c][i]; m++; } if (m) b = s.map(x => x / m); }
+      return { t0, psd, phi, colat: HPCA_AZ.colat, energy: HPCA_E, bulk, b, sp };
+    })().catch((e) => ({ error: `CDAWeb did not answer: ${e.message || e}` })));
+    hpcaMemo.set(key, p);
+    return p;
+  }
+
   // ───────────────────────── EDP: the electric field and the spacecraft potential; DSP: E-field spectra ─────────────────────────
   async function edp(n) {
     const sc = `mms${n}`, [a, b] = window_, ba = AT - 60e3, bb = AT + 60e3;
@@ -1410,6 +1494,7 @@
     mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))),
     scene,
     vdf: (n, sp) => vdfStore(n, sp),
+    hpcaDist: (n, sp, t) => hpcaDist(n, sp, t),
     /** An MMS probe's on-demand group (HPCA, EDP, DSP): { sets, burst?, empty }. */
     lazy: (n, g) => (lazyMemo[`${n}|${g}`] = lazyMemo[`${n}|${g}`] || track(`MMS${n} ${LAZY[g][0]}`, LAZY[g][1](n)).catch((e) => { console.warn(e); return { sets: {}, empty: true }; })),
     sky: skyFrame,
