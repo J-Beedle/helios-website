@@ -497,10 +497,11 @@
     return (i) => { const kb = nearestK(F, L.t[i], 2); if (kb < 0) return NaN; const b = v3(F, "b", kb), m = Math.hypot(...b) || 1, v = [V(i, 0), V(i, 1), V(i, 2)];
                     const par = (v[0] * b[0] + v[1] * b[1] + v[2] * b[2]) / m; return v[c] - par * b[c] / m; };
   };
-  const HP_COL = { H: "#2a46d6", Hepp: "#1e8a36", Hep: "#d8282a", O: "#ee8a1c" }, HP_LAB = { H: "H^{+}", Hepp: "He^{++}", Hep: "He^{+}", O: "O^{+}" };
-  const hpSpec = (k, name) => ({ title: `HPCA ${name} spectrogram`, label: `HPCA ${HP_LAB[k]}`, short: HP_LAB[k], unit: "(eV)", w: 1, spec: `hp${k}`, range: `hp${k}`, lazy: "hpcaSpec" });
+  const HP_COL = { H: "#000000", Hep: "#008000", Hepp: "#d90d0d", O: "#001af2" }, HP_LAB = { H: "H^{+}", Hepp: "He^{++}", Hep: "He^{+}", O: "O^{+}" };
+  const hpSpec = (k, name) => ({ title: `HPCA ${name} spectrogram`, label: `HPCA ${HP_LAB[k]}`, short: HP_LAB[k], unit: "(eV)", w: 1, spec: `hp${k}`, range: `hp${k}`, lazy: `hp${k}` });
   const hpVel = (k, name) => ({ title: `HPCA ${name} velocity (GSE)`, label: `V_{${HP_LAB[k].replace(/\^\{(.*)\}/, "$1")}}`, unit: "(km/s)", w: 0.9, zero: true, lazy: "hpcaMom", lines: XYZ("hpm", `v${k}`) });
-  const four = (name, f) => ["H", "Hepp", "Hep", "O"].map((k, j) => f(k, j));
+  // in Helios's order, H⁺ He⁺ He⁺⁺ O⁺ (the moments set keeps H⁺ He⁺⁺ He⁺ O⁺ columns)
+  const four = (name, f) => [["H", 0], ["Hep", 2], ["Hepp", 1], ["O", 3]].map(([k, j]) => f(k, j));
   const fz = (sp, c) => ({ title: `E vs −V${sp === "des" ? "ₑ" : "ᵢ"}×B  · ${"xyz"[c]}`, label: `E_{${"xyz"[c]}}`, unit: "(mV/m)", w: 0.8, zero: true, lazy: "edp",
                           lines: [Sc("efi", "e", c, COL.mag, `E_{${"xyz"[c]}}`), derive(sp, sp === "des" ? COL.ne : COL.ni, `−V_{${sp === "des" ? "e" : "i"}}×B`, minusVxB(c))] });
   const KINDS = {
@@ -531,7 +532,7 @@
     fzEx: fz("des", 0), fzEy: fz("des", 1), fzEz: fz("des", 2), fzIx: fz("dis", 0), fzIy: fz("dis", 1), fzIz: fz("dis", 2),
     exbX: null, exbY: null, exbZ: null,
     hpH: hpSpec("H", "H⁺"), hpHepp: hpSpec("Hepp", "He⁺⁺"), hpHep: hpSpec("Hep", "He⁺"), hpO: hpSpec("O", "O⁺"),
-    hpN: { title: "HPCA densities  H⁺ He⁺⁺ He⁺ O⁺", label: "N", unit: "(cm⁻³)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("n", (k, j) => Sc("hpm", "n", j, HP_COL[k], HP_LAB[k])) },
+    hpN: { title: "HPCA densities  H⁺ He⁺ He⁺⁺ O⁺", label: "N", unit: "(cm⁻³)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("n", (k, j) => Sc("hpm", "n", j, HP_COL[k], HP_LAB[k])) },
     hpVH: hpVel("H", "H⁺"), hpVHepp: hpVel("Hepp", "He⁺⁺"), hpVHep: hpVel("Hep", "He⁺"), hpVO: hpVel("O", "O⁺"),
     hpT: { title: "HPCA temperatures (scalar)", label: "T", unit: "(eV)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("T", (k, j) => Sc("hpm", "T", j, HP_COL[k], HP_LAB[k])) },
     hpP: { title: "HPCA partial pressures  n kT", label: "P", unit: "(nPa)", w: 0.9, log: true, lazy: "hpcaMom",
@@ -566,6 +567,26 @@
     KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp",
                  lines: [derive("efi", COL.mag, "E×B/B²", exb(c)), derive("dis", COL.ni, "V_{i⊥}", vPerp(c))] };
   const NA = (title) => ({ title, avail: false });
+  /** A subplot whose data are on their way: a bar to the bytes CDAWeb said it would send (the CDF subsets), or a
+   *  moving segment with the megabytes so far where it did not say (HAPI). */
+  const GROUP_NAME = { hpH: "HPCA H⁺", hpHepp: "HPCA He⁺⁺", hpHep: "HPCA He⁺", hpO: "HPCA O⁺", hpcaMom: "HPCA moments", edp: "EDP electric field", dsp: "DSP spectra" };
+  function fetchingBar(ctx, R, g, n) {
+    const P = SRC && SRC.progress ? SRC.progress(n, g) : null, w = Math.min(260, R.w * 0.5), x = R.x + (R.w - w) / 2, y = R.y + R.h / 2 + 2;
+    const mb = (b) => (b / 1e6).toFixed(b < 1e7 ? 1 : 0);
+    ctx.fillStyle = "rgba(29,29,34,0.10)"; ctx.fillRect(x, y, w, 4);
+    ctx.fillStyle = ORANGE;
+    let label = `fetching ${GROUP_NAME[g] || ""}…`;
+    if (P && P.total > 0) {
+      const f = clamp(P.loaded / P.total, 0, 1);
+      ctx.fillRect(x, y, w * f, 4);
+      label = `fetching ${GROUP_NAME[g] || ""} · ${mb(P.loaded)} of ${mb(P.total)} MB`;
+    } else {
+      const u = (performance.now() / 1400) % 1, seg = w * 0.28, a = x + (w + seg) * u - seg;
+      ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, 4); ctx.clip(); ctx.fillRect(a, y, seg, 4); ctx.restore();
+      if (P && P.loaded > 0) label = `fetching ${GROUP_NAME[g] || ""} · ${mb(P.loaded)} MB`;
+    }
+    rich(ctx, label, R.x + R.w / 2, y - 10, { size: 10.5, align: "center", color: INK2 });
+  }
   const OVER_COL = ["#8e44ad", "#0e9aa7", "#c2185b", "#8d6e63", "#ee8a1c", "#1f6fd8"];
   /** "key#i": line i of subplot key, as the mission draws it. */
   function lineById(mission, id, relabel) {
@@ -891,7 +912,8 @@
         const r = Rw.row;
         if (r.spec && !(D.sv[r.spec] && D.erange[r.spec])) {      // an on-demand spectrogram still on its way
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
-          rich(ctx, r.lazy && !(D.lazyDone && D.lazyDone[r.lazy]) ? "fetching…" : "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
+          if (r.lazy && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
+          else rich(ctx, "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else if (r.spec) {
           const win = specRange(D, r.spec, r.range, a, b, true), E = r.edit;
@@ -904,7 +926,7 @@
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else {
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
-          if (r.lazy && LIVE && !(D.lazyDone && D.lazyDone[r.lazy])) rich(ctx, "fetching…", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
+          if (r.lazy && LIVE && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
           let lo = Infinity, hi = -Infinity;
           const accs = r.lines.map(line => accessor(line, R)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
           const lg = (acc) => (S) => { const f = acc(S); return f && ((i) => { const v = f(i); return v > 0 ? Math.log10(v) : NaN; }); };
@@ -1744,6 +1766,12 @@
       [A.a, A.b] = host.span(); A.home = [A.a, A.b];
     }
     W.app = A;
+    if (LIVE) window.addEventListener("hso-progress", (e) => { if (e.detail.n === W.n) W.redraw(); });
+    if (LIVE) setInterval(() => {                            // the indeterminate bars move between the progress events
+      const Cd = D.craft[W.n];
+      if (!Cd || !Cd.lazyBusy || el.hidden) return;
+      if (Object.keys(Cd.lazyBusy).some(g => Cd.lazyBusy[g] && !(Cd.lazyDone && Cd.lazyDone[g]))) W.redraw();
+    }, 120);
     if (LIVE) window.addEventListener("hso-burst", (e) => {     // live: the burst data arrived after the window drew
       if (W.n !== e.detail) return;
       const d = D.craft[W.n];
@@ -1807,7 +1835,7 @@
       const key = ed.key, mission = C.mission, kind = Object.assign({}, kindOf(mission, key), W.view.relabel && W.view.relabel[key]), E = (C.edits && C.edits[key]) || {};
       let h = `<div class="sp-h"><b>(${ed.letter}) ${esc(plain(kind.title))}</b><button class="sp-x" aria-label="Close">×</button></div><div class="sp-b">`;
       if (kind.spec) {
-        h += `<p class="sp-t">Colors <span>log₁₀ ${esc(kind.cbar || "flux")}</span></p><div class="sp-row">10^<input class="sp-n" data-z="zLo" type="number" step="1" value="${E.zLo ?? ""}" placeholder="auto">–10^<input class="sp-n" data-z="zHi" type="number" step="1" value="${E.zHi ?? ""}" placeholder="auto"><button data-act="zauto">Auto</button></div>`;
+        h += `<p class="sp-t">Colors <span>log₁₀ ${esc(kind.cbar || "flux")}</span></p><div class="sp-row">10^<input class="sp-n" data-z="zLo" type="number" step="1" value="${E.zLo ?? ""}" placeholder="auto">to 10^<input class="sp-n" data-z="zHi" type="number" step="1" value="${E.zHi ?? ""}" placeholder="auto"><button data-act="zauto">Auto</button></div>`;
       } else {
         h += `<label class="sp-c"><input type="checkbox" data-act="log" ${(E.logY ?? !!kind.log) ? "checked" : ""}> log y</label>`;
         h += `<p class="sp-t">Lines</p>` + kind.lines.map((ln, i) => {

@@ -909,7 +909,9 @@ p.tk-sup { margin: 0; }
 .live-scope { align-self: center; display: grid; gap: 14px; padding: 22px 24px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); }
 .live-scope p { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.6; }
 .live-scope b { display: block; margin-bottom: 2px; color: var(--ink); font: 500 11px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
-.live-ev { display: grid; gap: 6px; margin-top: 28px; max-width: 560px; }
+.live-ev { display: grid; gap: 6px; margin-top: 28px; max-width: 560px; min-width: 0; }
+.live-ev select { width: 100%; min-width: 0; text-overflow: ellipsis; }   /* the longest event name must not widen the column */
+.live-intro .copy, .live-intro .live-scope { min-width: 0; }
 .live-ev span { color: var(--ink-3); font: 500 11px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 .live-ev select { height: 44px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: 0; background: #0b0d12; color: var(--ink); font: 400 14px var(--text); color-scheme: dark; }
 .live-ev select:focus { outline: 1px solid var(--sun); }
