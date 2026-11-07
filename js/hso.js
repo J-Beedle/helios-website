@@ -14,6 +14,20 @@
   const PAPER = "#f6f4fb", INK = "#1d1d22", INK2 = "rgba(29,29,34,0.6)", RULE = "rgba(29,29,34,0.16)", ORANGE = "#f39a1e";
   // live.html sets HSO_SOURCE (hso-live.js): the same screens on data fetched from the archives for any moment
   const SRC = window.HSO_SOURCE || null, LIVE = !!SRC;
+  // live: a window opened in a tab of its own (?solo=mms1 …, the green button), or the HSO screen alone (?solo=hso)
+  const SOLO = LIVE ? new URLSearchParams(location.search).get("solo") : null;
+  /** This page at the same moment, showing one window: its craft, subplots, time range and pin. */
+  function soloURL(W) {
+    const u = new URL(location.href), C = W.cfg, A = W.app;
+    for (const k of ["solo", "stack", "a", "b", "pin", "nc"]) u.searchParams.delete(k);
+    u.searchParams.set("solo", String(W.n));
+    if (C.stack) u.searchParams.set("stack", C.stack.join(","));
+    u.searchParams.set("a", A.a.toFixed(3)); u.searchParams.set("b", A.b.toFixed(3));
+    if (W.host && W.host.pinned != null) u.searchParams.set("pin", W.host.pinned.toFixed(3));
+    u.hash = "";
+    return u.toString();
+  }
+  const openSolo = (W) => window.open(soloURL(W), "_blank", "noopener");
   let T0 = SRC ? SRC.t0 : Date.UTC(2015, 9, 16, 11, 0, 0);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -2168,6 +2182,7 @@
     function close(W) {
       W.el.remove(); W.pill?.remove();
       wins.splice(wins.indexOf(W), 1);
+      if (LIVE) splitHandle();
     }
     const nameOf = (k) => CRAFT[k].name;
     function minimize(W) {
@@ -2184,6 +2199,62 @@
       W.el.hidden = false; W.pill?.remove(); W.pill = null;
       front(W); W.redraw();
     }
+    // ── edge snapping (live; Helios's FloatingPanel.snaps, as macOS tiles windows): drag a window by its bar to the top
+    //    edge to fill the screen, to a side for that half, into a corner for that quarter; the tile is outlined while
+    //    dragging; dragging it out gives back the size it had; a handle in the seam of two halves moves both ──
+    const SNAP_E = 14, SNAP_CORNER = 90, GAP = 8;
+    const snapEl = LIVE ? Object.assign(document.createElement("div"), { className: "snap-preview", hidden: true }) : null;
+    const splitEl = LIVE ? Object.assign(document.createElement("div"), { className: "snap-split", hidden: true, title: "Drag to share the width between the two windows" }) : null;
+    if (LIVE) { layer.appendChild(snapEl); layer.appendChild(splitEl); }
+    function snapZone(px, py) {
+      const [bw, bh] = bounds(), top = py <= SNAP_E, left = px <= SNAP_E, right = px >= bw - SNAP_E;
+      if (left || right) {
+        if (py <= SNAP_CORNER) return left ? "topLeft" : "topRight";
+        if (py >= bh - SNAP_CORNER) return left ? "bottomLeft" : "bottomRight";
+        return left ? "left" : "right";
+      }
+      return top ? "full" : null;
+    }
+    function snapRect(z, self) {
+      const [bw, bh] = bounds(), W2 = (bw - 3 * GAP) / 2, H2 = (bh - 3 * GAP) / 2;
+      if (z === "left" || z === "right") {                 // a half beside a window tiled on the other side takes the room it leaves
+        const o = wins.find(w => w !== self && !w.el.hidden && w.snap === (z === "left" ? "right" : "left"));
+        if (o) return z === "left" ? { l: GAP, t: GAP, w: Math.max(360, o.r.l - 2 * GAP), h: bh - 2 * GAP }
+                                   : { l: o.r.l + o.r.w + GAP, t: GAP, w: Math.max(360, bw - o.r.l - o.r.w - 2 * GAP), h: bh - 2 * GAP };
+      }
+      return { full: { l: GAP, t: GAP, w: bw - 2 * GAP, h: bh - 2 * GAP }, left: { l: GAP, t: GAP, w: W2, h: bh - 2 * GAP }, right: { l: 2 * GAP + W2, t: GAP, w: W2, h: bh - 2 * GAP },
+               topLeft: { l: GAP, t: GAP, w: W2, h: H2 }, topRight: { l: 2 * GAP + W2, t: GAP, w: W2, h: H2 },
+               bottomLeft: { l: GAP, t: 2 * GAP + H2, w: W2, h: H2 }, bottomRight: { l: 2 * GAP + W2, t: 2 * GAP + H2, w: W2, h: H2 } }[z];
+    }
+    function preview(z, self) {
+      if (!snapEl) return;
+      snapEl.hidden = !z;
+      if (!z) return;
+      const r = snapRect(z, self);
+      Object.assign(snapEl.style, { left: `${r.l}px`, top: `${r.t}px`, width: `${r.w}px`, height: `${r.h}px` });
+    }
+    /** The handle between a window tiled left and one tiled right. */
+    function splitHandle() {
+      if (!splitEl) return;
+      const L = wins.find(w => !w.el.hidden && w.snap === "left"), R = wins.find(w => !w.el.hidden && w.snap === "right");
+      splitEl.hidden = !(L && R);
+      if (!L || !R) return;
+      const x = (L.r.l + L.r.w + R.r.l) / 2;
+      Object.assign(splitEl.style, { left: `${x - 4}px`, top: `${Math.max(L.r.t, R.r.t)}px`, height: `${Math.min(L.r.h, R.r.h)}px`, zIndex: String(z + 1) });
+    }
+    if (splitEl) splitEl.addEventListener("pointerdown", (e) => {
+      const L = wins.find(w => !w.el.hidden && w.snap === "left"), R = wins.find(w => !w.el.hidden && w.snap === "right");
+      if (!L || !R) return;
+      e.preventDefault(); splitEl.setPointerCapture(e.pointerId); splitEl.classList.add("on");
+      const x0 = layer.getBoundingClientRect().left;
+      const move = (e2) => {
+        const [bw] = bounds(), x = clamp(e2.clientX - x0, GAP + 360 + GAP / 2, bw - GAP - 360 - GAP / 2);
+        place(L, { w: x - GAP / 2 - L.r.l }); place(R, { l: x + GAP / 2, w: bw - GAP - (x + GAP / 2) });
+        splitHandle();
+      };
+      const up = () => { splitEl.classList.remove("on"); L.redraw(); R.redraw(); splitEl.removeEventListener("pointermove", move); splitEl.removeEventListener("pointerup", up); splitEl.removeEventListener("pointercancel", up); };
+      splitEl.addEventListener("pointermove", move); splitEl.addEventListener("pointerup", up); splitEl.addEventListener("pointercancel", up);
+    });
     function open(n, pinned = null, rect = null) {
       const same = wins.find(w => (w.n || w.want) === n && w.pinned === pinned);
       if (same) { restore(same); front(same); if (rect) { place(same, rect); same.redraw(); } return same; }
@@ -2209,12 +2280,27 @@
         if (e.button !== 0 || e.target.closest("button, input, .pick-menu")) return;
         const s = { x: e.clientX, y: e.clientY, l: W.r.l, t: W.r.t };
         bar.setPointerCapture(e.pointerId); bar.classList.add("dragging");
+        let zone = null, out = false;
         const move = (e2) => {
-          const [bw2, bh2] = bounds();
+          const [bw2, bh2] = bounds(), R = layer.getBoundingClientRect();
+          if (LIVE && W.snap && !out && Math.hypot(e2.clientX - s.x, e2.clientY - s.y) > 4) {
+            // out of the tile: the size it had before, the point under the cursor kept under it
+            out = true;
+            const fx = (s.x - R.left - W.r.l) / W.r.w, pre = W.preSnap || { w: W.r.w, h: W.r.h };
+            s.l = s.x - R.left - fx * pre.w;
+            place(W, { w: pre.w, h: pre.h }); W.snap = null; W.preSnap = null; W.redraw(); splitHandle();
+          }
           place(W, { l: clamp(s.l + e2.clientX - s.x, 90 - W.r.w, bw2 - 90), t: clamp(s.t + e2.clientY - s.y, 0, bh2 - 34) });
           W.max = null;
+          if (LIVE) { const z = snapZone(e2.clientX - R.left, e2.clientY - R.top); if (z !== zone) { zone = z; preview(z, W); } }
         };
-        const up = () => { bar.classList.remove("dragging"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up); bar.removeEventListener("pointercancel", up); };
+        const up = () => {
+          bar.classList.remove("dragging"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up); bar.removeEventListener("pointercancel", up);
+          if (!LIVE) return;
+          preview(null);
+          if (zone) { if (!W.snap) W.preSnap = { w: W.r.w, h: W.r.h }; W.snap = zone; place(W, snapRect(zone, W)); W.redraw(); }
+          splitHandle();
+        };
         bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", up); bar.addEventListener("pointercancel", up);
       });
       const grip = $(".fw-grip", el);
@@ -2225,14 +2311,16 @@
         const move = (e2) => {
           const [bw2, bh2] = bounds();
           place(W, { w: clamp(s.w + e2.clientX - s.x, 360, bw2 - W.r.l), h: clamp(s.h + e2.clientY - s.y, 300, bh2 - W.r.t) });
-          W.max = null; W.redraw();
+          W.max = null; W.snap = null; W.preSnap = null; W.redraw(); splitHandle();
         };
         const up = () => { grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up); };
         grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
       });
       $(".tl-c", el).addEventListener("click", () => close(W));
       $(".tl-m", el).addEventListener("click", () => minimize(W));
+      if (LIVE) { const z_ = $(".tl-z", el); z_.setAttribute("aria-label", "Open in a new tab"); z_.title = "Open this window in a tab of its own (drag the bar to the top edge to fill the screen)"; }
       $(".tl-z", el).addEventListener("click", () => {
+        if (LIVE) return openSolo(W);
         const [bw2, bh2] = bounds();
         if (W.max) { place(W, W.max); W.max = null; } else { W.max = { ...W.r }; place(W, { l: 8, t: 8, w: bw2 - 16, h: bh2 - 16 }); }
         W.redraw();
@@ -2260,6 +2348,7 @@
       const [bw, bh] = bounds();
       for (const W of wins) {
         if (W.max) { place(W, { l: 8, t: 8, w: bw - 16, h: bh - 16 }); W.redraw(); continue; }
+        if (W.snap) { place(W, snapRect(W.snap, W)); W.redraw(); continue; }
         place(W, { l: clamp(W.r.l, 90 - W.r.w, Math.max(8, bw - 90)), t: clamp(W.r.t, 0, Math.max(0, bh - 34)) });
       }
     }).observe(layer);
@@ -2335,9 +2424,44 @@
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const stamp = (t) => { const d = new Date(T0 + t * 1000); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} · ${clock(t).slice(0, 5)} UTC`; };
 
+  /** A window alone in its tab: the data window (?solo=<craft>) filling the page, or the HSO screen (?solo=hso). */
+  async function solo(D) {
+    const q = new URLSearchParams(location.search), key = /^\d$/.test(SOLO) ? +SOLO : SOLO;
+    document.body.classList.add("solo");
+    if (SOLO === "hso") { document.body.classList.add("solo-hso"); return false; }
+    if (!CRAFT[key]) return false;
+    document.body.classList.add("solo-win");
+    const el = document.createElement("div");
+    el.setAttribute("role", "region");
+    el.id = "solo-win";
+    document.body.appendChild(el);
+    const ev = D.m.event, pin = q.has("pin") ? +q.get("pin") : null;
+    const span = () => { const a = +q.get("a"), b = +q.get("b"); return isFinite(a) && isFinite(b) && b > a ? [a, b] : [ev.crossing - 1800, ev.crossing + 1800]; };
+    const W = DataWindow(D, key, {
+      el, S: null, pinned: pin, span, moment: () => pin ?? ev.crossing, widen: (w) => w.redraw(),
+      setRange: (w, m) => { const c = (w.app.a + w.app.b) / 2; w.app.home = [c - m * 60, c + m * 60]; w.app.setFocus(c - m * 60, c + m * 60); },
+    });
+    Object.assign(W, { want: key, pinned: pin, r: {} });
+    $(".tl", el).style.display = "none";
+    document.title = `${CRAFT[key].name} · ${new Date(SRC.at).toISOString().slice(0, 16).replace("T", " ")} UTC · Helios live`;
+    await W.setCraft(key);
+    const stack = (q.get("stack") || "").split(",").filter(k => KINDS[k]);
+    if (stack.length) { W.cfg.stack = stack; }
+    const [a, b] = span();
+    W.app.home = [a, b]; W.app.setFocus(a, b);
+    window.addEventListener("resize", () => W.redraw());
+    return true;
+  }
+
   async function start() {
     const root = $("#app");
     if (!root) return;
+    if (SOLO && SOLO !== "hso") {                          // a data window alone: no scene, no workspace
+      let D;
+      try { D = await load(); } catch (e) { document.body.insertAdjacentHTML("beforeend", '<p class="solo-fail">The data could not be loaded.</p>'); return; }
+      if (await solo(D)) return;
+    }
+    if (SOLO === "hso") document.body.classList.add("solo", "solo-hso");
     // the HSO view's scene (Helios's ephemeris cache for the event) and its stars, fetched alongside MMS1's data
     const sceneData = LIVE ? SRC.scene() : Promise.all([fetch(BASE + "scene.json").then(r => r.json()), fetchBuf("stars.bin")]);
     let D, S = null, stars = null;
@@ -2401,7 +2525,17 @@
     const hidePanel = () => { winEl.hidden = true; wins.classList.add("single"); $("#scene-hint").hidden = false; };
     $(".tl-c", winEl).addEventListener("click", hidePanel);
     $(".tl-m", winEl).addEventListener("click", hidePanel);
-    $(".tl-z", winEl).addEventListener("click", () => { winEl.classList.toggle("zoomed"); wins.classList.toggle("wide", win.extra > 0 || winEl.classList.contains("zoomed")); win.redraw(); });
+    if (LIVE) { const z_ = $(".tl-z", winEl); z_.setAttribute("aria-label", "Open in a new tab"); z_.title = "Open this window in a tab of its own"; }
+    $(".tl-z", winEl).addEventListener("click", () => {
+      if (LIVE) return openSolo(win);
+      winEl.classList.toggle("zoomed"); wins.classList.toggle("wide", win.extra > 0 || winEl.classList.contains("zoomed")); win.redraw();
+    });
+    // live: the HSO view's green light opens the HSO screen alone in a tab
+    const hsoZ = LIVE && $("#win-hso .dots i:nth-child(3)");
+    if (hsoZ) {
+      hsoZ.classList.add("dot-z"); hsoZ.title = "Open the HSO screen in a tab of its own";
+      hsoZ.addEventListener("click", () => { const u = new URL(location.href); u.searchParams.set("solo", "hso"); window.open(u.toString(), "_blank", "noopener"); });
+    }
     // the HSO view: Helios's Magnetosphere rung, drawn by hsoview.js
     try {
       if (!S) throw new Error("no scene");
