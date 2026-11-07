@@ -152,7 +152,7 @@
       C.erange.dis = edges([C.sv.dis]); C.erange.des = edges([C.sv.des]);
       if (C.burst) C.burst.then((bu) => {                      // the burst data, when they arrive: segments, ranges, a redraw
         if (!bu) return;
-        C.bu = bu;
+        C.bu = Object.assign(bu, C.extraBu || {});
         for (const ds of ["fgm", "dis", "des"]) {
           const B = bu[ds], t = B.t, out = [];
           cadence(B);
@@ -163,6 +163,7 @@
           }
           C.segs[ds] = out;
         }
+        for (const [k, sg] of Object.entries(C.burstSegs || {})) C.segs[k] = sg;   // on-demand burst sets (EDP) fetched earlier
         C.erange.dis = edges([C.sv.dis, bu.dis]); C.erange.des = edges([C.sv.des, bu.des]);
         if (D.n === n) D.bu = bu;
         window.dispatchEvent(new CustomEvent("hso-burst", { detail: n }));
@@ -277,7 +278,7 @@
       let pen = false, prev = -Infinity;
       if (j1 - j0 < R.w * 3) {
         for (let i = j0; i < j1; i++) {
-          const y = f(i);
+          const y0 = f(i), y = isFinite(yOf(y0)) ? y0 : NaN;   // a value the axis cannot place (≤ 0 on a log row) is a gap
           if (!isFinite(y) || t[i] - prev > gap) pen = false;
           prev = t[i];
           if (!isFinite(y)) continue;
@@ -294,7 +295,7 @@
           c = null;
         };
         for (let i = j0; i < j1; i++) {
-          const y = f(i), ti = t[i];
+          const y0 = f(i), ti = t[i], y = isFinite(yOf(y0)) ? y0 : NaN;
           if (!isFinite(y) || ti - prev > gap) { flush(); pen = false; }
           prev = ti;
           if (!isFinite(y)) continue;
@@ -312,7 +313,7 @@
    *  flux in the window (≤ 600 columns sampled), out to whole decades, at least 3 and at most 7 of them; a fixed
    *  fallback (10³–10⁷ ions, 10⁴–10⁹ electrons) when fewer than 30 values. The demo keeps its fixed ranges. */
   function specRange(D, ds, rangeKey, a, b, burst) {
-    const store = D.m.spectra[rangeKey].log10;
+    const store = (D.sv[ds] && D.sv[ds].store) || (D.m.spectra[rangeKey] || D.m.spectra.dis).log10;
     if (!LIVE) return store;
     // the records in the window, survey and burst merged in time order, then ONE stride over them all (≤ 600 columns)
     const recs = [];
@@ -337,7 +338,7 @@
   function spectrogram(ctx, R, a, b, D, ds, burst, dpr, win) {
     const W = Math.max(1, Math.round(R.w * dpr)), H = Math.max(1, Math.round(R.h * dpr));
     // live: each 8-bit flux re-read on the window's own color range (specRange)
-    const store = win ? D.m.spectra[ds === "des" || ds === "esp" ? "des" : "dis"].log10 : null;
+    const store = win ? (D.sv[ds] && D.sv[ds].store) || D.m.spectra[ds === "des" || ds === "esp" ? "des" : "dis"].log10 : null;
     const cmap = win ? Uint16Array.from({ length: 256 }, (_, v) => v === 0 ? 0 : Math.round(clamp(((store[0] + (v - 1) / 254 * (store[1] - store[0])) - win[0]) / (win[1] - win[0]), 0, 1) * 255) * 3) : null;
     const img = new ImageData(W, H), px = img.data, [elo, ehi] = D.erange[ds], maps = new Map();
     const rows = (L, k) => {
@@ -440,6 +441,54 @@
       return perp ? Math.hypot(jx - par * bx / m, jy - par * by / m, jz - par * bz / m) : par;
     };
   };
+  // E′, J·E′ and the frozen-in comparisons (Helios's DerivedVariables): each computed at the velocity's records, with E
+  // and B from the same tier (survey or burst) at the nearest sample. (V×B in mV/m = V [km/s] × B [nT] × 10⁻³.)
+  const nearestK = (O, t, tol) => {
+    if (!O || !O.t.length) return -1;
+    let k = lower(O.t, t);
+    if (k >= O.t.length) k = O.t.length - 1;
+    if (k > 0 && t - O.t[k - 1] < O.t[k] - t) k--;
+    return Math.abs(O.t[k] - t) <= tol ? k : -1;
+  };
+  const v3 = (O, name, k) => { const a = O[name], st = O.cols[name]; return [a[k * st], a[k * st + 1], a[k * st + 2]]; };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  /** At each velocity record: { e, b, v } (GSE), or null where E or B is missing. */
+  const fieldsAt = (L, P) => {
+    const E = P.set(L, "efi"), F = P.set(L, "fgm"), V = P.vel(L);
+    if (!E || !F || !V) return null;
+    return (i) => {
+      const t = L.t[i], ke = nearestK(E, t, Math.max(2, E.dt || 1)), kb = nearestK(F, t, Math.max(2, F.dt || 1));
+      return ke < 0 || kb < 0 ? null : { e: v3(E, "e", ke), b: v3(F, "b", kb), v: [V(i, 0), V(i, 1), V(i, 2)] };
+    };
+  };
+  /** E′ = E + V×B, component c, in mV/m. */
+  const ePrime = (c) => (L, P) => { const f = fieldsAt(L, P); return f && ((i) => { const q = f(i); return q ? q.e[c] + 1e-3 * cross(q.v, q.b)[c] : NaN; }); };
+  /** −V×B, component c, in mV/m. */
+  const minusVxB = (c) => (L, P) => { const f = fieldsAt(L, P); return f && ((i) => { const q = f(i); return q ? -1e-3 * cross(q.v, q.b)[c] : NaN; }); };
+  /** J·E′ (E′ in the electron frame), nW/m³: J [µA/m²] × E [mV/m]. */
+  const jDotEp = (L, P) => {
+    const f = fieldsAt(L, P), J = P.jFor(L);
+    return f && J && ((i) => { const q = f(i); if (!q) return NaN; const vb = cross(q.v, q.b); return [0, 1, 2].reduce((s, c) => s + J(i, c) * (q.e[c] + 1e-3 * vb[c]), 0); });
+  };
+  /** The E×B drift, component c, km/s (E mV/m, B nT): 10³ E×B / B². */
+  const exb = (c) => (L, P) => {
+    const F = P.set(L, "fgm");
+    if (!F) return null;
+    return (i) => { const kb = nearestK(F, L.t[i], 2); if (kb < 0) return NaN; const e = v3(L, "e", i), b = v3(F, "b", kb), b2 = b[0] ** 2 + b[1] ** 2 + b[2] ** 2; return b2 > 0 ? 1e3 * cross(e, b)[c] / b2 : NaN; };
+  };
+  /** V⊥ of the ions, component c (B from the same tier). */
+  const vPerp = (c) => (L, P) => {
+    const F = P.set(L, "fgm"), V = P.vel(L);
+    if (!F || !V) return null;
+    return (i) => { const kb = nearestK(F, L.t[i], 2); if (kb < 0) return NaN; const b = v3(F, "b", kb), m = Math.hypot(...b) || 1, v = [V(i, 0), V(i, 1), V(i, 2)];
+                    const par = (v[0] * b[0] + v[1] * b[1] + v[2] * b[2]) / m; return v[c] - par * b[c] / m; };
+  };
+  const HP_COL = { H: "#2a46d6", Hepp: "#1e8a36", Hep: "#d8282a", O: "#ee8a1c" }, HP_LAB = { H: "H^{+}", Hepp: "He^{++}", Hep: "He^{+}", O: "O^{+}" };
+  const hpSpec = (k, name) => ({ title: `HPCA ${name} spectrogram`, label: `HPCA ${HP_LAB[k]}`, short: HP_LAB[k], unit: "(eV)", w: 1, spec: `hp${k}`, range: `hp${k}`, lazy: "hpcaSpec" });
+  const hpVel = (k, name) => ({ title: `HPCA ${name} velocity (GSE)`, label: `V_{${HP_LAB[k].replace(/\^\{(.*)\}/, "$1")}}`, unit: "(km/s)", w: 0.9, zero: true, lazy: "hpcaMom", lines: XYZ("hpm", `v${k}`) });
+  const four = (name, f) => ["H", "Hepp", "Hep", "O"].map((k, j) => f(k, j));
+  const fz = (sp, c) => ({ title: `E vs −V${sp === "des" ? "ₑ" : "ᵢ"}×B  · ${"xyz"[c]}`, label: `E_{${"xyz"[c]}}`, unit: "(mV/m)", w: 0.8, zero: true, lazy: "edp",
+                          lines: [Sc("efi", "e", c, COL.mag, `E_{${"xyz"[c]}}`), derive(sp, sp === "des" ? COL.ne : COL.ni, `−V_{${sp === "des" ? "e" : "i"}}×B`, minusVxB(c))] });
   const KINDS = {
     b: { title: "B — magnetic field", label: "B", unit: "(nT)", w: 1.25, zero: true, lines: [Sc("fgm", "b", 3, COL.mag, "|B|"), ...XYZ("fgm", "b")] },
     ionSpec: { title: "Ion spectrogram", label: "Ions", unit: "(eV)", w: 1, spec: "dis", range: "dis" },
@@ -457,7 +506,22 @@
     jfpi: { title: "Current  J (FPI)", label: "J_{FPI}", unit: "(µA/m²)", w: 1, zero: true, lines: XYZ("des", "j") },
     jpar: { title: "J∥  (parallel current)", label: "J_{∥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.par, "J_{∥}", jAlong(false))] },
     jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, floor: 0, lines: [derive("des", COL.perp, "J_{⊥}", jAlong(true))] },
-    e: { title: "E — electric field", label: "E", unit: "(mV/m)", w: 1, zero: true, lines: XYZ("efi", "e") },
+    e: { title: "E — electric field", label: "E", unit: "(mV/m)", w: 1, zero: true, lazy: "edp", lines: XYZ("efi", "e") },
+    pot: { title: "Spacecraft potential", label: "V_{sc}", unit: "(V)", w: 0.7, lazy: "edp", lines: [Sc("pot", "v", 0, COL.mag, "V_{sc}")] },
+    epsd: { title: "E-field spectrogram (DSP, omni)", label: "E PSD", unit: "(Hz)", w: 1, spec: "epsd", range: "epsd", lazy: "dsp", cbar: "(V/m)²/Hz" },
+    epE: { title: "E′ = E + Vₑ×B  (electron frame)", label: "E′_{e}", unit: "(mV/m)", w: 0.9, zero: true, lazy: "edp",
+           lines: [0, 1, 2].map(c => derive("des", [COL.x, COL.y, COL.z][c], "XYZ"[c], ePrime(c))) },
+    epI: { title: "E′ = E + Vᵢ×B  (ion frame)", label: "E′_{i}", unit: "(mV/m)", w: 0.9, zero: true, lazy: "edp",
+           lines: [0, 1, 2].map(c => derive("dis", [COL.x, COL.y, COL.z][c], "XYZ"[c], ePrime(c))) },
+    jdotE: { title: "J·E′ — dissipation", label: "J·E′", unit: "(nW/m³)", w: 0.8, zero: true, lazy: "edp", lines: [derive("des", COL.mag, "J·E′", jDotEp)] },
+    fzEx: fz("des", 0), fzEy: fz("des", 1), fzEz: fz("des", 2), fzIx: fz("dis", 0), fzIy: fz("dis", 1), fzIz: fz("dis", 2),
+    exbX: null, exbY: null, exbZ: null,
+    hpH: hpSpec("H", "H⁺"), hpHepp: hpSpec("Hepp", "He⁺⁺"), hpHep: hpSpec("Hep", "He⁺"), hpO: hpSpec("O", "O⁺"),
+    hpN: { title: "HPCA densities  H⁺ He⁺⁺ He⁺ O⁺", label: "N", unit: "(cm⁻³)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("n", (k, j) => Sc("hpm", "n", j, HP_COL[k], HP_LAB[k])) },
+    hpVH: hpVel("H", "H⁺"), hpVHepp: hpVel("Hepp", "He⁺⁺"), hpVHep: hpVel("Hep", "He⁺"), hpVO: hpVel("O", "O⁺"),
+    hpT: { title: "HPCA temperatures (scalar)", label: "T", unit: "(eV)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("T", (k, j) => Sc("hpm", "T", j, HP_COL[k], HP_LAB[k])) },
+    hpP: { title: "HPCA partial pressures  n kT", label: "P", unit: "(nPa)", w: 0.9, log: true, lazy: "hpcaMom",
+           lines: four("P", (k, j) => derive("hpm", HP_COL[k], HP_LAB[k], (L) => (L.n && L.T ? (i) => QE * L.n[i * 4 + j] * L.T[i * 4 + j] : null))) },
     // the OMNI window (Helios's OmniPanel.rows) and the L1 monitors' plasma
     omBt: { title: "IMF |B|", label: "|B|", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "bt", 0, COL.mag, "|B|")] },
     omBz: { title: "IMF Bz (GSM)", label: "B_{z}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "bz", 0, COL.z, "B_{z} GSM")] },
@@ -484,6 +548,9 @@
     comp: { title: "CIS composition  O⁺ / He⁺ / He⁺⁺", label: "CIS comp.", unit: "(cm⁻³)", w: 0.9, log: true,
             lines: [Sc("cmpO", "v", 0, COL.x, "O^{+}"), Sc("cmpHe1", "v", 0, COL.z, "He^{+}"), Sc("cmpHe2", "v", 0, COL.y, "He^{++}")] },
   };
+  for (const [k, c] of [["exbX", 0], ["exbY", 1], ["exbZ", 2]])
+    KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp",
+                 lines: [derive("efi", COL.mag, "E×B/B²", exb(c)), derive("dis", COL.ni, "V_{i⊥}", vPerp(c))] };
   const NA = (title) => ({ title, avail: false });
   // The sidebar's Plot selection, per mission: Helios's groups of subplots in its order (MMSPanels.swift), the stack a
   // window opens with, and the preset figures. A subplot whose data this demo does not carry is listed, greyed, as the app
@@ -492,13 +559,15 @@
     mms: {
       sections: [
         ["FPI", ["ionSpec", "elecSpec", "n", "ti", "te", "tanis", "p", "vi", "ve", NA("V⊥  (ion / electron)"), NA("e⁻ PAD  0–200 eV"), NA("e⁻ PAD  200 eV–2 keV"), NA("e⁻ PAD  2–30 keV")]],
-        ["Fields", ["b", NA("E — electric field")]],
+        ["Fields", ["b", LIVE ? "e" : NA("E — electric field")]],
         ["Currents", ["jfpi", "jpar", "jperp", NA("Current  J (curlometer, 4 s/c)")]],
-        ["Reconnection", [NA("Agyrotropy  √Q  (Swisdak 2016)"), NA("Nongyrotropy  D_ng  (Aunai 2013)"), NA("J·E′ — dissipation"), NA("J∥·E∥ — parallel dissipation"), NA("D_e — dissipation (electron frame)"), NA("Pressure–strain  e⁻  (4 s/c)"), NA("Pressure–strain  ions  (4 s/c)"), NA("E′ = E + Vₑ×B  (electron frame)"), NA("E′ = E + Vᵢ×B  (ion frame)"), NA("E′ = E + V(H⁺)×B"), NA("E′ = E + V(He⁺)×B"), NA("E′ = E + V(O⁺)×B")]],
-        ["Frozen-in", [NA("E vs −Vₑ×B  · x"), NA("E vs −Vₑ×B  · y"), NA("E vs −Vₑ×B  · z"), NA("E vs −Vᵢ×B  · x"), NA("E vs −Vᵢ×B  · y"), NA("E vs −Vᵢ×B  · z"), NA("E×B/B² vs V⊥  · x"), NA("E×B/B² vs V⊥  · y"), NA("E×B/B² vs V⊥  · z")]],
-        ["HPCA · composition", [NA("Spectrogram  H⁺"), NA("Spectrogram  He⁺⁺"), NA("Spectrogram  He⁺"), NA("Spectrogram  O⁺"), NA("Densities  H⁺ He⁺ He⁺⁺ O⁺")]],
+        ["Reconnection", [NA("Agyrotropy  √Q  (Swisdak 2016)"), NA("Nongyrotropy  D_ng  (Aunai 2013)"), LIVE ? "jdotE" : NA("J·E′ — dissipation"), NA("J∥·E∥ — parallel dissipation"), NA("D_e — dissipation (electron frame)"), NA("Pressure–strain  e⁻  (4 s/c)"), NA("Pressure–strain  ions  (4 s/c)"), LIVE ? "epE" : NA("E′ = E + Vₑ×B  (electron frame)"), LIVE ? "epI" : NA("E′ = E + Vᵢ×B  (ion frame)"), NA("E′ = E + V(H⁺)×B"), NA("E′ = E + V(He⁺)×B"), NA("E′ = E + V(O⁺)×B")]],
+        ["Frozen-in", LIVE ? ["fzEx", "fzEy", "fzEz", "fzIx", "fzIy", "fzIz", "exbX", "exbY", "exbZ"]
+          : [NA("E vs −Vₑ×B  · x"), NA("E vs −Vₑ×B  · y"), NA("E vs −Vₑ×B  · z"), NA("E vs −Vᵢ×B  · x"), NA("E vs −Vᵢ×B  · y"), NA("E vs −Vᵢ×B  · z"), NA("E×B/B² vs V⊥  · x"), NA("E×B/B² vs V⊥  · y"), NA("E×B/B² vs V⊥  · z")]],
+        ["HPCA · composition", LIVE ? ["hpH", "hpHepp", "hpHep", "hpO", "hpN", "hpVH", "hpVHepp", "hpVHep", "hpVO", "hpT", "hpP"]
+          : [NA("Spectrogram  H⁺"), NA("Spectrogram  He⁺⁺"), NA("Spectrogram  He⁺"), NA("Spectrogram  O⁺"), NA("Densities  H⁺ He⁺ He⁺⁺ O⁺")]],
         ["HPCA · pitch angles", [NA("H⁺ PAD  1–300 eV"), NA("H⁺ PAD  300 eV–3 keV"), NA("H⁺ PAD  3–40 keV"), NA("He⁺ PAD  1–400 eV"), NA("He⁺ PAD  400 eV–4 keV"), NA("He⁺ PAD  4–40 keV"), NA("O⁺ PAD  1 eV–1 keV"), NA("O⁺ PAD  1–10 keV"), NA("O⁺ PAD  10–40 keV")]],
-        ["Waves & potential", [NA("E-field spectrogram"), NA("B-field spectrogram"), NA("Spacecraft potential")]],
+        ["Waves & potential", [LIVE ? "epsd" : NA("E-field spectrogram"), NA("B-field spectrogram"), LIVE ? "pot" : NA("Spacecraft potential")]],
         ["EIS · ExTOF omni flux", [NA("Protons"), NA("Helium"), NA("Oxygen")]],
         ["FEEPS · energetic particles", [NA("Electrons  omni"), NA("Ions  omni")]],
       ],
@@ -553,6 +622,7 @@
     const k = KINDS[key] && Object.assign({}, kindOf(mission, key), D.relabel && D.relabel[key]);
     if (!k) return false;
     const ok = (S) => !!S && (!LIVE || S.t.length > 0);       // live: a record set with nothing that day does not count
+    if (LIVE && k.lazy && mission === "mms" && !(D.lazyDone && D.lazyDone[k.lazy])) return true;   // fetched when first drawn
     return k.spec ? ok(D.sv[k.spec]) : k.lines.some(l => ok(D.sv[l.ds]));
   }
 
@@ -698,6 +768,10 @@
     const P = {                                             // what derived lines need: the FGM and J beside a record set
       fgmFor: (S) => tiers().find(T => T.des === S || T.dis === S)?.fgm,
       jFor: (S) => (S.j ? (i, c) => S.j[i * 3 + c] + (cfg.spintone && S.vst ? QE * S.n[i] * S.vst[i * 3 + c] : 0) : null),
+      /** Another instrument's record set beside S: the same tier's (burst beside burst) where it has one, else survey. */
+      set: (S, ds) => { const T = tiers().find(T => Object.values(T).includes(S)); const O = (T && T[ds] && T[ds].t.length ? T[ds] : D.sv[ds]); return O && O.t.length ? O : null; },
+      /** A velocity set's bulk velocity, the electrons' with the spin-tone removed where that correction is on. */
+      vel: (S) => (S.v && S.cols.v === 3 ? (i, c) => S.v[i * 3 + c] - (cfg.spintone && S.vst ? S.vst[i * 3 + c] : 0) : null),
     };
     /** One stored component, with the spin-tone correction where it applies. */
     function component(line, S, c) {
@@ -777,7 +851,11 @@
       }
       for (const Rw of L.rows) {
         const r = Rw.row;
-        if (r.spec) {
+        if (r.spec && !(D.sv[r.spec] && D.erange[r.spec])) {      // an on-demand spectrogram still on its way
+          ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
+          rich(ctx, r.lazy && !(D.lazyDone && D.lazyDone[r.lazy]) ? "fetching…" : "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
+          L.yOf.push(null); L.acc.push(null);
+        } else if (r.spec) {
           const win = specRange(D, r.spec, r.range, a, b, true);
           spectrogram(ctx, Rw, a, b, D, r.spec, true, dpr, LIVE ? win : null);
           energyAxis(ctx, Rw, D.erange[r.spec]);
@@ -785,6 +863,7 @@
           L.yOf.push(null); L.acc.push(null);
         } else {
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
+          if (r.lazy && LIVE && !(D.lazyDone && D.lazyDone[r.lazy])) rich(ctx, "fetching…", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
           let lo = Infinity, hi = -Infinity;
           const accs = r.lines.map(line => accessor(line, R)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
           const lg = (acc) => (S) => { const f = acc(S); return f && ((i) => { const v = f(i); return v > 0 ? Math.log10(v) : NaN; }); };
@@ -1022,8 +1101,9 @@
   // its own φ/θ/energy footprint, no interpolation) on a 100 × 100 grid over ±25×10³ km/s, the plane through the
   // spacecraft-frame origin and the axes relabeled by the records' own bulk velocity (pyspedas subtract_bulk), colored
   // 10⁻³¹–10⁻²⁵ s³/cm⁶ on the jet scale with eight log contours; three planes per cut.
-  const C_KMS = 299792.458, ME_EV = 510998.95;
-  const speedE = (E) => { const r = E / ME_EV + 1, b2 = 1 - 1 / (r * r); return C_KMS * (b2 > 0 ? Math.sqrt(b2) : 0); };
+  const C_KMS = 299792.458, ME_EV = 510998.95, MP_EV = 938272088.16;
+  const speedE = (E, m = ME_EV) => { const r = E / m + 1, b2 = 1 - 1 / (r * r); return C_KMS * (b2 > 0 ? Math.sqrt(b2) : 0); };
+  const recDt = (V) => V.dt || 0.03;                          // a record's accumulation: 30 ms DES, 150 ms DIS
   const wrap180 = (d) => { let x = d % 360; if (x > 180) x -= 360; else if (x <= -180) x += 360; return x; };
   /** A record's bins as velocity footprints (GeometricFootprints): energy edges at the midpoints, as speeds; each azimuth
    *  turned 180° from the look direction to the particles' own. */
@@ -1031,7 +1111,8 @@
     const E = V.E.subarray(i * 32, i * 32 + 32), ed = new Float64Array(33);
     for (let k = 1; k < 32; k++) ed[k] = (E[k - 1] + E[k]) / 2;
     ed[0] = Math.max(E[0] - (ed[1] - E[0]), E[0] / 2); ed[32] = E[31] + (E[31] - ed[31]);
-    return { vEdge: Array.from(ed, speedE), phiVel: Array.from(V.PHI.subarray(i * 32, i * 32 + 32), p => (isFinite(p) ? (p + 180) % 360 : NaN)), base: i * 16384 };
+    const m = V.sp === "dis" ? MP_EV : ME_EV;
+    return { vEdge: Array.from(ed, (x) => speedE(x, m)), phiVel: Array.from(V.PHI.subarray(i * 32, i * 32 + 32), p => (isFinite(p) ? (p + 180) % 360 : NaN)), base: i * 16384 };
   }
   /** The packed index of the bin whose footprint holds the velocity (instrument frame, km/s), or −1. */
   function binOf(F, vx, vy, vz) {
@@ -1091,12 +1172,13 @@
   }
   /** The records a cut at t draws: the one whose 30 ms accumulation holds t, or the N whose centers are nearest. */
   function recordsAt(V, t, N) {
+    const dt = recDt(V);
     if (N === 1) {
       const i = lower(V.t, t + 1e-6) - 1;
-      return i >= 0 && t - V.t[i] < 0.0305 ? [i] : [];
+      return i >= 0 && t - V.t[i] < dt + 0.0005 ? [i] : [];
     }
-    if (t < V.t[0] - 0.03 || t > V.t[V.t.length - 1] + 0.06) return [];
-    return V.t.map((x, i) => [Math.abs(x + 0.015 - t), i]).sort((p, q) => p[0] - q[0]).slice(0, N).map(p => p[1]).sort((p, q) => p - q);
+    if (t < V.t[0] - dt || t > V.t[V.t.length - 1] + 2 * dt) return [];
+    return V.t.map((x, i) => [Math.abs(x + dt / 2 - t), i]).sort((p, q) => p[0] - q[0]).slice(0, N).map(p => p[1]).sort((p, q) => p - q);
   }
   const mean3 = (arr, recs) => [0, 1, 2].map(c => recs.reduce((s, i) => s + arr[i * 3 + c], 0) / recs.length);
   const LABELS = { dbcs: ["Vx", "Vy", "Vz"], lmn: ["VL", "VM", "VN"], fac: ["V∥", "V⊥1", "V⊥2"] };   // SliceRotation.labels
@@ -1130,9 +1212,9 @@
       if (o.sigma > 0) f = gaussianBlur(f, n, o.sigma);
       return { f, n, vMax: o.vmax, labels: [labels[ax], labels[ay]], mark: o.subtract ? null : [bulkRot[ax], bulkRot[ay]] };
     });
-    const k = recs.length, note = [tag, o.subtract ? "axes −V(DES), s/c-origin plane" : "s/c frame", "geometric",
-      k === o.records ? (k > 1 ? `${k} rec · ${k * 30} ms` : null) : `${k}/${o.records} rec · ${k * 30} ms`].filter(Boolean).join(" · ");
-    return { slices, tag, note, start: V.t[recs[0]], end: V.t[recs[k - 1]] + 0.030 };
+    const k = recs.length, ms = Math.round(k * recDt(V) * 1000), note = [tag, o.subtract ? `axes −V(${V.sp === "dis" ? "DIS" : "DES"}), s/c-origin plane` : "s/c frame", "geometric",
+      k === o.records ? (k > 1 ? `${k} rec · ${ms} ms` : null) : `${k}/${o.records} rec · ${ms} ms`].filter(Boolean).join(" · ");
+    return { slices, tag, note, start: V.t[recs[0]], end: V.t[recs[k - 1]] + recDt(V) };
   }
 
   const SUP = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻" };
@@ -1475,7 +1557,36 @@
       queued = true;
       requestAnimationFrame(() => { queued = false; W.drawNow(); });
     };
-    W.drawNow = () => { if (W.n && !el.hidden) { sync(); W.panel.draw(); } };
+    W.drawNow = () => { if (W.n && !el.hidden) { ensureLazy(); sync(); W.panel.draw(); } };
+    /** Live MMS: the HPCA, EDP and DSP groups are fetched when a row first needs them, merged into the probe's data. */
+    function ensureLazy() {
+      if (!LIVE || CRAFT[W.n].mission !== "mms") return;
+      const n = W.n, Cd = D.craft[n];
+      if (!Cd) return;
+      Cd.lazyDone = Cd.lazyDone || {}; Cd.lazyBusy = Cd.lazyBusy || {};
+      const groups = new Set((C.stack || []).map(k => KINDS[k] && KINDS[k].lazy).filter(Boolean));
+      for (const g of groups) {
+        if (Cd.lazyDone[g] || Cd.lazyBusy[g]) continue;
+        Cd.lazyBusy[g] = true;
+        SRC.lazy(n, g).then((r) => {
+          Object.assign(Cd.sv, r.sets);
+          for (const [k, S] of Object.entries(r.sets)) { cadence(S); if (S.etab) Cd.erange[k] = edges([S]); }
+          if (r.burst) {
+            Cd.extraBu = Object.assign(Cd.extraBu || {}, r.burst);
+            if (Cd.bu) Object.assign(Cd.bu, r.burst);
+            for (const [k, B] of Object.entries(r.burst)) {
+              cadence(B);
+              const t = B.t, out = [];
+              if (t.length) { let st = t[0]; for (let i = 1; i < t.length; i++) if (t[i] - t[i - 1] > Math.max(1, B.gap)) { out.push([st, t[i - 1] + B.dt]); st = t[i]; } out.push([st, t[t.length - 1] + B.dt]); }
+              Cd.segs[k] = Cd.bu ? out : [];
+              Cd.burstSegs = Object.assign(Cd.burstSegs || {}, { [k]: out });
+            }
+          }
+          Cd.lazyDone[g] = true;
+          if (W.n === n) { Object.assign(W.view, { sv: Cd.sv, bu: Cd.bu, segs: Cd.segs, erange: Cd.erange, lazyDone: Cd.lazyDone }); renderSide(); W.redraw(); }
+        });
+      }
+    }
     W.rangeText = () => {
       const s = (A.b - A.a) / 2, m = WINDOW_CHOICES.find(x => Math.abs(x * 60 - s) < 1);
       $(".fw-rb span", el).textContent = m ? rangeLabel(m) : `±${span(s)}`;
@@ -1512,7 +1623,7 @@
       catch (e) { busy.textContent = `${Cr.name}'s data could not be loaded.`; busy.hidden = false; return; }
       busy.hidden = true;
       const data = D.craft[k], newMission = !W.n || CRAFT[W.n].mission !== Cr.mission;
-      Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind, relabel: data.relabel || null });
+      Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind, relabel: data.relabel || null, lazyDone: data.lazyDone || null });
       W.n = k;
       if (newMission || LIVE) {                              // live: only the subplots that probe has data for that day
         C.mission = Cr.mission; C.stack = MISSIONS[Cr.mission].stack.slice();
@@ -1629,7 +1740,7 @@
         h += `</section>`;
       }
       h += tk.dis("data", "Data · in this page", W.open.has("data"),
-        tk.note(LIVE ? `Fetched live from CDAWeb (HAPI) and SSCWeb for this moment: ${(D.bytes / 1e6).toFixed(1)} MB so far. Survey data for four hours, burst data within ${SRC.burstHalf / 60} minutes of the moment, and electron distributions around each VDF cut.`
+        tk.note(LIVE ? `Fetched live from CDAWeb (HAPI) and SSCWeb for this moment: ${(D.bytes / 1e6).toFixed(1)} MB so far. Survey data for four hours, burst data within ${SRC.burstHalf / 60} minutes of the moment, electron and ion distributions around each VDF cut, and HPCA, EDP and DSP data when a subplot first needs them.`
           : `Cut down from public Level 2 data for this demo and loaded with the page: ${(D.bytes / 1e6).toFixed(1)} MB so far. Helios fetches any window live and keeps saved events and pinned windows on disk.`));
       return h;
     }
@@ -1811,8 +1922,8 @@
     async function loadCuts() {
       const V = W.vdf;
       V.data = null;
-      if (V.on && LIVE && CRAFT[W.n].mission === "mms") V.data = SRC.vdf(W.n);
-      else if (V.on && (W.n === 2 || W.n === 3)) V.data = await loadVDF(W.n).catch(() => null);
+      if (V.on && LIVE && CRAFT[W.n].mission === "mms") V.data = { e: SRC.vdf(W.n, "des"), i: SRC.vdf(W.n, "dis") };
+      else if (V.on && (W.n === 2 || W.n === 3)) { const e = await loadVDF(W.n).catch(() => null); V.data = e ? { e } : null; }
       renderCuts();
     }
     /** Where + Add puts a cut (effectiveVdfTime): the last cut's time, else the window's moment while it is on screen,
@@ -1834,8 +1945,8 @@
       renderSide();
       A.setFocus(t + 0.015 - 5, t + 0.015 + 5);
     };
-    W.addCut = (t) => {
-      const V = W.vdf, c = { id: ++V.id, t, color: CUT_COLORS[V.cuts.length % CUT_COLORS.length] };
+    W.addCut = (t, sp = "e") => {
+      const V = W.vdf, c = { id: ++V.id, t, sp, color: CUT_COLORS[V.cuts.length % CUT_COLORS.length] };
       V.cuts.push(c);
       renderCuts(); relayout();
       return c;
@@ -1847,7 +1958,7 @@
     }
     function addMenu() {
       const t = addTime(), last = W.vdf.cuts[W.vdf.cuts.length - 1], off = 'disabled title="In the app"';
-      return `<p class="pm-h">Add a cut at ${clock(t, true)}</p><button role="menuitem" ${off}>Ions</button><button role="menuitem" data-add="e">Electrons</button>`
+      return `<p class="pm-h">Add a cut at ${clock(t, true)}</p><button role="menuitem" ${LIVE ? 'data-add="i"' : off}>Ions</button><button role="menuitem" data-add="e">Electrons</button>`
         + ["H⁺", "He⁺⁺", "He⁺", "O⁺"].map(s => `<button role="menuitem" ${off}>HPCA ${s}</button>`).join("")
         + `<p class="pm-h">Four-spacecraft ∇fₑ — Vlasov terms (Shuster et al.)</p><button role="menuitem" ${off}>The ∇fₑ terms · in the app</button>`
         + (last ? `<hr><button role="menuitem" data-add="next">Another fₑ electrons cut, 1 s later</button>` : "")
@@ -1860,7 +1971,7 @@
       if (!b) return;
       shut();
       const V = W.vdf, k = b.dataset.add;
-      if (k === "e") W.addCut(addTime());
+      if (k === "e" || k === "i") W.addCut(addTime(), k);
       else if (k === "next") W.addCut(V.cuts[V.cuts.length - 1].t + 1);
       else if (k === "crescent") W.crescent();
       else if (k === "clear") { V.cuts = []; renderCuts(); relayout(); }
@@ -1875,12 +1986,13 @@
       }
       return { frame: V.frame, lmn: f && L.on ? [f.l, f.m, f.n] : null, gsm, records: V.records, subtract: V.subtract, vmax: V.vmax, sigma: V.sigma };
     };
+    const SPN = (c) => (c.sp === "i" ? "fᵢ ions" : "fₑ electrons");
     function renderCuts() {
       const V = W.vdf;
       $(".vd-empty", el).hidden = V.cuts.length > 0;
-      $(".fc-chips", el).innerHTML = V.cuts.map((c, i) => `<span class="fc-chip" title="fₑ electrons at ${clock(c.t, true)} — edit in its column, drag its line, or × there to remove"><i style="background:${c.color}">${i + 1}</i>e⁻</span>`).join("");
+      $(".fc-chips", el).innerHTML = V.cuts.map((c, i) => `<span class="fc-chip" title="${SPN(c)} at ${clock(c.t, true)} — edit in its column, drag its line, or × there to remove"><i style="background:${c.color}">${i + 1}</i>${c.sp === "i" ? "i⁺" : "e⁻"}</span>`).join("");
       cols.innerHTML = V.cuts.map((c, i) => `<div class="vd-col" data-id="${c.id}">
-          <div class="vd-head"><span class="vd-n" style="background:${c.color}" title="Cut ${i + 1}: its line on the figure is this color">${i + 1}</span><b class="vd-title">fₑ electrons</b>
+          <div class="vd-head"><span class="vd-n" style="background:${c.color}" title="Cut ${i + 1}: its line on the figure is this color">${i + 1}</span><b class="vd-title">${SPN(c)}</b>
             <input class="vd-time" value="${clock(c.t, true)}" spellcheck="false" aria-label="Cut ${i + 1}'s time" title="This cut's time — click, type HH:mm:ss.fff and press Return" style="--c:${c.color}">
             <button class="vd-step" data-step="-1" aria-label="One record earlier" title="One record earlier">‹</button><button class="vd-step" data-step="1" aria-label="One record later" title="One record later">›</button><button class="vd-x" aria-label="Remove this cut" title="Remove this cut">×</button></div>
           <p class="vd-rec">—</p><p class="vd-note"></p><canvas class="vd-cv" aria-label="Cut ${i + 1}: three plane cuts of the electron distribution"></canvas><p class="vd-msg" hidden></p></div>`).join("");
@@ -1891,18 +2003,18 @@
     function drawCut(c) {
       const box = $(`.vd-col[data-id="${c.id}"]`, cols);
       if (!box) return;
-      const V = W.vdf.data, cv = $(".vd-cv", box), msg = $(".vd-msg", box), timeIn = $(".vd-time", box);
+      const V = W.vdf.data && W.vdf.data[c.sp || "e"], cv = $(".vd-cv", box), msg = $(".vd-msg", box), timeIn = $(".vd-time", box), ion = c.sp === "i";
       if (document.activeElement !== timeIn) timeIn.value = clock(c.t, true);
-      const out = V ? cutFPI(V, c.t, vdfOpts()) : null;
+      const o = vdfOpts(), out = V ? cutFPI(V, c.t, ion ? Object.assign({}, o, { vmax: W.vdf.vmaxI || 1500, sigma: 0 }) : o) : null;
       cv.hidden = !out; msg.hidden = !!out;
-      $(".vd-title", box).textContent = out ? `fₑ electrons · ${out.tag}` : "fₑ electrons";
+      $(".vd-title", box).textContent = out ? `${SPN(c)} · ${out.tag}` : SPN(c);
       $(".vd-rec", box).textContent = out ? `record ${new Date(T0 + out.start * 1000).toISOString().slice(0, 10)}  ${clock(out.start, true)}–${clock(out.end, true).slice(6)} UT` : "—";
       $(".vd-note", box).textContent = out ? out.note : "";
       if (!out && LIVE && V) {                              // live: fetch the distributions around the cut, then draw
         if (!V.covers(c.t)) {
-          msg.textContent = "fetching electron distributions from CDAWeb…";
+          msg.textContent = `fetching ${ion ? "ion" : "electron"} distributions from CDAWeb…`;
           V.ensure(c.t).then(() => drawCut(c), () => { msg.textContent = "The distributions could not be fetched."; });
-        } else msg.textContent = "No FPI-DES burst distribution at this time. Burst data come in segments: drag the cut's line into one (the green bar above the figure), or type a time in it.";
+        } else msg.textContent = `No FPI-${ion ? "DIS" : "DES"} burst distribution at this time.` + " Burst data come in segments: drag the cut's line into one (the green bar above the figure), or type a time in it.";
         return;
       }
       if (!out) {
@@ -1916,7 +2028,13 @@
       const ctx = cv.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
-      out.slices.forEach((s, k) => drawSlice(ctx, 0, k * 216, w, 216, s, W.vdf.zlo, W.vdf.zhi, W.vdf.contours));
+      let zlo = W.vdf.zlo, zhi = W.vdf.zhi;
+      if (ion) {
+        let mx = -Infinity;
+        for (const sl of out.slices) for (const f of sl.f) if (f > 0 && isFinite(f)) mx = Math.max(mx, Math.log10(f));
+        if (isFinite(mx)) { zhi = Math.ceil(mx); zlo = zhi - 6; }
+      }
+      out.slices.forEach((s, k) => drawSlice(ctx, 0, k * 216, w, 216, s, zlo, zhi, W.vdf.contours));
     }
     cols.addEventListener("click", (e) => {
       const b = e.target.closest(".vd-step, .vd-x"), col = e.target.closest(".vd-col");
@@ -1924,7 +2042,7 @@
       const c = W.vdf.cuts.find(x => x.id === +col.dataset.id);
       if (!c) return;
       if (b.classList.contains("vd-x")) { W.vdf.cuts.splice(W.vdf.cuts.indexOf(c), 1); renderCuts(); relayout(); return; }
-      moveCut(c, c.t + 0.03 * +b.dataset.step);
+      moveCut(c, c.t + (c.sp === "i" ? 0.15 : 0.03) * +b.dataset.step);
     });
     cols.addEventListener("change", (e) => {
       if (!e.target.matches(".vd-time")) return;

@@ -19,7 +19,7 @@
   const RE_KM = 6371.2, MK_EV = 86.1733, DEG = Math.PI / 180;
   // log10 keV/(cm² s sr keV) the 8-bit spectra are stored over: wide, so no flux is clipped; each window then picks
   // its own color range from the data, as Helios does (hso.js specRange)
-  const SPEC_RANGE = { dis: [0.5, 9.0], des: [1.5, 10.0] };
+  const SPEC_RANGE = { dis: [0.5, 9.0], des: [1.5, 10.0], hpca: [-1.0, 9.0], epsd: [-16.0, -2.0] };
   // FPI's fast-survey energy tables (eV), which HAPI does not serve: the same on all four probes in the demo's files
   const FPI_E = {
     dis: [11.33, 14.55, 18.69, 24.0, 30.83, 39.6, 50.87, 65.34, 83.92, 107.8, 138.46, 177.86, 228.45, 293.44, 376.92, 484.15,
@@ -173,7 +173,7 @@
 
   /** 8-bit log10 flux, 0 = no data (prepare_hso_demo.spec8). */
   function spec8(flux, n, nc, sp, zerosBlank = false) {
-    lastFlux = flux;
+    lastFlux = flux; lastStore = SPEC_RANGE[sp];
     const [lo, hi] = SPEC_RANGE[sp], out = new Uint8Array(n * nc);
     for (let i = 0; i < n * nc; i++) {
       const f = flux[i];
@@ -189,10 +189,11 @@
     const out = { cols: {} };
     for (const [k, [a, c]] of Object.entries(fields)) { out[k] = a; out.cols[k] = c; }
     if (lastFlux && out.spec && lastFlux.length === out.spec.length) out.specLog = Float32Array.from(lastFlux, f => (f > 0 && isFinite(f) ? Math.log10(f) : NaN));
-    lastFlux = null;
+    if (out.spec && lastStore) out.store = lastStore;            // the 8-bit scale, for the figure to read it back
+    lastFlux = null; lastStore = null;
     return out;
   }
-  let lastFlux = null;
+  let lastFlux = null, lastStore = null;
   /** J = e nₑ (Vᵢ − Vₑ) on the electrons' times, µA/m², none across gaps in the ions (prepare_hso_demo.current). */
   function current(ti, vi, te, ne, ve) {
     const n = te.length, out = new Float32Array(n * 3).fill(NaN);
@@ -233,9 +234,19 @@
   // file); HAPI does not serve the variable.
   const CDA = "https://cdaweb.gsfc.nasa.gov/pub/data/mms";
   /** A CDF read by byte range: zVariables by name, their records as numbers (TT2000 Epoch as UTC ms). */
-  function cdfFile(url) {
+  function cdfFile(url, whole = false) {
     const CH = 65536, chunks = new Map();
+    let all = null;
     const chunk = (k) => {
+      if (whole) {
+        all = all || slot(async () => {
+          const r = await get(url, undefined, 120000);
+          if (!r.ok) throw new Error(`CDF ${r.status}`);
+          const b = new Uint8Array(await r.arrayBuffer()); bytes += b.length; emit();
+          return b;
+        }, true);
+        return all.then(b => b.subarray(k * CH, (k + 1) * CH));
+      }
       if (!chunks.has(k)) chunks.set(k, slot(async () => {
         const r = await get(url, { headers: { Range: `bytes=${k * CH}-${(k + 1) * CH - 1}` } }, 30000);
         if (!(r.status === 206 || r.status === 200)) throw new Error(`CDF ${r.status}`);
@@ -300,7 +311,7 @@
       await walk(V.vxr);
       return { data: out, elems: V.elems, n };
     }
-    return { variable };
+    return { variable, names: async () => Object.keys((await head()).vars) };
   }
   /** TT2000 (ns from J2000 TT) → UTC ms: TT − 32.184 s − the leap seconds then in force. */
   function tt2000(ns) {
@@ -1188,12 +1199,13 @@
     return [S, out.buffer];
   }
 
-  // ───────────────────────── FPI-DES burst distributions, on demand ─────────────────────────
-  const DIST_LO = -35, DIST_HI = -23;                        // log10 s³/cm⁶ for the 8-bit phase-space densities
+  // ───────────────────────── FPI burst distributions (DES and DIS), on demand ─────────────────────────
+  // log10 s³/cm⁶ the 8-bit phase-space densities are stored over, per species; each record's accumulation; the span fetched
+  const DIST = { des: { lo: -35, hi: -23, dt: 0.03, pad: 1 }, dis: { lo: -31, hi: -17, dt: 0.15, pad: 3 } };
   /** HAPI's binary format: each record an ASCII time (its length found from the first 'Z'), then little-endian doubles. */
   async function hapiBinary(id, params, a, b, nd) {
     const buf = await slot(async () => {
-      const r = await get(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}&format=binary`, undefined, 20000);
+      const r = await get(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}&format=binary`, undefined, 90000);   // CDAWeb can take a minute to cut a fresh distribution file
       if (r.status === 404) return null;
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
       return r.arrayBuffer();
@@ -1215,19 +1227,19 @@
   /** A probe's distributions as hso.js reads them (the demo's vdf-mmsN.bin layout), growing a block at a time:
    *  ensure(t) fetches the records within a second of t, with B (FGM, DMPA) and the electron bulk velocity (DBCS) at
    *  each, and the DBCS → GSE rotation from the probe's own MEC attitude, as Helios takes it. */
-  function vdfStore(n) {
-    if (vdfStores[n]) return vdfStores[n];
-    const sc = `mms${n}`, S = vdfStores[n] = {
+  function vdfStore(n, sp = "des") {
+    if (vdfStores[`${n}${sp}`]) return vdfStores[`${n}${sp}`];
+    const sc = `mms${n}`, P = DIST[sp], S = vdfStores[`${n}${sp}`] = {
       n, t: [], E: new Float32Array(0), PHI: new Float32Array(0), B: new Float32Array(0), V: new Float32Array(0), Q: new Float32Array(0),
-      D: new Uint8Array(0), lo: DIST_LO, hi: DIST_HI, dbcsToGSE: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], spans: [], pending: null, live: true,
+      D: new Uint8Array(0), lo: P.lo, hi: P.hi, dt: P.dt, sp, dbcsToGSE: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], spans: [], pending: null, live: true,
       covers(t) { return this.spans.some(([a, b]) => t >= a && t <= b); },
       ensure(t) {
         if (this.covers(t)) return Promise.resolve(true);
         if (this.pending) return this.pending.then(() => this.ensure(t));
-        const a = T0 + (t - 1) * 1000, b = T0 + (t + 1) * 1000;
-        this.pending = track(`MMS${n} electron distributions ${new Date(T0 + t * 1000).toISOString().slice(11, 19)}`, Promise.all([
-          hapiBinary(`MMS${n}_FPI_BRST_L2_DES-DIST`, [`${sc}_des_dist_brst`, `${sc}_des_phi_brst`, `${sc}_des_energy_brst`], a, b, 16384 + 64),
-          hapi(`MMS${n}_FPI_BRST_L2_DES-MOMS`, [`${sc}_des_bulkv_dbcs_brst`], a - 100, b + 100, true),
+        const a = T0 + (t - P.pad) * 1000, b = T0 + (t + P.pad) * 1000;
+        this.pending = track(`MMS${n} ${sp === "dis" ? "ion" : "electron"} distributions ${new Date(T0 + t * 1000).toISOString().slice(11, 19)}`, Promise.all([
+          hapiBinary(`MMS${n}_FPI_BRST_L2_${sp.toUpperCase()}-DIST`, [`${sc}_${sp}_dist_brst`, `${sc}_${sp}_phi_brst`, `${sc}_${sp}_energy_brst`], a, b, 16384 + 64),
+          hapi(`MMS${n}_FPI_BRST_L2_${sp.toUpperCase()}-MOMS`, [`${sc}_${sp}_bulkv_dbcs_brst`], a - 100, b + 100, true),
           hapi(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_dmpa_brst_l2`], a - 100, b + 100, true),
           this.spans.length ? null : hapi(`MMS${n}_MEC_SRVY_L2_EPHT89D`, [`${sc}_mec_quat_eci_to_dbcs`, `${sc}_mec_quat_eci_to_gse`], a - 60e3, b + 60e3, true),
         ])).then(([dist, mom, fgm, mecq]) => {
@@ -1237,12 +1249,12 @@
             const G = flip ? T_(G0) : G0, Dm = flip ? T_(q(0)) : q(0), M = mul(G, T_(Dm));
             this.dbcsToGSE = [M.slice(0, 3), M.slice(3, 6), M.slice(6, 9)];
           }
-          this.spans.push([t - 1, t + 1]);
+          this.spans.push([t - P.pad, t + P.pad]);
           const have = new Set(this.t.map(x => x.toFixed(4))), add = dist.filter(d => !have.has(d.t.toFixed(4)));
           if (!add.length) return this.covers(t);
           const all = this.t.map((x, i) => ({ t: x, i, old: true })).concat(add.map((d, i) => ({ t: d.t, i, old: false }))).sort((p, q_) => p.t - q_.t);
           const N = all.length, E = new Float32Array(N * 32), PHI = new Float32Array(N * 32), B = new Float32Array(N * 3), V = new Float32Array(N * 3), D = new Uint8Array(N * 16384);
-          const span = DIST_HI - DIST_LO;
+          const span = P.hi - P.lo;
           all.forEach((r, k) => {
             if (r.old) {
               E.set(this.E.subarray(r.i * 32, r.i * 32 + 32), k * 32); PHI.set(this.PHI.subarray(r.i * 32, r.i * 32 + 32), k * 32);
@@ -1253,13 +1265,13 @@
             const d = add[r.i].v;
             for (let j = 0; j < 16384; j++) {
               const f = d[j];
-              if (f > 0 && f < 1e-10) D[k * 16384 + j] = Math.max(1, Math.min(255, Math.round(1 + (Math.log10(f) - DIST_LO) / span * 254)));
+              if (f > 0 && f < 1e-10) D[k * 16384 + j] = Math.max(1, Math.min(255, Math.round(1 + (Math.log10(f) - P.lo) / span * 254)));
             }
             PHI.set(d.subarray(16384, 16416), k * 32); E.set(d.subarray(16416, 16448), k * 32);
             const vi = nearest(mom.t, r.t);                   // the moments share the distributions' records
-            for (let c = 0; c < 3; c++) V[k * 3 + c] = mom.n && Math.abs(mom.t[vi] - r.t) < 0.016 ? mom.cols[c][vi] : NaN;
-            const s3 = [0, 0, 0]; let m = 0;                    // B over the record's 30 ms
-            for (let j = 0; j < fgm.n; j++) if (fgm.t[j] >= r.t && fgm.t[j] < r.t + 0.03) { for (let c = 0; c < 3; c++) s3[c] += fgm.cols[c][j]; m++; }
+            for (let c = 0; c < 3; c++) V[k * 3 + c] = mom.n && Math.abs(mom.t[vi] - r.t) < P.dt / 2 ? mom.cols[c][vi] : NaN;
+            const s3 = [0, 0, 0]; let m = 0;                    // B over the record's accumulation
+            for (let j = 0; j < fgm.n; j++) if (fgm.t[j] >= r.t && fgm.t[j] < r.t + P.dt) { for (let c = 0; c < 3; c++) s3[c] += fgm.cols[c][j]; m++; }
             for (let c = 0; c < 3; c++) B[k * 3 + c] = m ? s3[c] / m : NaN;
           });
           Object.assign(this, { t: all.map(r => r.t), E, PHI, B, V, Q: new Float32Array(N), D });
@@ -1271,6 +1283,123 @@
     return S;
   }
 
+  // ───────────────────────── HPCA (Helios's HPCAFullSpan / HPCASpinAccumulator) ─────────────────────────
+  const HPCA_E = [1.355, 1.5718, 1.8428, 2.2222, 2.6016, 3.0894, 3.6314, 4.2818, 5.0406, 5.962, 6.9918, 8.2384, 9.756, 11.49, 13.55, 15.989,
+    18.862, 22.276, 26.233, 30.948, 36.531, 43.089, 50.785, 59.945, 70.677, 83.414, 98.373, 116.04, 136.85, 161.46, 190.46, 224.66, 264.98,
+    312.57, 368.72, 434.95, 513.06, 605.2, 713.87, 842.05, 993.32, 1171.7, 1382.1, 1630.3, 1923.1, 2268.4, 2675.8, 3156.3, 3723.1, 4391.7,
+    5180.4, 6110.7, 7208.1, 8502.6, 10030.0, 11831.0, 13955.0, 16461.0, 19418.0, 22905.0, 27018.0, 31870.0, 37593.0];   // eV/q (HAPI bins)
+  const HPCA_SP = [["hpH", "hplus"], ["hpHepp", "heplusplus"], ["hpHep", "heplus"], ["hpO", "oplus"]];
+  const HPCA_HALF = 3600;                                    // the spectra span ±1 h about the moment (Helios caps them at 2.5 h)
+  const CDAS = "https://cdaweb.gsfc.nasa.gov/WS/cdasr/1/dataviews/sp_phys/datasets";
+  const cdasStamp = (ms) => iso(ms).replace(/[-:]/g, "").replace(/\.\d+/, "");
+  /** One CDAS subset as a CDF (its variables gzip-compressed), read whole: the survey ION product is full resolution
+   *  ([16 anodes × 63 energies] per 0.625-s sweep), 64 MB per species-hour as HAPI CSV, a few MB this way. */
+  async function cdas(id, vars, a, b) {
+    const r = await slot(() => get(`${CDAS}/${id}/data/${cdasStamp(a)},${cdasStamp(b)}/${vars.join(",")}?format=cdf`, { headers: { Accept: "application/json" } }, 120000), true);
+    if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
+    const j = await r.json(), f = j.FileDescription && j.FileDescription[0];
+    return f ? cdfFile(f.Name, true) : null;
+  }
+  /** The sky-mean differential energy flux per half-spin, eV/(cm² s sr eV): per sweep the mean over the anodes with a
+   *  value (negatives as 0), × E; the mean of those over the sweeps of a half-spin, which closes where start_azimuth = 0.
+   *  A column is stamped with its half-spin's first sweep; only half-spins starting in [a, b) are kept (chunks never
+   *  overlap or leave a seam). */
+  function hpcaSpin(ep, az, flux, a, b) {
+    const nE = 63, out = { t: [], f: [] };
+    let t0 = null, acc = new Float64Array(nE), accN = new Int32Array(nE), rows = 0;
+    const close = () => {
+      if (t0 !== null && rows > 0 && t0 >= a && t0 < b) out.f.push(Array.from(acc, (x, e) => (accN[e] ? x / accN[e] : NaN))), out.t.push(t0);
+      acc = new Float64Array(nE); accN = new Int32Array(nE); rows = 0; t0 = null;
+    };
+    for (let r = 0; r < ep.n; r++) {
+      const t = ep.data[r];
+      if (!isFinite(t)) continue;
+      if (az.data[r] === 0 || t0 === null) { close(); t0 = t; }
+      for (let e = 0; e < nE; e++) {
+        let sum = 0, cnt = 0;
+        for (let an = 0; an < 16; an++) { const v = flux.data[(r * 16 + an) * nE + e]; if (isFinite(v) && Math.abs(v) < 1e20) { sum += Math.max(v, 0); cnt++; } }
+        if (cnt) { acc[e] += sum / cnt * HPCA_E[e]; accN[e]++; }
+      }
+      rows++;
+    }
+    close();
+    return out;
+  }
+  /** H⁺, He⁺⁺, He⁺ and O⁺ spectrograms over ±1 h of the moment: one CDAS request per UTC hour, padded 80 s each side
+   *  so every half-spin is whole. */
+  async function hpcaSpectra(n) {
+    const sc = `mms${n}`, h0 = Math.floor((AT - HPCA_HALF * 1000) / 3600e3) * 3600e3, h1 = Math.ceil((AT + HPCA_HALF * 1000) / 3600e3) * 3600e3, parts = [];
+    for (let h = h0; h < h1; h += 3600e3) parts.push(h);
+    const vars = [`${sc}_hpca_start_azimuth`, ...HPCA_SP.map(([, v]) => `${sc}_hpca_${v}_flux`)];
+    const got = await Promise.all(parts.map(async (h) => {
+      const cdf = await cdas(`MMS${n}_HPCA_SRVY_L2_ION`, vars, h - 80e3, h + 3600e3 + 80e3).catch((e) => { console.warn(e); return null; });
+      if (!cdf) return null;
+      const [ep, az, ...fl] = await Promise.all([cdf.variable("Epoch"), cdf.variable(vars[0]), ...vars.slice(1).map(v => cdf.variable(v))]);
+      return fl.map(f => hpcaSpin(ep, az, f, h, h + 3600e3));
+    }));
+    const sets = {};
+    HPCA_SP.forEach(([key], k) => {
+      const t = [], f = [];
+      for (const g of got) if (g) { t.push(...g[k].t); f.push(...g[k].f); }
+      const m = t.length, flux = new Float32Array(m * 63);
+      f.forEach((row, i) => row.forEach((v, e) => { flux[i * 63 + e] = v > 0 ? v : NaN; }));
+      sets[key] = set({ t: [Float32Array.from(t, sec), 1], spec: [spec8(flux, m, 63, "hpca"), 63], etab: [Float32Array.from(HPCA_E), 63], eidx: [new Uint8Array(m), 1] });
+    });
+    return { sets, empty: !got.some(Boolean) };
+  }
+  /** HPCA's survey moments (MOMENTS): each species' density, bulk velocity (GSE) and scalar temperature. */
+  async function hpcaMoments(n) {
+    const sc = `mms${n}`, [a, b] = window_, order = ["hplus", "heplus", "heplusplus", "oplus"], P = [];
+    for (const v of order) P.push(`${sc}_hpca_${v}_number_density`, `${sc}_hpca_${v}_ion_bulk_velocity`, `${sc}_hpca_${v}_scalar_temperature`);
+    const r = await hapi(`MMS${n}_HPCA_SRVY_L2_MOMENTS`, P, a, b, true);
+    const pick = (j) => fillNaN(r.cols[j], 1e30), N = new Float32Array(r.n * 4), T = new Float32Array(r.n * 4), out = { t: [f32(r.t), 1] };
+    HPCA_SP.forEach(([key, v], k) => {
+      const j = order.indexOf(v) * 5, nn = pick(j), tt = pick(j + 4);          // n, V[3], T per species, in HAPI's order
+      for (let i = 0; i < r.n; i++) { N[i * 4 + k] = nn[i] >= 0 ? nn[i] : NaN; T[i * 4 + k] = tt[i] >= 0 ? tt[i] : NaN; }
+      out[`v${key.slice(2)}`] = [stack(r.cols, j + 1, 3).map(x => (Math.abs(x) < 1e30 ? x : NaN)), 3];
+    });
+    out.n = [N, 4]; out.T = [T, 4];
+    return { sets: { hpm: set(out) }, empty: !r.n };
+  }
+
+  // ───────────────────────── EDP: the electric field and the spacecraft potential; DSP: E-field spectra ─────────────────────────
+  async function edp(n) {
+    const sc = `mms${n}`, [a, b] = window_, ba = AT - 60e3, bb = AT + 60e3;
+    // CDAWeb's REST subsets as CDF: the fast survey's 32 S/s over the four hours is ~9 MB this way, ~40 MB as HAPI CSV
+    const read = async (id, ep, vars, a_, b_) => {
+      const cdf = await cdas(id, vars, a_, b_).catch((e) => { console.warn(e); return null; });
+      if (!cdf) return null;
+      const got = await Promise.all([ep, ...vars].map(v => cdf.variable(v).catch(() => null)));
+      return got[0] && got[1] ? got : null;
+    };
+    const [fast, pot, brst] = await Promise.all([
+      read(`MMS${n}_EDP_FAST_L2_DCE`, `${sc}_edp_epoch_fast_l2`, [`${sc}_edp_dce_gse_fast_l2`, `${sc}_edp_quality_fast_l2`], a, b),
+      read(`MMS${n}_EDP_FAST_L2_SCPOT`, `${sc}_edp_epoch_fast_l2`, [`${sc}_edp_scpot_fast_l2`], a, b),
+      read(`MMS${n}_EDP_BRST_L2_DCE`, `${sc}_edp_epoch_brst_l2`, [`${sc}_edp_dce_gse_brst_l2`], ba, bb),
+    ]);
+    const secs = (ep) => Float64Array.from(ep.data, ms => sec(ms));
+    const comp = (v, c, q) => Float64Array.from({ length: v.n }, (_, i) => { const x = v.data[i * v.elems + c]; return Math.abs(x) < 1e30 && !(q && q.data[i] === 0) ? x : NaN; });
+    const sets = {};
+    if (fast) {                                              // averaged to 1 s, as the survey B is; quality 0 (bad) dropped, as pyspedas does
+      const [ep, e, q] = fast, F = boxcar(secs(ep), [0, 1, 2].map(c => comp(e, c, q)), 1.0);
+      sets.efi = set({ t: [f32(F.t), 1], e: [stack(F.cols.map(f32), 0, 3), 3] });
+    }
+    if (pot) { const [ep, v] = pot, P = boxcar(secs(ep), [comp(v, 0)], 1.0); sets.pot = set({ t: [f32(P.t), 1], v: [f32(P.cols[0]), 1] }); }
+    let burst = null;
+    if (brst) { const [ep, e] = brst; burst = { efi: set({ t: [f32(secs(ep)), 1], e: [stack([0, 1, 2].map(c => comp(e, c)), 0, 3), 3] }) }; }
+    return { sets, burst, empty: !fast };
+  }
+  /** DSP's fast-survey E-field power spectral density (omni) over frequency. */
+  async function dsp(n) {
+    const sc = `mms${n}`, [a, b] = window_;
+    const [r, f] = await Promise.all([hapi(`MMS${n}_DSP_FAST_L2_EPSD`, [`${sc}_dsp_epsd_omni`], a, b, true), hapiBins(`MMS${n}_DSP_FAST_L2_EPSD`, `${sc}_dsp_epsd_omni`, true)]);
+    const nf = r.cols.length, flux = stack(r.cols, 0, nf).map(x => (x > 0 ? x : NaN));
+    const freq = (f || []).slice(0, nf).map(x => Math.max(x, 1));
+    return { sets: { epsd: set({ t: [f32(r.t), 1], spec: [spec8(flux, r.n, nf, "epsd"), nf], etab: [Float32Array.from(freq), nf], eidx: [new Uint8Array(r.n), 1] }) }, empty: !r.n };
+  }
+  const LAZY = { hpcaSpec: ["HPCA spectra (CDAWeb, ±1 h)", hpcaSpectra], hpcaMom: ["HPCA moments", hpcaMoments], edp: ["EDP electric field", edp], dsp: ["DSP E-field spectra", dsp] };
+  const lazyMemo = {};
+
   // ───────────────────────── the source hso.js reads ─────────────────────────
   const craftCache = {};
   window.HSO_SOURCE = {
@@ -1280,7 +1409,9 @@
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
     mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))),
     scene,
-    vdf: (n) => vdfStore(n),
+    vdf: (n, sp) => vdfStore(n, sp),
+    /** An MMS probe's on-demand group (HPCA, EDP, DSP): { sets, burst?, empty }. */
+    lazy: (n, g) => (lazyMemo[`${n}|${g}`] = lazyMemo[`${n}|${g}`] || track(`MMS${n} ${LAZY[g][0]}`, LAZY[g][1](n)).catch((e) => { console.warn(e); return { sets: {}, empty: true }; })),
     sky: skyFrame,
     burstHalf: BURST_HALF,
     tasks: () => [...tasks],
