@@ -219,7 +219,7 @@
     const root = o.root, cv = root.querySelector("canvas"), S = o.S;
     const card = root.querySelector(".hso-card"), toast = root.querySelector(".hso-toast"), swBox = root.querySelector(".hso-sw");
     const winds = Winds(o.omni);
-    const show = { topo: false, mp: true, bs: true };
+    const show = { topo: false, mp: true, bs: true, lines: true, ref: false };
     const view = { az: 0, tilt: 0 };
     let time = S.epoch, hover = null, rings = [], formDots = [], P = null, anim = null;
 
@@ -939,7 +939,7 @@
       const ms = o.feet.epoch(key * 60), F = FieldLines.makeField(ms, frameAt("geo", key * 60), S.kp ?? 2), craft = [];
       for (const c of feetSeeds(key * 60)) {
         if (!c.p || !(len3(c.p) > 1.05) || !inside(c.p)) continue;
-        craft.push(Object.assign({}, c, { line: FieldLines.trace(F, c.p) }));
+        craft.push(Object.assign({}, c, { line: FieldLines.trace(F, c.p, true) }));
       }
       return (feetNow = { key, craft, model: F.model });
     }
@@ -958,12 +958,17 @@
         }
         if (seeds.length) jobs.push({ key: tk, ms: o.feet.epoch(tk), geo: frameAt("geo", tk), kp: S.kp ?? 2, seeds });
       }
-      if (!jobs.length) return;
-      if (!feetWorker) {
+      if (jobs.length) post(jobs);
+    }
+    function post(jobs) {
+      if (feetWorker === null) {
         try {
           feetWorker = new Worker(o.feet.worker);
           feetWorker.onmessage = (ev) => {
-            for (const [tk, r] of Object.entries(ev.data.results)) for (const [id, line] of Object.entries(r.lines)) trackCache.set(`${id}|${tk}`, line);
+            for (const [tk, r] of Object.entries(ev.data.results)) {
+              if (r.ref) { refCache.set(tk, r); continue; }
+              for (const [id, line] of Object.entries(r.lines)) trackCache.set(`${id}|${tk}`, line);
+            }
             request();
           };
         } catch (e) { feetWorker = false; }
@@ -1121,6 +1126,82 @@
     };
     const skyFrames = new Map(), SKY_BINS = 24;
     let skyShown = 0;
+    // ── the field lines in the Magnetosphere view (live), as Helios's FieldLineHeroLayer draws them: the line through
+    //    each mapped craft in its color over a dark casing (solid closed, dashed open, dash-dot a winding line, faint
+    //    dots past the drawn magnetopause, where the model describes nothing), and the optional noon–midnight reference
+    //    family in faint white (traced in the worker per two-minute bucket). The part behind the Earth's disc is not drawn. ──
+    const REF_BUCKET = 120, WIND_DASH = [7, 3, 1.5, 3];
+    const refCache = new Map();                            // `r${bucket}` → { ref, model }, or "pending"
+    function refFamily() {
+      const b = Math.floor(time / REF_BUCKET), k = `r${b}`;
+      if (!refCache.has(k)) {
+        refCache.set(k, "pending");
+        if (refCache.size > 48) refCache.delete(refCache.keys().next().value);
+        const tb = (b + 0.5) * REF_BUCKET;
+        post([{ key: k, ms: o.feet.epoch(tb), geo: frameAt("geo", tb), kp: S.kp ?? 2, ref: true }]);
+      }
+      for (const d of [0, -1, 1, -2, 2]) { const c = refCache.get(`r${b + d}`); if (c && c !== "pending") return c; }
+      return null;                                         // the nearest bucket traced stands in until this one lands
+    }
+    /** Whether each point is inside the magnetopause drawn now, kept on the line until the boundary changes. */
+    function maskOf(l) {
+      const g = geometry(time);
+      if (l._mk !== g.B.key) { const tails = mpTails(g.B); l._mask = l.line.map(p => insideMP(p, g.B, tails)); l._mk = g.B.key; }
+      return l._mask;
+    }
+    /** The part of a polyline on one side of the magnetopause (want), one subpath per run so the dashes run on; a
+     *  segment takes its later point's side; lifted behind the Earth. */
+    function linePath(ctx, pts, mask, want) {
+      ctx.beginPath();
+      let last = null, pen = null;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        if (P.hidden(p)) { last = null; pen = null; continue; }
+        const q = P.pt(p);
+        if (last) {
+          if (mask[i] === want) { if (pen !== want) ctx.moveTo(last[0], last[1]); ctx.lineTo(q[0], q[1]); }
+          pen = mask[i];
+        }
+        last = q;
+      }
+    }
+    function drawLines(ctx) {
+      if (show.ref) {
+        const fam = refFamily();
+        if (fam) for (const r of fam.ref) {
+          if (!(r.line.length > 1)) continue;
+          const m = maskOf(r), odd = r.winds || r.topology === "incomplete";
+          linePath(ctx, r.line, m, true);
+          stroke(ctx, `rgba(255,255,255,${r.topology === "closed" ? 0.30 : 0.24})`, 0.7, odd ? WIND_DASH : r.topology === "closed" ? [] : [5, 4], "round");
+          linePath(ctx, r.line, m, false);
+          stroke(ctx, "rgba(255,255,255,0.10)", 0.7, [1.5, 3], "round");
+        }
+      }
+      if (!show.lines) return;
+      const list = feetAt(time).craft.filter(c => c.line.line && c.line.line.length > 1).sort((a, b) => (a.id === "mms") - (b.id === "mms"));
+      for (const c of list) {
+        const l = c.line, m = maskOf(l), odd = l.winds || l.topology === "incomplete";
+        linePath(ctx, l.line, m, true);
+        stroke(ctx, rgba(DS.well, 0.65), 3, [], "round");
+        stroke(ctx, rgba(c.color, odd ? 0.7 : 0.9), 1.3, odd ? WIND_DASH : l.topology === "closed" ? [] : [6, 4], "round");
+        linePath(ctx, l.line, m, false);
+        stroke(ctx, rgba(c.color, 0.32), 1, [1.5, 3.5], "round");
+      }
+    }
+    /** The live page's key under the View menu's lines, on the Magnetosphere rung only. */
+    function lineKey() {
+      const el = root.querySelector("#scene-key");
+      if (!el || !o.feet) return;
+      const on = rung === "mag" && (show.lines || show.ref) && !!window.FieldLines;
+      el.hidden = !on;
+      if (!on) return;
+      const t = `Kp ${(S.kp ?? 2).toFixed(1)}`;
+      if (el.dataset.kp !== t) {
+        el.dataset.kp = t;
+        el.innerHTML = `<i class="k ln"></i>closed<i class="k ln dash"></i>open<i class="k ln dot"></i>past the magnetopause · IGRF-14 + T89, ${t}`;
+      }
+    }
+
     function drawSky(ctx) {
       const Mg = frameAt("geo", time), lift = 1 + 110 / 6371.2;
       const toScreen = (a, b) => {                          // geographic (deg) at 110 km → the view, or null behind the Earth
@@ -1352,6 +1433,7 @@
       const top = root.querySelector(".hso-head") ? Math.min(92, root.querySelector(".hso-head").offsetHeight + 14) : 0;
       P = project(W, H, top);
       geometry(time);
+      lineKey();
       const B = G.B;
       rings = [];
 
@@ -1447,6 +1529,7 @@
       }
       for (const th of S.themis) { path(ctx, th.track); stroke(ctx, "rgba(255,255,255,0.22)", 0.9, [3, 3]); }
       drawEarth(ctx, dpr);
+      if (o.feet && window.FieldLines) drawLines(ctx);
 
       const fl = fleetNow(), thNow = S.themis.map(x => P.pt(posAt(x, time)));
       const mmsMarks = drawMMS(ctx, fl.map(x => x.q).concat(thNow));

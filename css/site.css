@@ -535,6 +535,9 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .k:first-child { margin-left: 0; }
 .k.closed { border-color: rgb(150, 200, 255); }
 .k.open { border-color: rgb(190, 160, 255); }
+.k.ln { border-color: #d6d9e2; }
+.k.dash { border-top-style: dashed; }
+.k.dot { border-top-style: dotted; }
 .scene-key { position: absolute; left: 12px; bottom: 12px; margin: 0; padding: 5px 9px; border-radius: 6px; background: rgba(8, 10, 16, 0.6); pointer-events: none; }
 .scene-key[hidden] { display: none; }
 .panel-loading { position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; margin: 0; background: rgba(255, 255, 255, 0.82); color: #1d1d22; font: 500 13px/1 ui-monospace, "SF Mono", Menlo, monospace; }

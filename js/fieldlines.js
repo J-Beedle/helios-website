@@ -1,4 +1,4 @@
-/* Field-line footpoints for live.html's LEO view, as Helios's HSO draws them (FieldLineOverlay, FieldLineMapping):
+/* Field lines and footpoints for live.html's LEO and Magnetosphere views, as Helios's HSO draws them (FieldLineOverlay, FieldLineMapping):
  * IGRF-14 plus T89 (Tsyganenko 1989, the paper's six Kp intervals), each line traced with an adaptive Dormand–Prince
  * 5(4) step from the craft both ways to 110 km over WGS84 (or out to 60 Rₑ), feet read in geodetic latitude.
  * A Web Worker: the page posts the seeds (GSE, Rₑ) with the GEO frame at their time; this answers with the feet.
@@ -167,6 +167,8 @@
     }
     const toGEO = (v) => [M[0] * v[0] + M[1] * v[1] + M[2] * v[2], M[3] * v[0] + M[4] * v[1] + M[5] * v[2], M[6] * v[0] + M[7] * v[1] + M[8] * v[2]];
     const gseToGSM = (v) => [v[0], Y[0] * v[0] + Y[1] * v[1] + Y[2] * v[2], Z[0] * v[0] + Z[1] * v[1] + Z[2] * v[2]];
+    const gsmToGSE = (v) => [v[0] + Y[0] * v[1] + Z[0] * v[2], Y[1] * v[1] + Z[1] * v[2], Y[2] * v[1] + Z[2] * v[2]];
+    const smToGSM = (v) => [v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c];
     const bi = new Float64Array(3), be = new Float64Array(3);
     /** The unit field direction (sign ±1) at a GSM point, or null where it is null or non-finite. */
     const dir = (r, sign) => {
@@ -182,7 +184,7 @@
     };
     const inner = (r) => { const g = toGEO(r); return (altKm - geodetic(g[0], g[1], g[2])[1]) / RE_KM; };
     const outer = (r) => Math.hypot(r[0], r[1], r[2]) - OUTER;
-    return { dir, inner, outer, toGEO, gseToGSM, tiltDeg: Math.asin(s) * 180 / Math.PI, model: L >= 0 ? `IGRF-14 + T89, Kp level ${L}` : "IGRF-14" };
+    return { dir, inner, outer, toGEO, gseToGSM, gsmToGSE, smToGSM, tiltDeg: Math.asin(s) * 180 / Math.PI, model: L >= 0 ? `IGRF-14 + T89, Kp level ${L}` : "IGRF-14" };
   }
 
   // ───────────────────────── Dormand–Prince 5(4) ─────────────────────────
@@ -253,8 +255,47 @@
     }
     return best;
   }
-  /** A craft's line: both feet (geodetic latitude, longitude, the GEO unit vector) and the topology. */
-  function trace(F, gse) {
+  // ───────────────────────── the line itself (FieldLineOverlay: thinned, loops, aroundSeed) ─────────────────────────
+  const WINDING = 3;
+  /** The local maxima of r along a polyline, a dip of at least h Rₑ between two of them. */
+  function loops(pts, h = 0.3) {
+    let n = 0, rising = true, ext = pts.length ? Math.hypot(...pts[0]) : 0;
+    for (let i = 1; i < pts.length; i++) {
+      const r = Math.hypot(...pts[i]);
+      if (rising) { if (r > ext) ext = r; else if (r < ext - h) { n++; rising = false; ext = r; } }
+      else { if (r < ext) ext = r; else if (r > ext + h) { rising = true; ext = r; } }
+    }
+    return n;
+  }
+  /** One loop either side of the seed: what the HSO draws of a winding line. */
+  function aroundSeed(pts, seed, h = 0.3) {
+    const end = (from, to, by) => {
+      let rising = true, ext = Math.hypot(...pts[seed]), last = seed;
+      for (let i = from; i !== to; i += by) {
+        const r = Math.hypot(...pts[i]);
+        last = i;
+        if (rising) { if (r > ext) ext = r; else if (r < ext - h) { rising = false; ext = r; } }
+        else { if (r < ext) ext = r; else if (r > ext + h) return i; }
+      }
+      return last;
+    };
+    return pts.slice(Math.min(end(seed - 1, -1, -1), seed), Math.max(end(seed + 1, pts.length, 1), seed) + 1);
+  }
+  function thinned(pts, keep, n = 240) {
+    if (pts.length <= n) return pts;
+    const step = Math.ceil((pts.length - 1) / (n - 1));
+    return pts.filter((p, i) => i % step === 0 || i === pts.length - 1 || i === keep);
+  }
+  /** Both legs as one GSE polyline, south foot to north (the seed kept), winding lines cut to one loop each side. */
+  function polyline(F, seed, fwd, bwd) {
+    const pts = bwd.pts.slice().reverse().concat([seed], fwd.pts), k = bwd.pts.length, n = loops(pts);
+    const kept = n >= WINDING ? aroundSeed(pts, k) : pts;
+    return { line: thinned(kept, n >= WINDING ? null : k).map(p => F.gsmToGSE(p).map(v => +v.toFixed(4))), winds: n >= WINDING };
+  }
+
+  /** A craft's line: both feet (geodetic latitude, longitude, the GEO unit vector), the topology and, with withLine,
+   *  the line in GSE. */
+  function trace(F, gse, withLine) {
     const seed = F.gseToGSM(gse);
     if (F.inner(seed) > 1e-12) return { topology: "incomplete", north: null, south: null };
     const fwd = march(F, seed, 1), bwd = march(F, seed, -1);
@@ -266,19 +307,45 @@
     const north = foot(fwd), south = foot(bwd);
     const topology = north && south ? "closed" : north && bwd.stop === "outer" ? "openNorth" : south && fwd.stop === "outer" ? "openSouth"
       : fwd.stop === "outer" && bwd.stop === "outer" ? "unknownOuter" : "incomplete";
-    return { topology, north, south };
+    const out = { topology, north, south };
+    if (withLine) Object.assign(out, polyline(F, seed, fwd, bwd));
+    return out;
   }
 
-  const api = { makeField, trace, geodetic, igrfAt, igrfGEO, t89, kpLevel };
+  /** The noon–midnight reference family (FieldLineOverlay.referenceFamily): seeds at SM latitudes 62–82° on the
+   *  110 km sphere, noon and midnight, north and south; a southern seed kept only when open (a closed one is the
+   *  same loop as a northern seed's). */
+  const REF_LATS = [62, 66, 70, 74, 78, 82];
+  function referenceFamily(F) {
+    const r0 = (1 + ALT_KM / RE_KM) * (1 + 1e-7), rIon = 1 + ALT_KM / RE_KM;
+    const Fs = Object.assign({}, F, { inner: (r) => rIon - Math.hypot(r[0], r[1], r[2]) });
+    const out = [];
+    for (const side of ["noon", "midnight"]) for (const lat of REF_LATS) for (const hemi of ["north", "south"]) {
+      const sx = side === "noon" ? 1 : -1, lam = lat * Math.PI / 180 * (hemi === "north" ? 1 : -1);
+      const seed = F.smToGSM([sx * r0 * Math.cos(lam), 0, r0 * Math.sin(lam)]);
+      const fwd = march(Fs, seed, 1), bwd = march(Fs, seed, -1);
+      const nIn = fwd.stop === "inner", sIn = bwd.stop === "inner";
+      const topology = nIn && sIn ? "closed" : nIn && bwd.stop === "outer" ? "openNorth" : sIn && fwd.stop === "outer" ? "openSouth"
+        : fwd.stop === "outer" && bwd.stop === "outer" ? "unknownOuter" : "incomplete";
+      if (hemi === "south" && topology === "closed") continue;
+      out.push(Object.assign({ side, lat, hemi, topology }, polyline(F, seed, fwd, bwd)));
+    }
+    return out;
+  }
+
+  const api = { makeField, trace, referenceFamily, geodetic, igrfAt, igrfGEO, t89, kpLevel };
   G.FieldLines = api;
 
-  // the worker: { id, jobs: [{ key, ms, geo, kp, seeds: [{ id, gse }] }] } → { id, results: { key: { craftId: line } }, tilt }
+  // the worker: { id, jobs: [{ key, ms, geo, kp, seeds: [{ id, gse }] } | { key, ms, geo, kp, ref: true }] }
+  //   → { id, results: { key: { lines: { craftId: line }, model, tiltDeg } | { ref: [line], model, tiltDeg } } }
   if (typeof importScripts === "function" && typeof window === "undefined") {
     importScripts("igrf14.js");
     self.onmessage = (ev) => {
       const { id, jobs } = ev.data, results = {};
       for (const j of jobs) {
-        const F = makeField(j.ms, j.geo, j.kp), out = {};
+        const F = makeField(j.ms, j.geo, j.kp);
+        if (j.ref) { results[j.key] = { ref: referenceFamily(F), model: F.model, tiltDeg: F.tiltDeg }; continue; }
+        const out = {};
         for (const s of j.seeds) out[s.id] = trace(F, s.gse);
         results[j.key] = { lines: out, model: F.model, tiltDeg: F.tiltDeg };
       }

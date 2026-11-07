@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
-  <link rel="stylesheet" href="css/site.css?v=36">  <!-- /chrome:meta -->
+  <link rel="stylesheet" href="css/site.css?v=37">  <!-- /chrome:meta -->
 </head>
 <body class="demo-page">
   <a class="skip" href="#main">Skip to content</a>
@@ -88,8 +88,8 @@
           <div class="live-status" id="live-status" hidden></div>
         </div>
         <div class="live-scope">
-          <p><b>Live now</b> MMS1–4 FGM and FPI moments and spectra, survey for four hours and burst within 10 minutes of the moment · FPI-DES distributions for VDF cuts, fetched around each cut · MMS MEC orbit, Kp and frames · OMNI 1-min solar wind · THEMIS A, D, E and ARTEMIS P1, P2 (FGM, MOM, ESA, EFI) · Cluster 1–4 (FGM, CIS HIA or CODIF with composition, PEACE moments and spectrogram) · the L1 monitors ACE, Wind and DSCOVR, and an OMNI window from clicking Earth · all-sky imagers that imaged that day, each with its keogram, and THEMIS's one-minute sky images laid on the globe (UCalgary) · spacecraft footpoints on the globe, traced through IGRF-14 and T89 (Tsyganenko 1989) at the moment's Kp to 110 km, with their ±1 h tracks and the cameras that see them · positions from SSCWeb · planets from JPL's approximate elements</p>
-          <p><b>Not yet</b> ion and HPCA distributions · REGO, TREx and SMILE sky images · the Sun from SDO (a plain disk here) · field lines in the Magnetosphere view</p>
+          <p><b>Live now</b> MMS1–4 FGM and FPI moments and spectra, survey for four hours and burst within 10 minutes of the moment · FPI-DES distributions for VDF cuts, fetched around each cut · MMS MEC orbit, Kp and frames · OMNI 1-min solar wind · THEMIS A, D, E and ARTEMIS P1, P2 (FGM, MOM, ESA, EFI) · Cluster 1–4 (FGM, CIS HIA or CODIF with composition, PEACE moments and spectrogram) · the L1 monitors ACE, Wind and DSCOVR, and an OMNI window from clicking Earth · all-sky imagers that imaged that day, each with its keogram, and THEMIS's one-minute sky images laid on the globe (UCalgary) · spacecraft field lines, traced through IGRF-14 and T89 (Tsyganenko 1989) at the moment's Kp: drawn in the Magnetosphere view with an optional noon–midnight reference family, and their footpoints at 110 km on the globe with ±1 h tracks and the cameras that see them · positions from SSCWeb · planets from JPL's approximate elements</p>
+          <p><b>Not yet</b> ion and HPCA distributions · REGO, TREx and SMILE sky images · the Sun from SDO (a plain disk here)</p>
           <p><b>Sources</b> CDAWeb's HAPI server and SSCWeb (NASA SPDF), read directly by your browser: no Helios server is involved. Results come from the archives' current versions and are not checked by hand.</p>
         </div>
       </div>
@@ -162,9 +162,10 @@
                   <div class="viewmenu">
                     <button class="pick view-btn" id="view-btn" aria-haspopup="true" aria-expanded="false">View<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
                     <div class="pick-menu view-menu" id="view-menu" hidden>
-                      <p class="vm-h">Field lines · demo only</p>
-                      <label class="vm-row"><input type="checkbox" data-view="topo"><span>Field topology<small>IGRF + T89, Kp 2</small></span></label>
-                      <p class="vm-key"><i class="k closed"></i>closed<i class="k open"></i>open</p>
+                      <p class="vm-h">Field lines · IGRF-14 + T89</p>
+                      <label class="vm-row"><input type="checkbox" data-view="lines" checked><span>Through each spacecraft<small>Craft inside the magnetopause, at the moment's Kp</small></span></label>
+                      <label class="vm-row"><input type="checkbox" data-view="ref"><span>Reference family<small>Noon–midnight, 62–82° magnetic latitude</small></span></label>
+                      <p class="vm-key"><i class="k ln"></i>closed<i class="k ln dash"></i>open<i class="k ln dot"></i>outside</p>
                       <p class="vm-h">Boundaries</p>
                       <label class="vm-row"><input type="checkbox" data-view="mp" checked><span>Magnetopause<small>Lin et al. 2010, Petrinec &amp; Russell 1996 tail</small></span></label>
                       <label class="vm-row"><input type="checkbox" data-view="bs" checked><span>Bow shock<small>Jelínek et al. 2012</small></span></label>
@@ -183,7 +184,7 @@
                   <div class="hso-sw" id="hso-sw"></div>
                   <div class="hso-card" hidden></div>
                   <p class="hso-toast" role="status" hidden></p>
-                  <p class="scene-key" id="scene-key" hidden><i class="k closed"></i>closed<i class="k open"></i>open · IGRF + T89, Kp 2</p>
+                  <p class="scene-key" id="scene-key" hidden></p>
                   <p class="scene-hint" id="scene-hint" hidden>Click MMS to open its data</p>
                   <div class="hso-time">
                     <button class="ht-play" id="ht-play" aria-label="Play"><svg viewBox="0 0 12 12" aria-hidden="true"><path class="pl" d="M3 1.8v8.4L10 6z"/><path class="pa" d="M2.6 1.8h2.4v8.4H2.6zM7 1.8h2.4v8.4H7z"/></svg></button>
@@ -254,10 +255,10 @@
 
   <script src="js/site.js?v=36"></script>
   <script src="js/igrf14.js?v=36"></script>
-  <script src="js/fieldlines.js?v=36"></script>
-  <script src="js/hsoview.js?v=36"></script>
+  <script src="js/fieldlines.js?v=37"></script>
+  <script src="js/hsoview.js?v=37"></script>
   <script src="js/live-page.js?v=36"></script>
   <script src="js/hso-live.js?v=36"></script>
-  <script src="js/hso.js?v=36"></script>
+  <script src="js/hso.js?v=37"></script>
 </body>
 </html>
