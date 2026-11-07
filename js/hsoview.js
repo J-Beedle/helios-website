@@ -1609,6 +1609,7 @@
       clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
     }
     cv.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;                          // a right-click is the spacecraft card's, not a click or a turn
       const r = cv.getBoundingClientRect();
       drag = { x: e.clientX, y: e.clientY, az: view.az, tilt: view.tilt, lat: leoCam.lat, lon: leoCam.lon, moved: false, px: e.clientX - r.left, py: e.clientY - r.top };
       cv.setPointerCapture(e.pointerId);
@@ -1662,6 +1663,66 @@
     };
     cv.addEventListener("pointerup", end);
     cv.addEventListener("pointercancel", end);
+
+    // ── right-click a spacecraft (live; Helios's CraftReadout): its dipole L-shell, MLT, MLAT and invariant latitude in SM,
+    //    the region the view puts it in, and — inside the drawn magnetopause — its IGRF-14 + T89 line: topology, apex L and
+    //    both footpoints with their MLAT and MLT. A copy button takes it all as text. ──
+    const craftCard = o.feet ? Object.assign(document.createElement("div"), { className: "craft-card", hidden: true }) : null;
+    if (craftCard) root.appendChild(craftCard);
+    const toSM = (p) => { const M = frameAt("sm", time); return [M[0] * p[0] + M[3] * p[1] + M[6] * p[2], M[1] * p[0] + M[4] * p[1] + M[7] * p[2], M[2] * p[0] + M[5] * p[1] + M[8] * p[2]]; };
+    const geoToGSE = (g) => mul(frameAt("geo", time), g);
+    /** MLAT (°) and MLT (h) of a GSE direction, in SM. */
+    const magOf = (p) => { const q = toSM(p), r = len3(q); return { mlat: Math.asin(clamp(q[2] / r, -1, 1)) / DEG, mlt: ((Math.atan2(q[1], q[0]) / Math.PI * 12 + 12) % 24 + 24) % 24, r }; };
+    /** Where a craft named on the view is now, and its field-line seed. */
+    function craftAt(name) {
+      if (name === "MMS" || /^MMS[1-4]$/.test(name)) return { label: name === "MMS" ? "MMS1–4" : name, p: orbitAt(time), seed: "mms" };
+      const th = /^THEMIS-([A-Z])$/.exec(name);
+      if (th) { const x = S.themis.find(t => t.id === th[1]); return x ? { label: name, p: posAt(x, time), seed: `th${x.id}` } : null; }
+      const f = S.fleet.find(f => f.id === name);
+      return f ? { label: name, p: posAt(f, time), seed: f.id } : null;
+    }
+    const hm = (h) => { const m = Math.round(h * 60) % 1440; return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; };
+    function showCraftCard(name, x, y) {
+      const c = craftAt(name);
+      if (!c || !c.p) return false;
+      const g = geometry(time), [reg, regCol] = region(c.p, g.B), m = magOf(c.p), L = m.r / Math.cos(m.mlat * DEG) ** 2;
+      const inv = L >= 1 ? Math.acos(Math.sqrt(1 / L)) / DEG : NaN;
+      const rows = [[`L (dipole)`, isFinite(L) ? L.toFixed(2) : "—"], ["MLT", `${m.mlt.toFixed(2)} h  (${hm(m.mlt)})`], ["MLAT (SM)", `${m.mlat >= 0 ? "+" : ""}${m.mlat.toFixed(1)}°`],
+                    ["Invariant lat.", isFinite(inv) ? `${inv.toFixed(1)}°` : "—"], ["r", `${m.r.toFixed(2)} Rₑ`], ["GSE", c.p.map(v => (v >= 0 ? "+" : "") + v.toFixed(2)).join("  ")]];
+      let traced = "";
+      const now = window.FieldLines && feetAt(time), hit = now && now.craft.find(k => k.id === c.seed);
+      if (hit) {
+        const l = hit.line, apex = l.topology === "closed" && l.line ? Math.max(...l.line.map(len3)) : null;
+        const foot = (f, hemi) => { if (!f) return `${hemi}  —`; const mg = magOf(geoToGSE(f.geo)); return `${hemi}  ${Math.abs(f.lat).toFixed(1)}°${f.lat >= 0 ? "N" : "S"} ${Math.abs(f.lon).toFixed(1)}°${f.lon >= 0 ? "E" : "W"} · MLAT ${mg.mlat >= 0 ? "+" : ""}${mg.mlat.toFixed(1)}° · MLT ${mg.mlt.toFixed(1)} h`; };
+        const topo = { closed: "closed", openNorth: "open — north foot only", openSouth: "open — south foot only", unknownOuter: "past 60 Rₑ both ways", incomplete: "trace stopped at its length limit" }[l.topology] || l.topology;
+        traced = `<p class="cc-t">FIELD LINE · ${esc(now.model)}</p><p>${topo}${apex ? ` · apex L ${apex.toFixed(1)}` : ""}${l.winds ? " · winds; one loop shown" : ""}</p><p class="cc-m">${foot(l.north, "N")}</p><p class="cc-m">${foot(l.south, "S")}</p>`;
+      } else traced = `<p class="cc-n">${reg === "Solar wind" || reg === "Magnetosheath" || reg === "Bow shock" ? "Outside the drawn magnetopause: no line traced (T89 means nothing there)." : "Field lines follow MMS, THEMIS, Cluster, GOES, the Van Allen Probes and Geotail."}</p>`;
+      craftCard.innerHTML = `<div class="cc-h"><b>${esc(c.label)}</b><span>${o.clock(time)} UTC</span><button class="cc-copy" title="Copy as text">Copy</button><button class="cc-x" aria-label="Close">×</button></div>
+        <p class="cc-r" style="--c:${rgba(regCol)}"><i></i>${reg}</p>
+        <p class="cc-t">L-SHELL · MLT <span>IGRF-14 centered dipole, SM</span></p>${rows.map(([k, v]) => `<p class="cc-k"><span>${k}</span><b>${v}</b></p>`).join("")}${traced}`;
+      craftCard.hidden = false;
+      const W_ = root.clientWidth, H_ = root.clientHeight, w = craftCard.offsetWidth, h = craftCard.offsetHeight;
+      craftCard.style.left = `${clamp(x + 14, 6, W_ - w - 6)}px`; craftCard.style.top = `${clamp(y - 12, 6, H_ - h - 6)}px`;
+      craftCard.querySelector(".cc-x").onclick = () => { craftCard.hidden = true; };
+      craftCard.querySelector(".cc-copy").onclick = () => {
+        const txt = craftCard.innerText.replace(/Copy\s*×?/, "").replace(/\n{2,}/g, "\n").trim();
+        navigator.clipboard && navigator.clipboard.writeText(txt).then(() => say("Copied."), () => {});
+      };
+      return true;
+    }
+    const esc = (str) => String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    if (craftCard) {
+      cv.addEventListener("contextmenu", (e) => {
+        const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);
+        const name = h && (h.dot ? `MMS${h.dot.n}` : h.ring && (h.ring.kind === "mms" || h.ring.kind === "other") ? h.ring.name : null);
+        if (!name) return;
+        e.preventDefault();
+        const rr = root.getBoundingClientRect();
+        showCraftCard(name, e.clientX - rr.left, e.clientY - rr.top);
+      });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") craftCard.hidden = true; });
+      cv.addEventListener("pointerdown", () => { craftCard.hidden = true; });
+    }
     cv.addEventListener("pointerleave", () => { if (!drag) { card.hidden = true; if (hover) { hover = null; request(); } } });
 
     // ── the view presets (Top · XY, Side · XZ, Front · YZ, 3D), eased like the app's ──

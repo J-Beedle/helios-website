@@ -566,6 +566,13 @@
     KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp",
                  lines: [derive("efi", COL.mag, "E×B/B²", exb(c)), derive("dis", COL.ni, "V_{i⊥}", vPerp(c))] };
   const NA = (title) => ({ title, avail: false });
+  const OVER_COL = ["#8e44ad", "#0e9aa7", "#c2185b", "#8d6e63", "#ee8a1c", "#1f6fd8"];
+  /** "key#i": line i of subplot key, as the mission draws it. */
+  function lineById(mission, id, relabel) {
+    const [k, i] = id.split("#"), kind = KINDS[k] && Object.assign({}, kindOf(mission, k), relabel && relabel[k]);
+    const line = kind && kind.lines && kind.lines[+i];
+    return line ? { kind, line } : null;
+  }
   // The sidebar's Plot selection, per mission: Helios's groups of subplots in its order (MMSPanels.swift), the stack a
   // window opens with, and the preset figures. A subplot whose data this demo does not carry is listed, greyed, as the app
   // lists it; a preset is offered when most of its subplots are here.
@@ -851,9 +858,26 @@
         const kept = rows.filter(r => (r.spec ? inWin(r.spec, null) : r.lines.some(line => inWin(line.ds, accessor(line, null)))));
         if (kept.length) rows = kept;
       }
+      // the subplot editor's changes (right-click a subplot): its own lines hidden, other quantities overplotted (another
+      // unit against a right-hand axis), log y, axis and color limits
+      const edits = cfg.edits || {};
+      rows = rows.map((r) => {
+        const E = edits[r.key];
+        if (!E) return r;
+        const out = Object.assign({}, r, { edit: E });
+        if (r.spec) return out;
+        const own = r.lines.map((ln, i) => Object.assign({}, ln, { id: `${r.key}#${i}` })).filter(ln => !(E.hide || []).includes(ln.id));
+        const over = (E.over || []).map((id, j) => {
+          const ln = lineById(mission, id, D.relabel);
+          return ln && Object.assign({}, ln.line, { id, over: true, color: OVER_COL[j % OVER_COL.length], label: ln.line.label, unit: ln.kind.unit, logSrc: !!ln.kind.log, axis2: ln.kind.unit !== r.unit });
+        }).filter(Boolean);
+        out.lines = own.concat(over);
+        if (E.logY != null) out.log = E.logY;
+        return out;
+      });
       const R = cfg.lmn ? cfg.lmn.R : null;
       L = layout(w, h, rows);
-      L.yOf = []; L.acc = [];
+      L.yOf = []; L.acc = []; L.yOf2 = [];
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
       const Pl = L.plot, xOf = (t) => Pl.x + (t - a) / (b - a) * Pl.w;
       if (cfg.coverage && D.bu) {                          // the data-rate bars across the top: fast survey throughout, burst where taken
@@ -868,29 +892,58 @@
         if (r.spec && !(D.sv[r.spec] && D.erange[r.spec])) {      // an on-demand spectrogram still on its way
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
           rich(ctx, r.lazy && !(D.lazyDone && D.lazyDone[r.lazy]) ? "fetching…" : "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
-          L.yOf.push(null); L.acc.push(null);
+          L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else if (r.spec) {
-          const win = specRange(D, r.spec, r.range, a, b, true);
+          const win = specRange(D, r.spec, r.range, a, b, true), E = r.edit;
+          if (E && E.zLo != null) win[0] = E.zLo;
+          if (E && E.zHi != null) win[1] = E.zHi;
+          if (win[1] <= win[0]) win[1] = win[0] + 1;
           spectrogram(ctx, Rw, a, b, D, r.spec, true, dpr, LIVE ? win : null);
           energyAxis(ctx, Rw, D.erange[r.spec]);
           colorbar(ctx, Rw.x + Rw.w + 6, Rw.y + 4, 9, Rw.h - 8, win);
-          L.yOf.push(null); L.acc.push(null);
+          L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else {
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
           if (r.lazy && LIVE && !(D.lazyDone && D.lazyDone[r.lazy])) rich(ctx, "fetching…", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
           let lo = Infinity, hi = -Infinity;
           const accs = r.lines.map(line => accessor(line, R)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
           const lg = (acc) => (S) => { const f = acc(S); return f && ((i) => { const v = f(i); return v > 0 ? Math.log10(v) : NaN; }); };
-          accs.forEach((acc, i) => { [lo, hi] = extent(rrs[i], r.log ? lg(acc) : acc, lo, hi); });
+          accs.forEach((acc, i) => { if (!r.lines[i].axis2) [lo, hi] = extent(rrs[i], r.log ? lg(acc) : acc, lo, hi); });
           if (!isFinite(lo)) { lo = -1; hi = 1; }
           if (r.log) { lo = Math.floor(lo + 1e-9); hi = Math.ceil(hi - 1e-9); if (hi - lo < 1) hi = lo + 1; }   // log rows: whole decades
-          if (r.floor !== undefined) lo = Math.min(lo, r.floor);
-          if (r.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+          if (r.floor !== undefined && !r.log) lo = Math.min(lo, r.floor);
+          if (r.zero && !r.log) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
           const padY = r.log ? 0 : (hi - lo) * 0.08 || 1;
           lo -= r.floor !== undefined && lo >= r.floor ? 0 : padY; hi += padY;
+          const E = r.edit;                                 // limits set in the editor (absolute values, also on a log axis)
+          if (E && E.yLo != null && (!r.log || E.yLo > 0)) lo = r.log ? Math.log10(E.yLo) : E.yLo;
+          if (E && E.yHi != null && (!r.log || E.yHi > 0)) hi = r.log ? Math.log10(E.yHi) : E.yHi;
+          if (!(hi > lo)) hi = lo + 1;
           const yLin = (v) => Rw.y + Rw.h - (v - lo) / (hi - lo) * Rw.h;
           const yOf = r.log ? (v) => (v > 0 ? yLin(Math.log10(v)) : NaN) : yLin;
           L.yOf.push(yOf); L.acc.push(accs);
+          // the overplots in another unit: their own range on a right-hand axis, labeled inside the frame
+          let yOf2 = null;
+          const ax2 = r.lines.map((ln, i) => (ln.axis2 ? i : -1)).filter(i => i >= 0);
+          if (ax2.length) {
+            const log2 = ax2.every(i => r.lines[i].logSrc);
+            let l2 = Infinity, h2 = -Infinity;
+            for (const i of ax2) [l2, h2] = extent(rrs[i], log2 ? lg(accs[i]) : accs[i], l2, h2);
+            if (!isFinite(l2)) { l2 = -1; h2 = 1; }
+            if (log2) { l2 = Math.floor(l2 + 1e-9); h2 = Math.ceil(h2 - 1e-9); if (h2 - l2 < 1) h2 = l2 + 1; }
+            else { const p2 = (h2 - l2) * 0.08 || 1; l2 -= p2; h2 += p2; }
+            const y2 = (v) => Rw.y + Rw.h - (v - l2) / (h2 - l2) * Rw.h;
+            yOf2 = log2 ? (v) => (v > 0 ? y2(Math.log10(v)) : NaN) : y2;
+            const col2 = r.lines[ax2[0]].color;
+            for (const v of log2 ? Array.from({ length: h2 - l2 + 1 }, (_, k) => l2 + k) : nice(l2, h2, Rw.h > 70 ? 4 : 3)) {
+              const y = y2(v);
+              if (y < Rw.y + 6 || y > Rw.y + Rw.h - 4) continue;
+              ctx.fillStyle = col2; ctx.fillRect(Rw.x + Rw.w - 4, Math.round(y), 4, 1);
+              rich(ctx, log2 ? `10^{${v}}` : String(+v.toPrecision(4)), Rw.x + Rw.w - 6, y, { size: 9, align: "right", color: col2 });
+            }
+            rich(ctx, r.lines[ax2[0]].unit || "", Rw.x + Rw.w - 6, Rw.y + Rw.h - 8, { size: 9, align: "right", color: col2 });
+          }
+          L.yOf2.push(yOf2);
           const ticks = r.log ? Array.from({ length: hi - lo + 1 }, (_, k) => lo + k) : nice(lo, hi, Rw.h > 70 ? 4 : 3);
           ctx.fillStyle = INK;
           for (const v of ticks) {
@@ -903,7 +956,7 @@
             ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(29,29,34,0.35)"; ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(Rw.x, Math.round(yOf(0)) + 0.5); ctx.lineTo(Rw.x + Rw.w, Math.round(yOf(0)) + 0.5); ctx.stroke(); ctx.restore();
           }
-          r.lines.forEach((line, i) => stroke(ctx, Rw, a, b, rrs[i], accs[i], yOf, line.color, line.ds === "fgm" ? 1 : 1.1));
+          r.lines.forEach((line, i) => stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1));
           const n = r.lines.length;                       // the legend, top to bottom, at the right
           r.lines.forEach((line, i) =>
             rich(ctx, R && line.vec ? LMN[line.c] : line.label, Rw.x + Rw.w + 6, Rw.y + Rw.h / 2 + (i - (n - 1) / 2) * Math.min(13, (Rw.h - 6) / n), { size: 10.5, weight: 600, color: line.color }));
@@ -1016,7 +1069,7 @@
           if (!rec) return;
           const f = L.acc[k][li](rec[0]), v = f ? f(rec[1]) : NaN;
           if (!isFinite(v)) return;
-          const y = yOf(v);
+          const y = (line.axis2 && L.yOf2[k] ? L.yOf2[k] : yOf)(v);
           if (y >= R.y && y <= R.y + R.h) {
             ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2); ctx.fillStyle = line.color; ctx.fill();
             ctx.lineWidth = 0.6; ctx.strokeStyle = "#fff"; ctx.stroke();
@@ -1107,7 +1160,9 @@
     over.addEventListener("pointerup", end);
     over.addEventListener("pointercancel", () => { drag = null; grab = null; trim = null; app.sel = null; overlay(); });
     over.addEventListener("dblclick", () => app.setFocus(...app.home));
-    return { draw, overlay, cfg };
+    /** The subplot under a y on the figure (for the editor), with its letter. */
+    const rowAt = (y) => { const R = L && L.rows.find(R => y >= R.y && y <= R.y + R.h); return R ? Object.assign({ letter: "abcdefghijklmnopqrst"[R.k] }, R.row) : null; };
+    return { draw, overlay, cfg, rowAt };
   }
 
   // ───────────────────────── the VDF cuts, as Helios draws them ─────────────────────────
@@ -1555,6 +1610,107 @@
     });
     const C = W.cfg = W.panel.cfg;
     const side = $(".fw-side", el), lmnEl = $(".fw-lmn", el), vdfEl = $(".fw-vdf", el), cols = $(".vd-cols", el);
+
+    // ── the subplot editor (Helios's overplot editor): right-click a subplot to hide its lines, overplot others, switch
+    //    log y, or set its axis (a line subplot) or color (a spectrogram) limits; a movable card that closes with × or Esc ──
+    const plain = (str) => String(str || "").replace(/[_^]\{([^}]*)\}/g, "$1");
+    let ed = null;
+    $(".fw-over", el).addEventListener("contextmenu", (e) => {
+      if (!LIVE) return;
+      const r = e.currentTarget.getBoundingClientRect(), row = W.panel.rowAt(e.clientY - r.top);
+      if (!row) return;
+      e.preventDefault();
+      openEditor(row.key, row.letter, e.clientX, e.clientY);
+    });
+    function closeEditor() { if (ed) { ed.el.remove(); document.removeEventListener("keydown", ed.esc); ed = null; } }
+    W.closeEditor = closeEditor;
+    function openEditor(key, letter, x, y) {
+      closeEditor();
+      const box = document.createElement("div");
+      box.className = "sp-ed"; box.setAttribute("role", "dialog");
+      document.body.appendChild(box);
+      ed = { el: box, key, letter, q: "", esc: (e) => { if (e.key === "Escape") closeEditor(); } };
+      document.addEventListener("keydown", ed.esc);
+      renderEditor();
+      const bw = box.offsetWidth, bh = box.offsetHeight;
+      box.style.left = `${clamp(x + 8, 8, innerWidth - bw - 8)}px`; box.style.top = `${clamp(y - 20, 8, innerHeight - bh - 8)}px`;
+      box.addEventListener("pointerdown", (e) => {                 // drag by the header
+        const h = e.target.closest(".sp-h");
+        if (!h || e.target.closest("button")) return;
+        const s0 = { x: e.clientX, y: e.clientY, l: box.offsetLeft, t: box.offsetTop };
+        h.setPointerCapture(e.pointerId);
+        const mv = (e2) => { box.style.left = `${clamp(s0.l + e2.clientX - s0.x, 0, innerWidth - 60)}px`; box.style.top = `${clamp(s0.t + e2.clientY - s0.y, 0, innerHeight - 30)}px`; };
+        const up = () => { h.removeEventListener("pointermove", mv); h.removeEventListener("pointerup", up); };
+        h.addEventListener("pointermove", mv); h.addEventListener("pointerup", up);
+      });
+      box.addEventListener("click", onEditorClick);
+      box.addEventListener("change", onEditorChange);
+      box.addEventListener("input", (e) => { if (e.target.matches(".sp-q")) { ed.q = e.target.value; renderEditor(true); } });
+    }
+    const editOf = (key) => (C.edits = C.edits || {}, C.edits[key] = C.edits[key] || {});
+    function tidy(key) {
+      const E = C.edits && C.edits[key];
+      if (!E) return;
+      for (const k of Object.keys(E)) if (E[k] == null || (Array.isArray(E[k]) && !E[k].length)) delete E[k];
+      if (!Object.keys(E).length) delete C.edits[key];
+    }
+    function renderEditor(keepFocus) {
+      if (!ed) return;
+      const key = ed.key, mission = C.mission, kind = Object.assign({}, kindOf(mission, key), W.view.relabel && W.view.relabel[key]), E = (C.edits && C.edits[key]) || {};
+      let h = `<div class="sp-h"><b>(${ed.letter}) ${esc(plain(kind.title))}</b><button class="sp-x" aria-label="Close">×</button></div><div class="sp-b">`;
+      if (kind.spec) {
+        h += `<p class="sp-t">Colors <span>log₁₀ ${esc(kind.cbar || "flux")}</span></p><div class="sp-row">10^<input class="sp-n" data-z="zLo" type="number" step="1" value="${E.zLo ?? ""}" placeholder="auto">–10^<input class="sp-n" data-z="zHi" type="number" step="1" value="${E.zHi ?? ""}" placeholder="auto"><button data-act="zauto">Auto</button></div>`;
+      } else {
+        h += `<label class="sp-c"><input type="checkbox" data-act="log" ${(E.logY ?? !!kind.log) ? "checked" : ""}> log y</label>`;
+        h += `<p class="sp-t">Lines</p>` + kind.lines.map((ln, i) => {
+          const id = `${key}#${i}`;
+          return `<label class="sp-c"><input type="checkbox" data-hide="${id}" ${(E.hide || []).includes(id) ? "" : "checked"}><i style="background:${ln.color}"></i>${esc(plain(ln.label))}</label>`;
+        }).join("");
+        const mine = new Set(E.over || []), q = ed.q.trim().toLowerCase();
+        const cands = [];
+        for (const [, keys] of MISSIONS[mission].sections) for (const k of keys) {
+          if (typeof k !== "string" || k === key || !KINDS[k] || !has(W.view, mission, k)) continue;
+          const kk = Object.assign({}, kindOf(mission, k), W.view.relabel && W.view.relabel[k]);
+          if (kk.spec || !kk.lines) continue;
+          kk.lines.forEach((ln, i) => {
+            const id = `${k}#${i}`, label = `${plain(ln.label)} · ${plain(kk.title)}`;
+            if (mine.has(id) || !q || label.toLowerCase().includes(q) || (kk.unit || "").toLowerCase().includes(q)) cands.push({ id, label, unit: kk.unit, on: mine.has(id) });
+          });
+        }
+        cands.sort((p, r) => r.on - p.on);
+        h += `<p class="sp-t">Overplot</p><input class="sp-q" type="search" placeholder="Search: density, V_i, E′, nPa…" value="${esc(ed.q)}" aria-label="Search quantities to overplot">`;
+        h += `<div class="sp-list">${cands.slice(0, 80).map(c => `<label class="sp-c"><input type="checkbox" data-over="${c.id}" ${c.on ? "checked" : ""}>${esc(c.label)} <em>${esc(c.unit || "")}</em></label>`).join("") || `<p class="sp-note">Nothing in this window matches.</p>`}</div>`;
+        h += `<p class="sp-note">A quantity in another unit is drawn against a right-hand axis.</p>`;
+        h += `<p class="sp-t">Y range</p><div class="sp-row"><input class="sp-n" data-y="yLo" type="number" value="${E.yLo ?? ""}" placeholder="auto">to<input class="sp-n" data-y="yHi" type="number" value="${E.yHi ?? ""}" placeholder="auto"><button data-act="yauto">Auto</button></div>`;
+      }
+      h += `<button class="sp-reset" data-act="reset">Reset subplot</button></div>`;
+      const pos = ed.el.querySelector(".sp-q") ? ed.el.querySelector(".sp-q").selectionStart : null;
+      ed.el.innerHTML = h;
+      if (keepFocus) { const qi = ed.el.querySelector(".sp-q"); qi.focus(); if (pos != null) qi.setSelectionRange(pos, pos); }
+    }
+    function onEditorClick(e) {
+      const b = e.target.closest("button");
+      if (!b || !ed) return;
+      if (b.classList.contains("sp-x")) return closeEditor();
+      const E = editOf(ed.key), act = b.dataset.act;
+      if (act === "zauto") { E.zLo = E.zHi = null; }
+      else if (act === "yauto") { E.yLo = E.yHi = null; }
+      else if (act === "reset") { delete C.edits[ed.key]; }
+      else return;
+      tidy(ed.key); renderEditor(); W.redraw();
+    }
+    function onEditorChange(e) {
+      const x = e.target, d = x.dataset;
+      if (!ed || x.matches(".sp-q")) return;
+      const E = editOf(ed.key);
+      if (d.act === "log") E.logY = x.checked;
+      else if (d.hide) { const set_ = new Set(E.hide || []); if (x.checked) set_.delete(d.hide); else set_.add(d.hide); E.hide = [...set_]; }
+      else if (d.over) { const set_ = new Set(E.over || []); if (x.checked) set_.add(d.over); else set_.delete(d.over); E.over = [...set_]; }
+      else if (d.y || d.z) { const v = x.value.trim() === "" ? null : +x.value; E[d.y || d.z] = isFinite(v) ? v : null; }
+      tidy(ed.key);
+      if (d.over || d.act === "log") renderEditor();
+      W.redraw();
+    }
 
     /** The figure's settings from the window's state, then a redraw on the next frame. */
     function sync() {

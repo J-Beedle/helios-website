@@ -950,3 +950,41 @@ body.solo-hso .site-head, body.solo-hso .drawer, body.solo-hso .scrim, body.solo
 body.solo-hso #stage { position: fixed; inset: 0; height: auto; min-height: 0; max-height: none; margin: 0; max-width: none; z-index: 5; }
 .solo-fail { color: #e8e9ed; padding: 24px; font: 14px ui-monospace, Menlo, monospace; }
 .win-hso .dots i.dot-z { cursor: pointer; }
+
+/* live: the subplot editor (right-click a subplot) */
+.sp-ed { position: fixed; z-index: 9000; width: 300px; max-height: min(560px, calc(100vh - 16px)); display: flex; flex-direction: column; border-radius: 10px; background: #1c1d22; color: #e3e3eb; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 18px 48px rgba(0, 0, 0, 0.55); font: 400 12px/1.35 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+.sp-h { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); cursor: grab; user-select: none; touch-action: none; }
+.sp-h b { flex: 1; font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-x { background: none; border: 0; color: #aeaeb6; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.sp-b { overflow: auto; padding: 8px 10px 10px; }
+.sp-t { margin: 10px 0 4px; color: #919199; font: 600 10px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+.sp-t span { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.sp-c { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+.sp-c input { margin: 0; accent-color: #f39a1e; }
+.sp-c i { width: 10px; height: 2px; border-radius: 1px; }
+.sp-c em { margin-left: auto; color: #6c6c74; font-style: normal; font-size: 10.5px; }
+.sp-q { width: 100%; box-sizing: border-box; margin: 2px 0 4px; padding: 4px 7px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.14); background: #121317; color: #e3e3eb; font: inherit; }
+.sp-list { max-height: 170px; overflow: auto; padding-right: 2px; }
+.sp-note { margin: 4px 0 0; color: #6c6c74; font-size: 10.5px; }
+.sp-row { display: flex; align-items: center; gap: 6px; color: #aeaeb6; }
+.sp-n { width: 64px; padding: 3px 5px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.14); background: #121317; color: #e3e3eb; font: 11px ui-monospace, Menlo, monospace; }
+.sp-row button, .sp-reset { padding: 3px 9px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.16); background: #26272d; color: #e3e3eb; font: inherit; cursor: pointer; }
+.sp-reset { margin-top: 12px; width: 100%; }
+
+/* live: right-click a spacecraft in the HSO view */
+.craft-card { position: absolute; z-index: 30; width: 290px; padding: 8px 10px 9px; border-radius: 9px; background: rgba(22, 22, 26, 0.97); color: #e3e3eb; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 14px 36px rgba(0, 0, 0, 0.5); font: 400 11px/1.35 ui-monospace, "SF Mono", Menlo, monospace; }
+.craft-card[hidden] { display: none; }
+.craft-card p { margin: 0; }
+.cc-h { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.cc-h b { font: 600 12.5px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+.cc-h span { flex: 1; color: #919199; }
+.cc-h button { background: #26272d; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 5px; color: #e3e3eb; font: 10.5px ui-monospace, Menlo, monospace; padding: 1px 6px; cursor: pointer; }
+.cc-h .cc-x { background: none; border: 0; font-size: 15px; padding: 0 2px; color: #aeaeb6; }
+.cc-r { display: flex; align-items: center; gap: 5px; color: var(--c); font-weight: 600; margin-bottom: 4px !important; }
+.cc-r i { width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
+.cc-t { margin: 7px 0 3px !important; color: #6c6c74; font-size: 9.5px; letter-spacing: 0.05em; }
+.cc-t span { letter-spacing: 0; color: #55555c; }
+.cc-k { display: flex; justify-content: space-between; gap: 10px; }
+.cc-k span { color: #919199; }
+.cc-m { color: #c9c9d2; font-size: 10.5px; }
+.cc-n { color: #919199; font-size: 10.5px; margin-top: 6px !important; white-space: normal; }
