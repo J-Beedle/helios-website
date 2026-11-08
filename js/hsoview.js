@@ -771,8 +771,8 @@
       [[1.61, -9.59, -12.07, -6.56, -2.22, -23.98, -20.07], [23.21, 17.78, 17.49, 11.44, 1.50, 42.79, 36.67],
        [-10.97, -7.20, -7.96, -6.73, -0.58, -26.96, -24.20], [2.03, 0.96, 1.15, 1.31, 0.08, 5.56, 5.11]],
     ];
-    function starkovColat(m, t, kp) {                       // Starkov (1994), Sigernes et al. (2011)'s coefficients
-      const k = clamp(kp, 0, 9), al = 18 - 12.3 * k + 27.2 * k * k - 2.0 * k * k * k;
+    function starkovColat(m, t, kp, alNT) {                 // Starkov (1994), Sigernes et al. (2011)'s coefficients
+      const k = clamp(kp, 0, 9), al = alNT != null && isFinite(alNT) ? alNT : 18 - 12.3 * k + 27.2 * k * k - 2.0 * k * k * k;
       const x = Math.log10(clamp(Math.abs(al), 10, 780)), p = [1, x, x * x, x * x * x], c = new Array(7).fill(0);
       for (let j = 0; j < 7; j++) for (let i = 0; i < 4; i++) c[j] += STARKOV[m][i][j] * p[i];
       return c[0] + c[1] * Math.cos(15 * (t + c[4]) * DEG) + c[2] * Math.cos(15 * (2 * t + c[5]) * DEG) + c[3] * Math.cos(15 * (3 * t + c[6]) * DEG);
@@ -799,7 +799,7 @@
       const SM = frameAt("sm", time), kp = S.kp ?? 2;
       for (const sg of [1, -1]) {
         const edge = (m) => Array.from({ length: 97 }, (_, i) => {
-          const t = i / 4, c = starkovColat(m, t, kp) * DEG, ph = (t - 12) * 15 * DEG;
+          const t = i / 4, c = starkovColat(m, t, kp, S.al) * DEG, ph = (t - 12) * 15 * DEG;
           return mul(SM, [Math.sin(c) * Math.cos(ph), Math.sin(c) * Math.sin(ph), sg * Math.cos(c)]).map(v => v * lift);
         });
         const pole = edge(0), eq = edge(1);
@@ -890,7 +890,7 @@
         text(ctx, "daylight", x + 121, y + 30, `9.5px ${MONO}`, rgba(DS.textBright), "left");
         let lx = x + 10;
         for (const k of ["themis", "rego"]) { circle(ctx, lx + 4, y + 46, 3.5, rgba(NET[k])); text(ctx, NET_NAME[k], lx + 11, y + 46, `9px ${MONO}`, rgba(DS.textSecondary), "left"); lx += 70; }
-        text(ctx, o.feet ? `Kp ${(S.kp ?? 2).toFixed(1)}: oval Starkov, feet IGRF+T89` : `Kp ${(S.kp ?? 2).toFixed(1)} oval (Starkov 1994) · drag to turn`, x + 10, y + 62, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
+        text(ctx, o.feet ? (S.al != null ? `oval AL ${S.al} nT · T89 Kp ${(S.kp ?? 2).toFixed(1)}` : `Kp ${(S.kp ?? 2).toFixed(1)}: oval Starkov, feet IGRF+T89`) : `Kp ${(S.kp ?? 2).toFixed(1)} oval (Starkov 1994) · drag to turn`, x + 10, y + 62, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
         if (o.sky) {
           for (let i = 0; i < 40; i++) { ctx.fillStyle = skyColor(i / 39); ctx.fillRect(x + 10 + i * 2, y + 74, 2, 7); }
           text(ctx, `sky: ${skyShown} THEMIS camera${skyShown === 1 ? "" : "s"}, 1 min`, x + 96, y + 78, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
@@ -931,7 +931,9 @@
       return out;
     }
     // inside the magnetopause drawn now (track samples too: the boundary is the minute on screen's, not recomputed per sample)
-    const inside = (p) => { const g = geometry(time); return insideMP(p, g.B, mpTails(g.B)); };
+    /** Helios's magnetopauseMargin_RE > 0: inside Shue (1998) at the drawn solar wind, in its aberrated frame. */
+    const insideShue = (p, B) => { const m = deaberrate(p, B.ab), r = len3(m); if (r < 1e-6) return true; return shueR(Math.acos(clamp(m[0] / r, -1, 1)), B.mpR0, B.mpAlpha) - r > 0; };
+    const inside = (p) => insideShue(p, geometry(time).B);
     /** The feet at the minute on screen, traced here (~1 ms a line). */
     function feetAt(t) {
       const key = Math.round(t / 60);
@@ -1146,7 +1148,7 @@
     /** Whether each point is inside the magnetopause drawn now, kept on the line until the boundary changes. */
     function maskOf(l) {
       const g = geometry(time);
-      if (l._mk !== g.B.key) { const tails = mpTails(g.B); l._mask = l.line.map(p => insideMP(p, g.B, tails)); l._mk = g.B.key; }
+      if (l._mk !== g.B.key) { l._mask = l.line.map(p => insideShue(p, g.B)); l._mk = g.B.key; }
       return l._mask;
     }
     /** The part of a polyline on one side of the magnetopause (want), one subpath per run so the dashes run on; a

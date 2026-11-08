@@ -304,8 +304,9 @@
       const g = F.toGEO(leg.end), [lat] = geodetic(g[0], g[1], g[2]), r = Math.hypot(...g);
       return { lat, lon: Math.atan2(g[1], g[0]) * 180 / Math.PI, geo: g.map(v => v / r) };
     };
-    const north = foot(fwd), south = foot(bwd);
-    const topology = north && south ? "closed" : north && bwd.stop === "outer" ? "openNorth" : south && fwd.stop === "outer" ? "openSouth"
+    const winds = loops(bwd.pts.slice().reverse().concat([seed], fwd.pts)) >= WINDING;
+    const north = winds ? null : foot(fwd), south = winds ? null : foot(bwd);
+    const topology = winds ? (fwd.stop === "inner" && bwd.stop === "inner" ? "closed" : "incomplete") : north && south ? "closed" : north && bwd.stop === "outer" ? "openNorth" : south && fwd.stop === "outer" ? "openSouth"
       : fwd.stop === "outer" && bwd.stop === "outer" ? "unknownOuter" : "incomplete";
     const out = { topology, north, south };
     if (withLine) Object.assign(out, polyline(F, seed, fwd, bwd));

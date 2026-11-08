@@ -1137,13 +1137,38 @@
     return [0, n - 1];
   }
 
+  /** What sizes the oval and T89 (Helios AuroralDriverClient / OmniClient.fetchKpBlock): Kp from the OMNI2 hourly row
+   *  nearest the moment (KP1800, rows repeat their 3-h block; tens + (units ÷ 3)/3, fill 99), and AL as the mean of
+   *  OMNI's 1-min AL_INDEX over the hour centered on it (≥ 30 valid minutes; HRO2, then HRO). */
+  async function auroralDriver() {
+    const [k, al2, al1] = await Promise.all([
+      hapi("OMNI2_H0_MRG1HR", ["KP1800"], AT - 5400e3, AT + 5400e3, true).catch(() => null),
+      hapi("OMNI_HRO2_1MIN", ["AL_INDEX"], AT - 1800e3, AT + 1800e3, true).catch(() => null),
+      hapi("OMNI_HRO_1MIN", ["AL_INDEX"], AT - 1800e3, AT + 1800e3, true).catch(() => null),
+    ]);
+    let kp = null;
+    if (k && k.n) {
+      let best = -1;
+      for (let i = 0; i < k.n; i++) { const v = k.cols[0][i]; if (v >= 0 && v < 99 && (best < 0 || Math.abs(k.t[i] - HALF) < Math.abs(k.t[best] - HALF))) best = i; }
+      if (best >= 0) { const c = Math.round(k.cols[0][best]); kp = Math.floor(c / 10) + Math.floor((c % 10) / 3) / 3; }
+    }
+    let al = null;
+    for (const r of [al2, al1]) {
+      if (!r || !r.n) continue;
+      const v = Array.from(r.cols[0]).filter(x => isFinite(x) && Math.abs(x) < 99990);
+      if (v.length >= 30) { al = v.reduce((p, q) => p + q, 0) / v.length; break; }
+    }
+    return { kp, al };
+  }
   async function scene() {
     const keoP = track("All-sky imager keograms (UCalgary)", keogramLists()).catch(() => ({}));
+    const driverP = track("Kp (OMNI2) and AL (OMNI)", auroralDriver()).catch(() => ({ kp: null, al: null }));
     const [[m1, ...others], sites, starsBuf, fleetA, fleetB, fleetC] = await Promise.all([
       mec(),
       fetch("assets/data/live/asi-sites.json").then(r => r.json()),
       fetch("assets/data/hso/stars.bin").then(r => r.arrayBuffer()),
-      track("Fleet: THEMIS, ARTEMIS, Moon, SDO, Van Allen Probes", ssc(["themisa", "themisd", "themise", "artemisp1", "artemisp2", "moon", "sdo", "rbspa", "rbspb"], AT - 13 * 3600e3, AT + 13 * 3600e3)).catch(() => ({})),
+      track("Fleet: THEMIS, ARTEMIS, Moon, SDO, Van Allen Probes, Arase, TRACERS", ssc(["themisa", "themisd", "themise", ...(AT >= Date.UTC(2011, 6, 1) ? ["artemisp1", "artemisp2"] : []), "moon", "sdo", "rbspa", "rbspb",
+        ...(AT >= Date.UTC(2017, 0, 1) ? ["arase"] : []), ...(AT >= Date.UTC(2025, 6, 23) ? ["tracers1", "tracers2"] : [])], AT - 13 * 3600e3, AT + 13 * 3600e3)).catch(() => ({})),
       track("Fleet: Cluster", ssc(["cluster1", "cluster2", "cluster3", "cluster4"], AT - 27 * 3600e3, AT + 27 * 3600e3)).catch(() => ({})),
       track("Fleet: Geotail and the L1 monitors", ssc(["geotail", "ace", "dscovr", "wind"], AT - 62 * 3600e3, AT + 62 * 3600e3)).catch(() => ({})),
     ]);
@@ -1190,8 +1215,9 @@
                    ["ace", "ACE", "l1", 0], ["dscovr", "DSCOVR", "l1", 0], ["wind", "Wind", "l1", 0], ["sdo", "SDO", "sdo", 130],
                    ["cluster1", "Cluster-1", "cluster", 240], ["cluster2", "Cluster-2", "cluster", 240], ["cluster3", "Cluster-3", "cluster", 240],
                    ["cluster4", "Cluster-4", "cluster", 240], ["rbspa", "RBSP-A", "rbsp", 114], ["rbspb", "RBSP-B", "rbsp", 114], ["geotail", "Geotail", "geotail", 209],
-                   ["goes16", "GOES-16", "goes", 97], ["goes17", "GOES-17", "goes", 97], ["goes18", "GOES-18", "goes", 97], ["goes19", "GOES-19", "goes", 97]];
-    const span_ = { artemis: 13, sdo: 12, cluster: 27, rbsp: 4.5, geotail: 62 };
+                   ["goes16", "GOES-16", "goes", 97], ["goes17", "GOES-17", "goes", 97], ["goes18", "GOES-18", "goes", 97], ["goes19", "GOES-19", "goes", 97],
+                   ["arase", "Arase", "arase", 114], ["tracers1", "TRACERS-1", "tracers", 30], ["tracers2", "TRACERS-2", "tracers", 30]];
+    const span_ = { artemis: 13, sdo: 12, cluster: 27, rbsp: 4.5, geotail: 62, arase: 4.8, tracers: 0.8 };
     const fleet = [];
     for (const [id, name, cat, m] of FLEET) {
       const o = fleetData[id];
@@ -1235,7 +1261,10 @@
     }
     const S = {
       epoch: HALF, mms: { t: T, p: P, loop: loopOf(P), formation: { t: formT, rel } }, themis: th, fleet, frames, planets, solar, asi,
-      kp: +(m1.cols[3][i0] || 2).toFixed(2), sources: "Live: MMS MEC via CDAWeb HAPI, SSCWeb, JPL approximate planetary elements, Yale BSC",
+      ...(await driverP.then(({ kp, al }) => {
+        const mk = m1.cols[3][i0], k = kp ?? (isFinite(mk) && mk >= 0 && mk <= 9 ? mk : 2);    // Kp 0 is a value, not a gap
+        return { kp: +k.toFixed(2), al: al === null ? null : +al.toFixed(0), kpSrc: kp !== null ? "OMNI2" : isFinite(mk) ? "MEC" : "assumed" };
+      })), sources: "Live: MMS MEC via CDAWeb HAPI, SSCWeb, JPL approximate planetary elements, Yale BSC",
     };
     return [S, out.buffer];
   }
