@@ -990,3 +990,6 @@ body.solo-hso #stage { position: fixed; inset: 0; height: auto; min-height: 0; m
 .cc-k span { color: #919199; }
 .cc-m { color: #c9c9d2; font-size: 10.5px; }
 .cc-n { color: #919199; font-size: 10.5px; margin-top: 6px !important; white-space: normal; }
+
+.fw-banner { flex: none; margin: 0; padding: 6px 12px; background: #2b2d32; color: #f2c14e; font: 500 12px/1.35 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.fw-banner[hidden] { display: none; }

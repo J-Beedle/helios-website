@@ -10,7 +10,7 @@
   const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
   const SYS = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif';
   const MONO = 'ui-monospace, "SF Mono", Menlo, "IBM Plex Mono", monospace';
-  const COL = { x: "#2a46d6", y: "#1e8a36", z: "#d8282a", mag: "#151515", ni: "#2a46d6", ne: "#ee8a1c", perp: "#d8282a", par: "#2a46d6" };
+  const COL = { x: "#001af2", y: "#008000", z: "#d90d0d", mag: "#000000", ni: "#001af2", ne: "#ff9900", perp: "#d90d0d", par: "#001af2" };   // Helios's PlotColor
   const PAPER = "#f6f4fb", INK = "#1d1d22", INK2 = "rgba(29,29,34,0.6)", RULE = "rgba(29,29,34,0.16)", ORANGE = "#f39a1e";
   // live.html sets HSO_SOURCE (hso-live.js): the same screens on data fetched from the archives for any moment
   const SRC = window.HSO_SOURCE || null, LIVE = !!SRC;
@@ -86,8 +86,8 @@
   }
   const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
   function timeTicks(a, b, px) {
-    const step = STEPS.find(s => (b - a) / s <= px / 78) || 3600, out = [];
-    for (let v = Math.ceil(a / step) * step; v <= b; v += step) out.push(v);
+    const step = STEPS.find(s => (b - a) / s <= px / 78) || 3600, out = [], z = T0 / 1000;
+    for (let v = Math.ceil((a + z) / step) * step - z; v <= b; v += step) out.push(v);   // on whole UTC multiples
     return { ticks: out, secs: step < 60 };
   }
   /** Text with _{sub} and ^{sup} runs, in the app's system font. */
@@ -153,10 +153,11 @@
         for (let i = 0; i < n2 - 1; i++) ed.push((le[i] + le[i + 1]) / 2);
         ed.push(le[n2 - 1] + (le[n2 - 1] - le[n2 - 2]) / 2);
         S.edges.push(ed);
-        lo = Math.min(lo, ed[0]); hi = Math.max(hi, ed[n2]);
+        const nr = S.etabN ? S.etabN[j] : n2;               // the table's real channels (THEMIS pads its short sweeps)
+        lo = Math.min(lo, le[0]); hi = Math.max(hi, le[nr - 1]);
       }
     }
-    return [Math.max(lo, 0.7), hi];
+    return [lo, hi];
   }
   async function loadCraft(D, n) {
     if (D.craft[n]) return D.craft[n];
@@ -270,11 +271,12 @@
   // ───────────────────────── drawing a series ─────────────────────────
   /** An accessor over one record set: col(name, c)(L) → (i) → the value, or null where the set lacks it. */
   const col = (name, c) => (L) => { const v = L[name]; if (!v) return null; const st = L.cols[name]; return (i) => v[i * st + c]; };
-  function extent(rr, acc, lo, hi) {
+  function extent(rr, acc, lo, hi, a = -Infinity, b = Infinity) {
     for (const [L, i0, i1] of rr) {
       const f = acc(L);
       if (!f) continue;
       for (let i = Math.max(0, i0); i < Math.min(L.t.length, i1); i++) {
+        if (L.t[i] < a || L.t[i] > b) continue;
         const y = f(i);
         if (y < lo) lo = y; if (y > hi) hi = y;
       }
@@ -285,18 +287,27 @@
     const kx = R.w / (b - a);
     ctx.save(); ctx.beginPath(); ctx.rect(R.x, R.y, R.w, R.h); ctx.clip();
     ctx.strokeStyle = color; ctx.lineWidth = width || 1.1; ctx.lineJoin = "round"; ctx.beginPath();
+    // Helios (MMSStackPlot.drawLine): a break only where the spacing exceeds max(3 × the median of the last five
+    // spacings, 60 s); a non-finite sample (fill, a despiked point) is skipped and the line bridged over it
+    let pen = false, prev = -Infinity;
+    const last5 = [];
+    const isGap = (t) => {
+      if (prev === -Infinity) return true;
+      const dt = t - prev, med = last5.length ? last5.slice().sort((p, q) => p - q)[last5.length >> 1] : dt;
+      return dt > Math.max(3 * med, 60);
+    };
+    const note = (t) => { if (prev > -Infinity) { last5.push(t - prev); if (last5.length > 5) last5.shift(); } prev = t; };
     for (const [L, i0, i1] of rr) {
       const f = acc(L);
       if (!f) continue;
-      const t = L.t, gap = L.gap, j0 = Math.max(0, i0), j1 = Math.min(t.length, i1);
-      let pen = false, prev = -Infinity;
+      const t = L.t, j0 = Math.max(0, i0), j1 = Math.min(t.length, i1);
       if (j1 - j0 < R.w * 3) {
         for (let i = j0; i < j1; i++) {
-          const y0 = f(i), y = isFinite(yOf(y0)) ? y0 : NaN;   // a value the axis cannot place (≤ 0 on a log row) is a gap
-          if (!isFinite(y) || t[i] - prev > gap) pen = false;
-          prev = t[i];
-          if (!isFinite(y)) continue;
-          const X = R.x + (t[i] - a) * kx, Y = yOf(y);
+          const y0 = f(i);
+          if (!isFinite(yOf(y0))) continue;                 // not placeable (fill, ≤ 0 on a log row): bridged
+          if (isGap(t[i])) pen = false;
+          note(t[i]);
+          const X = R.x + (t[i] - a) * kx, Y = yOf(y0);
           if (pen) ctx.lineTo(X, Y); else { ctx.moveTo(X, Y); pen = true; }
         }
       } else {                                              // more samples than pixels: each column's first, min, max, last
@@ -309,10 +320,10 @@
           c = null;
         };
         for (let i = j0; i < j1; i++) {
-          const y0 = f(i), ti = t[i], y = isFinite(yOf(y0)) ? y0 : NaN;
-          if (!isFinite(y) || ti - prev > gap) { flush(); pen = false; }
-          prev = ti;
-          if (!isFinite(y)) continue;
+          const y = f(i), ti = t[i];
+          if (!isFinite(yOf(y))) continue;
+          if (isGap(ti)) { flush(); pen = false; }
+          note(ti);
           const cc = Math.floor((ti - a) * kx);
           if (cc !== c) { flush(); c = cc; fy = mn = mx = ly = y; }
           else { if (y < mn) mn = y; if (y > mx) mx = y; ly = y; }
@@ -323,6 +334,16 @@
     ctx.stroke(); ctx.restore();
   }
   const scratch = document.createElement("canvas");
+  /** Where a set's samples run, broken at spacings over 15 s (Helios's Fast bar). */
+  function fastSegs(S) {
+    if (!S || !S.t.length) return [];
+    if (S._fast) return S._fast;
+    const t = S.t, out = [];
+    let st = t[0];
+    for (let i = 1; i < t.length; i++) if (t[i] - t[i - 1] > 15) { out.push([st, t[i - 1]]); st = t[i]; }
+    out.push([st, t[t.length - 1]]);
+    return (S._fast = out);
+  }
   /** Live: the spectrogram's color range as Helios sets it (MMSStackPlot.specRange): the 2–99.5th percentile of the
    *  flux in the window (≤ 600 columns sampled), out to whole decades, at least 3 and at most 7 of them; a fixed
    *  fallback (10³–10⁷ ions, 10⁴–10⁹ electrons) when fewer than 30 values. The demo keeps its fixed ranges. */
@@ -363,9 +384,9 @@
       m = new Int16Array(H);
       for (let y = 0; y < H; y++) {
         const le = ehi - (y + 0.5) / H * (ehi - elo);
-        let j = 0;                                         // the burst tables alternate half a step: edge bins stretch
+        let j = 0;
         while (j < n - 1 && le >= ed[j + 1]) j++;
-        m[y] = j;
+        m[y] = le < ed[0] || le > ed[n] ? -1 : j;          // outside this record's own table: blank (Helios ownEdges)
       }
       maps.set(key, m);
       return m;
@@ -378,7 +399,7 @@
       while (si < segs.length && segs[si][1] < t) si++;
       const L = si < segs.length && segs[si][0] <= t ? D.bu : D.sv, S = L[ds], tt = S.t, nc = S.cols.spec;
       const i = lower(tt, t + 1e-6) - 1;                     // the record whose accumulation covers t
-      const ok = i >= 0 && t - tt[i] <= S.dt * 1.5;
+      const cap = Math.max(3 * (i > 0 ? tt[i] - tt[i - 1] : S.dt), 8), ok = i >= 0 && t - tt[i] <= cap;
       const rm = ok ? rows(L, S.eidx[i]) : null, base = i * nc;
       // live, as Helios (MMSStackPlot.drawSpectrogram): where more records than pixels, each channel's MAX over the
       // records in the pixel column, so a narrow high-flux structure survives being zoomed out
@@ -389,12 +410,14 @@
           many = true; colMax.fill(0);
           for (let k = k0; k < k1; k++) {
             const rk = rows(L, S.eidx[k]), bk = k * nc;
-            for (let y = 0; y < H; y++) { const v = S.spec[bk + rk[y]]; if (v > colMax[y]) colMax[y] = v; }
+            for (let y = 0; y < H; y++) { if (rk[y] < 0) continue; const v = S.spec[bk + rk[y]]; if (v > colMax[y]) colMax[y] = v; }
           }
         }
       }
       for (let y = 0; y < H; y++) {
-        const o = (y * W + x) * 4, j = ok ? rm[y] : -1, q = many ? colMax[y] : j < 0 ? 0 : S.spec[base + j];
+        const o = (y * W + x) * 4, j = ok ? rm[y] : -1;
+        let q = many ? colMax[y] : j < 0 ? 0 : S.spec[base + j];
+        if (!q && j >= 0 && S.fillGaps && i > 0 && i + 1 < tt.length && S.spec[(i + 1) * nc + j]) q = S.spec[(i - 1) * nc + j];   // an isolated empty cell
         if (q === 0) { px[o] = px[o + 1] = px[o + 2] = 255; px[o + 3] = 255; continue; }
         const c = cmap ? cmap[q] : Math.round((q - 1) * 255 / 254) * 3;
         px[o] = LUT[c]; px[o + 1] = LUT[c + 1]; px[o + 2] = LUT[c + 2]; px[o + 3] = 255;
@@ -406,19 +429,21 @@
     ctx.drawImage(scratch, R.x, R.y, R.w, R.h);
     ctx.imageSmoothingEnabled = true;
   }
-  function colorbar(ctx, x, y, w, h, range) {
+  function colorbar(ctx, x, y, w, h, range, unit) {
     for (let i = 0; i < h; i++) {
       const c = Math.round((1 - i / h) * 255) * 3;
       ctx.fillStyle = `rgb(${LUT[c]},${LUT[c + 1]},${LUT[c + 2]})`;
       ctx.fillRect(x, y + i, w, 1.2);
     }
     ctx.strokeStyle = RULE; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    const [lo, hi] = range;
+    const [lo, hi] = range, every = hi - lo > 3 ? 2 : 1;
     for (let e = Math.ceil(lo); e <= Math.floor(hi); e++) {
+      if ((e - Math.ceil(lo)) % every) continue;
       const yy = y + h - (e - lo) / (hi - lo) * h;
       if (yy < y + 4 || yy > y + h - 4) continue;
       rich(ctx, `10^{${e}}`, x + w + 3, yy, { size: 9.5, color: INK2 });
     }
+    if (unit) { ctx.save(); ctx.translate(x + w + 30, y + h / 2); ctx.rotate(-Math.PI / 2); rich(ctx, unit, 0, 0, { size: 8, align: "center", color: INK2 }); ctx.restore(); }
   }
   function energyAxis(ctx, R, range) {
     const [lo, hi] = range;
@@ -512,15 +537,15 @@
     ti: { title: "Ion temperature", label: "T_{i}", unit: "(eV)", w: 0.9, floor: 0, lines: [Sc("dis", "tperp", 0, COL.perp, "T_{i⊥}"), Sc("dis", "tpar", 0, COL.par, "T_{i∥}")] },
     te: { title: "Electron temperature", label: "T_{e}", unit: "(eV)", w: 0.9, floor: 0, lines: [Sc("des", "tperp", 0, COL.perp, "T_{e⊥}"), Sc("des", "tpar", 0, COL.par, "T_{e∥}")] },
     tanis: { title: "T anisotropy  T∥/T⊥ − 1", label: "T_{∥}/T_{⊥} − 1", unit: "", w: 0.8, zero: true,
-             lines: [derive("dis", COL.ni, "ions", (L) => (L.tpar ? (i) => L.tpar[i] / L.tperp[i] - 1 : null)),
-                     derive("des", COL.ne, "e⁻", (L) => (L.tpar ? (i) => L.tpar[i] / L.tperp[i] - 1 : null))] },
+             lines: [derive("dis", COL.ni, "A_{i}", (L) => (L.tpar ? (i) => L.tpar[i] / L.tperp[i] - 1 : null)),
+                     derive("des", COL.ne, "A_{e}", (L) => (L.tpar ? (i) => L.tpar[i] / L.tperp[i] - 1 : null))] },
     p: { title: "Pressure  Pᵢ / Pₑ / P_B", label: "P", unit: "(nPa)", w: 0.9, floor: 0,
          lines: [derive("dis", COL.ni, "P_{i}", pSpecies), derive("des", COL.ne, "P_{e}", pSpecies), derive("fgm", COL.mag, "P_{B}", pField)] },
     vi: { title: "Ion velocity  Vᵢ", label: "V_{i}", unit: "(km/s)", w: 1, zero: true, lines: XYZ("dis", "v") },
     ve: { title: "Electron velocity  Vₑ", label: "V_{e}", unit: "(km/s)", w: 1, zero: true, lines: XYZ("des", "v") },
     jfpi: { title: "Current  J (FPI)", label: "J_{FPI}", unit: "(µA/m²)", w: 1, zero: true, lines: XYZ("des", "j") },
     jpar: { title: "J∥  (parallel current)", label: "J_{∥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.par, "J_{∥}", jAlong(false))] },
-    jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, floor: 0, lines: [derive("des", COL.perp, "J_{⊥}", jAlong(true))] },
+    jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.perp, "J_{⊥}", jAlong(true))] },
     e: { title: "E — electric field", label: "E", unit: "(mV/m)", w: 1, zero: true, lazy: "edp", lines: XYZ("efi", "e") },
     pot: { title: "Spacecraft potential", label: "V_{sc}", unit: "(V)", w: 0.7, lazy: "edp", lines: [Sc("pot", "v", 0, COL.mag, "V_{sc}")] },
     epsd: { title: "E-field spectrogram (DSP, omni)", label: "E PSD", unit: "(Hz)", w: 1, spec: "epsd", range: "epsd", lazy: "dsp", cbar: "(V/m)²/Hz" },
@@ -539,27 +564,29 @@
            lines: four("P", (k, j) => derive("hpm", HP_COL[k], HP_LAB[k], (L) => (L.n && L.T ? (i) => QE * L.n[i * 4 + j] * L.T[i * 4 + j] : null))) },
     // the OMNI window (Helios's OmniPanel.rows) and the L1 monitors' plasma
     omBt: { title: "IMF |B|", label: "|B|", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "bt", 0, COL.mag, "|B|")] },
-    omBz: { title: "IMF Bz (GSM)", label: "B_{z}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "bz", 0, COL.z, "B_{z} GSM")] },
-    omBy: { title: "IMF By (GSM)", label: "B_{y}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "by", 0, COL.y, "B_{y} GSM")] },
-    omBx: { title: "IMF Bx (GSE)", label: "B_{x}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "bx", 0, COL.x, "B_{x} GSE")] },
+    omBz: { title: "IMF Bz (GSM)", label: "B_{z}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "bz", 0, COL.mag, "B_{z} GSM")] },
+    omBy: { title: "IMF By (GSM)", label: "B_{y}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "by", 0, COL.mag, "B_{y} GSM")] },
+    omBx: { title: "IMF Bx (GSE)", label: "B_{x}", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "bx", 0, COL.mag, "B_{x} GSE")] },
     omV: { title: "Flow speed", label: "V", unit: "(km/s)", w: 0.8, lines: [Sc("omni", "v", 0, COL.mag, "V")] },
-    omNp: { title: "Proton density", label: "N_{p}", unit: "(cm⁻³)", w: 0.8, floor: 0, lines: [Sc("omni", "np", 0, COL.ni, "N_{p}")] },
-    omT: { title: "Proton temperature", label: "T_{p}", unit: "(eV)", w: 0.8, floor: 0, lines: [Sc("omni", "tp", 0, COL.perp, "T_{p}")] },
+    omNp: { title: "Proton density", label: "N_{p}", unit: "(cm⁻³)", w: 0.8, lines: [Sc("omni", "np", 0, COL.mag, "N_{p}")] },
+    omT: { title: "Proton temperature", label: "T_{p}", unit: "(K)", w: 0.8, log: true, lines: [Sc("omni", "tp", 0, COL.mag, "T_{p}")] },
     omP: { title: "Dynamic pressure", label: "P_{dyn}", unit: "(nPa)", w: 0.8, floor: 0, lines: [Sc("omni", "pdyn", 0, COL.mag, "P_{dyn}")] },
     omEy: { title: "Ey = −V Bz", label: "E_{y}", unit: "(mV/m)", w: 0.8, zero: true, lines: [Sc("omni", "ey", 0, COL.mag, "E_{y}")] },
-    omBeta: { title: "Plasma β", label: "β", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "beta", 0, COL.mag, "β")] },
+    omBeta: { title: "Plasma β", label: "β", unit: "", w: 0.8, log: true, lines: [Sc("omni", "beta", 0, COL.mag, "β")] },
     omMa: { title: "Alfvén Mach number", label: "M_{A}", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "ma", 0, COL.mag, "M_{A}")] },
     omMms: { title: "Magnetosonic Mach number", label: "M_{ms}", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "mms", 0, COL.mag, "M_{ms}")] },
     omR0: { title: "Magnetopause R₀ (Shue 1998)", label: "R_{0}", unit: "(R_E)", w: 0.8, lines: [Sc("omni", "r0", 0, COL.mag, "R_{0}")] },
     omSymh: { title: "SYM-H", label: "SYM-H", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "symh", 0, COL.mag, "SYM-H")] },
     omAe: { title: "AE", label: "AE", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "ae", 0, COL.mag, "AE")] },
     omPcn: { title: "PC index (north)", label: "PCN", unit: "", w: 0.8, zero: true, lines: [Sc("omni", "pcn", 0, COL.mag, "PCN")] },
-    swSpeed: { title: "Flow speed  |V|", label: "|V|", unit: "(km/s)", w: 0.9, lines: [Sc("dis", "speed", 0, COL.mag, "|V|")] },
-    swT: { title: "Proton temperature", label: "T_{p}", unit: "(eV)", w: 0.9, floor: 0, lines: [Sc("dis", "tp", 0, COL.perp, "T_{p}")] },
+    swSpeed: { title: "Flow speed", label: "Flow speed", unit: "(km/s)", w: 0.9, lines: [Sc("dis", "speed", 0, COL.x, "V")] },
+    swT: { title: "Proton T", label: "Proton T", unit: "(eV)", w: 0.9, log: true, lines: [Sc("dis", "tp", 0, COL.x, "T")] },
     // GOES (Helios's GOES window): integral particle fluxes and the X-ray flux, each line set by the source (relabel)
     gP: { title: "Protons > E", label: "p^{+} > E", unit: "(cm⁻²s⁻¹sr⁻¹)", w: 1, log: true, lines: [] },
     gE: { title: "Electrons > E", label: "e^{−} > E", unit: "(cm⁻²s⁻¹sr⁻¹)", w: 0.9, log: true, lines: [] },
-    gX: { title: "X-rays (XRS)", label: "XRS", unit: "(W/m²)", w: 0.9, log: true, lines: [Sc("gxrs", "f", 0, COL.z, "1–8 Å"), Sc("gxrs", "f", 1, COL.x, "0.5–4 Å")] },
+    gX: { title: "X-rays (XRS)", label: "X-rays (XRS)", unit: "(W/m²)", w: 0.9, log: true, yRange: [-9, -3],
+          guides: [[-6, "#008000", "C"], [-5, "#ff9900", "M"], [-4, "#d90d0d", "X"]],
+          lines: [Sc("gxrs", "f", 0, COL.x, "1–8 Å"), Sc("gxrs", "f", 1, COL.z, "0.5–4 Å")] },
     comp: { title: "CIS composition  O⁺ / He⁺ / He⁺⁺", label: "CIS comp.", unit: "(cm⁻³)", w: 0.9, log: true,
             lines: [Sc("cmpO", "v", 0, COL.x, "O^{+}"), Sc("cmpHe1", "v", 0, COL.z, "He^{+}"), Sc("cmpHe2", "v", 0, COL.y, "He^{++}")] },
   };
@@ -624,12 +651,13 @@
       ],
     },
     tha: {
-      sections: [["ESA", ["ionSpec", "elecSpec", "n", "ti", "te", "tanis", "p", "vi", "ve"]], ["Fields", ["b", "e"]], ["Currents", ["jfpi"]], ["SST · high energy", [NA("SST ion + e⁻ spectra")]]],
+      sections: [["ESA", ["ionSpec", "elecSpec", "n", "ti", "te", "tanis", "vi", "ve"]], ["Fields", ["b", "e"]], ["SST · high energy", [NA("SST ion + e⁻ spectra")]]],
+      relabel: { e: { title: "E — electric field (spin-fit · E·B = 0)", lazy: null } },
       stack: LIVE ? ["b", "ionSpec", "elecSpec", "n", "ti", "te", "tanis", "vi", "ve", "e"] : ["b", "ionSpec", "elecSpec", "n", "ti", "te", "vi", "ve", "e"],   // live: Helios's THEMIS default
     },
     c4: {
       sections: LIVE
-        ? [["CIS", ["ionSpec", "n", "ti", "tanis", "vi", "comp"]], ["PEACE", ["elecSpec", "te", "ve", "jfpi"]], ["Fields", ["b"]],
+        ? [["CIS", ["ionSpec", "n", "ti", "tanis", "vi", "comp"]], ["PEACE", ["elecSpec", "te", "ve"]], ["Fields", ["b"]],
            ["CIS · CODIF composition", [NA("CIS O⁺ spectrogram"), NA("CIS He⁺ spectrogram")]], ["WHISPER", [NA("Electron density")]]]
         : [["CIS · CODIF", ["ionSpec", "n", "ti", "vi"]], ["PEACE", ["elecSpec", "te", "ve", "jfpi"]], ["Fields", ["b"]],
            ["CIS · CODIF composition", [NA("CIS O⁺ spectrogram"), NA("CIS He⁺ spectrogram")]], ["WHISPER", [NA("Electron density (no data this day)")]]],
@@ -648,10 +676,10 @@
     l1: {
       sections: [["MAG", ["b"]], ["Plasma", ["n", "vi", "swSpeed", "swT"]]],
       stack: ["b", "n", "vi", "swSpeed", "swT"],
-      relabel: { n: { title: "Proton density", lines: [Sc("dis", "n", 0, COL.ni, "N_{p}")] }, vi: { title: "Proton velocity  V (GSE)", label: "V_{p}" } },
+      relabel: { n: { title: "Proton density", lines: [Sc("dis", "n", 0, COL.ni, "N_{i}"), Sc("des", "n", 0, COL.ne, "N_{e}")] }, vi: { title: "Proton velocity  V (GSE)" } },
     },
   });
-  MISSIONS.goes = { sections: [["MAG", ["b"]], ["Particles", ["gP", "gE"]], ["X-rays", ["gX"]]], stack: ["b", "gP", "gE", "gX"],
+  MISSIONS.goes = { sections: [["MAG", ["b"]], ["X-rays", ["gX"]], ["Particles", ["gP", "gE"]]], stack: ["b", "gX", "gP", "gE"],
                     relabel: { b: { title: "B — magnetic field (GSE)" } } };
   for (const k of ["tha", "c4", "omni", "l1", "goes"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
   /** The subplot `key` as the given mission draws it. */
@@ -856,9 +884,9 @@
     const LMN = ["L", "M", "N"];
     function layout(w, h, rows) {
       const narrow = w < 500, left = narrow ? 62 : 100, right = narrow ? 44 : 64, top = cfg.coverage && D.bu ? 24 : 12, bottom = 40;
-      const total = rows.reduce((s, r) => s + r.w, 0), H = h - top - bottom;
+      const H = h - top - bottom;
       let y = top;
-      const rr = rows.map((r, k) => { const hh = H * r.w / total, R = { x: left, y, w: w - left - right, h: hh, row: r, k }; y += hh; return R; });
+      const rr = rows.map((r, k) => { const hh = H / rows.length, R = { x: left, y, w: w - left - right, h: hh, row: r, k }; y += hh; return R; });
       return { w, h, narrow, plot: { x: left, y: top, w: w - left - right, h: H }, rows: rr };
     }
 
@@ -902,17 +930,18 @@
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
       const Pl = L.plot, xOf = (t) => Pl.x + (t - a) / (b - a) * Pl.w;
       if (cfg.coverage && D.bu) {                          // the data-rate bars across the top: fast survey throughout, burst where taken
-        ctx.fillStyle = "#d8282a"; ctx.fillRect(Pl.x, 7, Pl.w, 2);
-        ctx.fillStyle = "#1e8a36";
+        ctx.fillStyle = "#d90d0d";
+        for (const [s0, e0] of fastSegs(D.sv.des)) if (e0 > a && s0 < b) ctx.fillRect(Math.max(Pl.x, xOf(s0)), 7, Math.min(Pl.x + Pl.w, xOf(e0)) - Math.max(Pl.x, xOf(s0)), 2);
+        ctx.fillStyle = "#008000";
         for (const [s, e] of D.segs.des) if (e > a && s < b) ctx.fillRect(Math.max(Pl.x, xOf(s)), 13, Math.min(Pl.x + Pl.w, xOf(e)) - Math.max(Pl.x, xOf(s)), 4);
-        rich(ctx, "Fast", Pl.x + Pl.w + 6, 8, { size: 9, color: "#d8282a" });
-        rich(ctx, "Brst", Pl.x + Pl.w + 6, 16, { size: 9, color: "#1e8a36" });
+        rich(ctx, "Fast", Pl.x + Pl.w + 6, 8, { size: 9, color: "#d90d0d" });
+        rich(ctx, "Burst", Pl.x + Pl.w + 6, 16, { size: 9, color: "#008000" });
       }
       for (const Rw of L.rows) {
         const r = Rw.row;
         if (r.spec && !(D.sv[r.spec] && D.erange[r.spec])) {      // an on-demand spectrogram still on its way
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
-          if (r.lazy && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
+          if (r.lazy && mission === "mms" && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
           else rich(ctx, "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else if (r.spec) {
@@ -922,21 +951,21 @@
           if (win[1] <= win[0]) win[1] = win[0] + 1;
           spectrogram(ctx, Rw, a, b, D, r.spec, true, dpr, LIVE ? win : null);
           energyAxis(ctx, Rw, D.erange[r.spec]);
-          colorbar(ctx, Rw.x + Rw.w + 6, Rw.y + 4, 9, Rw.h - 8, win);
+          colorbar(ctx, Rw.x + Rw.w + 6, Rw.y + 4, 9, Rw.h - 8, win, L.narrow ? null : r.cbar || (r.spec === "esp" && mission === "c4" ? "keV/cm²-s-sr-keV" : "eV/cm²-sr-eV-s"));
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else {
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
-          if (r.lazy && LIVE && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
+          if (r.lazy && LIVE && mission === "mms" && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
           let lo = Infinity, hi = -Infinity;
           const accs = r.lines.map(line => accessor(line, R)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
           const lg = (acc) => (S) => { const f = acc(S); return f && ((i) => { const v = f(i); return v > 0 ? Math.log10(v) : NaN; }); };
-          accs.forEach((acc, i) => { if (!r.lines[i].axis2) [lo, hi] = extent(rrs[i], r.log ? lg(acc) : acc, lo, hi); });
+          accs.forEach((acc, i) => { if (!r.lines[i].axis2) [lo, hi] = extent(rrs[i], r.log ? lg(acc) : acc, lo, hi, a, b); });
           if (!isFinite(lo)) { lo = -1; hi = 1; }
           if (r.log) { lo = Math.floor(lo + 1e-9); hi = Math.ceil(hi - 1e-9); if (hi - lo < 1) hi = lo + 1; }   // log rows: whole decades
-          if (r.floor !== undefined && !r.log) lo = Math.min(lo, r.floor);
+          if (r.yRange) [lo, hi] = r.yRange;
           if (r.zero && !r.log) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
           const padY = r.log ? 0 : (hi - lo) * 0.08 || 1;
-          lo -= r.floor !== undefined && lo >= r.floor ? 0 : padY; hi += padY;
+          lo -= padY; hi += padY;
           const E = r.edit;                                 // limits set in the editor (absolute values, also on a log axis)
           if (E && E.yLo != null && (!r.log || E.yLo > 0)) lo = r.log ? Math.log10(E.yLo) : E.yLo;
           if (E && E.yHi != null && (!r.log || E.yHi > 0)) hi = r.log ? Math.log10(E.yHi) : E.yHi;
@@ -950,7 +979,7 @@
           if (ax2.length) {
             const log2 = ax2.every(i => r.lines[i].logSrc);
             let l2 = Infinity, h2 = -Infinity;
-            for (const i of ax2) [l2, h2] = extent(rrs[i], log2 ? lg(accs[i]) : accs[i], l2, h2);
+            for (const i of ax2) [l2, h2] = extent(rrs[i], log2 ? lg(accs[i]) : accs[i], l2, h2, a, b);
             if (!isFinite(l2)) { l2 = -1; h2 = 1; }
             if (log2) { l2 = Math.floor(l2 + 1e-9); h2 = Math.ceil(h2 - 1e-9); if (h2 - l2 < 1) h2 = l2 + 1; }
             else { const p2 = (h2 - l2) * 0.08 || 1; l2 -= p2; h2 += p2; }
@@ -977,6 +1006,12 @@
           if (r.zero && lo < 0 && hi > 0) {
             ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(29,29,34,0.35)"; ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(Rw.x, Math.round(yOf(0)) + 0.5); ctx.lineTo(Rw.x + Rw.w, Math.round(yOf(0)) + 0.5); ctx.stroke(); ctx.restore();
+          }
+          for (const [v, color, label] of r.guides || []) {     // fixed guide levels (GOES flare classes), dashed
+            const y = yLin(v);
+            if (y < Rw.y || y > Rw.y + Rw.h) continue;
+            ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(Rw.x, y); ctx.lineTo(Rw.x + Rw.w, y); ctx.stroke(); ctx.restore();
+            rich(ctx, label, Rw.x + 4, y - 7, { size: 10, weight: 600, color });
           }
           r.lines.forEach((line, i) => stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1));
           const n = r.lines.length;                       // the legend, top to bottom, at the right
@@ -1742,6 +1777,7 @@
         <div class="fw-cuts" hidden><span class="fc-l">VDF cuts</span><span class="fc-chips"></span>${HAS_CRESCENT ? `<button class="fc-cres" title="${esc(CRESCENT_HELP)}">Crescent</button>` : ""}<div class="fw-add"><button class="pick fc-add" aria-haspopup="menu" aria-expanded="false" title="Add a VDF cut: a species at the current time. Then drag its numbered line, or type its time in its column."><b>+</b>Add</button><div class="pick-menu fc-menu" role="menu" hidden></div></div></div>
         <div class="fw-range"><button class="fw-reset" hidden aria-label="Reset the time range" title="Reset the trimmed time range to the full ±window (or double-click the figure)">${RESET}</button><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
       </div>
+      <p class="fw-banner" hidden></p>
       <div class="fw-main">
         <aside class="fw-side tk" aria-label="Figure and analysis tools" hidden></aside>
         <div class="fw-body"><canvas class="fw-plot" aria-label="The window's data: magnetic field, spectrograms, moments and currents"></canvas><canvas class="fw-over" aria-hidden="true"></canvas><p class="panel-loading" hidden></p></div>
@@ -1980,6 +2016,8 @@
       Object.assign(W.lmn, { frame: null, draft: false, error: null });
       if (W.lmn.range) W.lmn.range = null;
       el.setAttribute("aria-label", `${Cr.name} data`);
+      const ban = $(".fw-banner", el);                       // a craft-level note, as Helios's (Cluster-2's dead CIS)
+      ban.hidden = !data.banner; ban.textContent = data.banner || "";
       const pb = $(".fw-pb", el);
       pb.style.setProperty("--c", Cr.col); $("span", pb).textContent = Cr.name;
       pickerMenu();

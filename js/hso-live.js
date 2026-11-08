@@ -19,7 +19,7 @@
   const RE_KM = 6371.2, MK_EV = 86.1733, DEG = Math.PI / 180;
   // log10 keV/(cm² s sr keV) the 8-bit spectra are stored over: wide, so no flux is clipped; each window then picks
   // its own color range from the data, as Helios does (hso.js specRange)
-  const SPEC_RANGE = { dis: [0.5, 9.0], des: [1.5, 10.0], hpca: [-1.0, 9.0], epsd: [-16.0, -2.0] };
+  const SPEC_RANGE = { dis: [0.5, 10.0], des: [1.5, 10.0], hpca: [-1.0, 9.0], epsd: [-16.0, -2.0] };
   // FPI's fast-survey energy tables (eV), which HAPI does not serve: the same on all four probes in the demo's files
   const FPI_E = {
     dis: [11.33, 14.55, 18.69, 24.0, 30.83, 39.6, 50.87, 65.34, 83.92, 107.8, 138.46, 177.86, 228.45, 293.44, 376.92, 484.15,
@@ -185,7 +185,7 @@
     const [lo, hi] = SPEC_RANGE[sp], out = new Uint8Array(n * nc);
     for (let i = 0; i < n * nc; i++) {
       const f = flux[i];
-      if (!isFinite(f) || (zerosBlank && f <= 0)) continue;     // CIS: a zero is drawn blank, as Helios draws it
+      if (!isFinite(f) || f < 0 || (zerosBlank && f <= 0)) continue;   // negative flux blank (Helios); CIS zeros blank too
       const l = Math.log10(Math.max(f, 10 ** lo));
       out[i] = Math.max(1, Math.min(255, Math.round((l - lo) / (hi - lo) * 254) + 1));
     }
@@ -383,21 +383,22 @@
   function fpiSet(r, sp, withST) {                         // columns: spectrum[32], n, V[3], (spin tone[3],) T∥, T⊥
     const n = r.n, nc = 32, o = withST ? 3 : 0;
     const flux = stack(r.cols, 0, nc);
-    return set({
+    return gapFilled(set({
       t: [f32(r.t), 1], n: [f32(r.cols[32]), 1], v: [stack(r.cols, 33, 3), 3], tpar: [f32(r.cols[36 + o]), 1], tperp: [f32(r.cols[37 + o]), 1],
       ...(withST ? { vst: [stack(r.cols, 36, 3).map(x => (isFinite(x) ? x : 0)), 3] } : {}),
       spec: [spec8(flux, n, nc, sp), nc], etab: [Float32Array.from(FPI_E[sp]), nc], eidx: [new Uint8Array(n), 1],
-    });
+    }));
   }
+  const gapFilled = (S) => { S.fillGaps = true; return S; };
   /** Burst moments: columns parity, spectrum[32], n, V[3], (spin tone[3],) T∥, T⊥, in HAPI's order. */
   function fpiBurstSet(r, sp, withST) {
     const n = r.n, o = withST ? 3 : 0, eidx = new Uint8Array(n);
     for (let i = 0; i < n; i++) eidx[i] = r.cols[0][i] === 1 ? 1 : 0;
-    return set({
+    return gapFilled(set({
       t: [f32(r.t), 1], n: [f32(r.cols[33]), 1], v: [stack(r.cols, 34, 3), 3], tpar: [f32(r.cols[37 + o]), 1], tperp: [f32(r.cols[38 + o]), 1],
       ...(withST ? { vst: [stack(r.cols, 37, 3).map(x => (isFinite(x) ? x : 0)), 3] } : {}),
       spec: [spec8(stack(r.cols, 1, 32), n, 32, sp), 32], etab: [Float32Array.from(FPI_EB[sp].flat()), 32], eidx: [eidx, 1],
-    });
+    }));
   }
   async function mms(n) {
     const sc = `mms${n}`, [a, b] = window_;
@@ -444,9 +445,9 @@
     const esa = (s) => [`th${l}_pe${s}_density`, `th${l}_pe${s}_avgtemp`, `th${l}_pe${s}_en_eflux`, `th${l}_pe${s}_magt3`, `th${l}_pe${s}_velocity_gse`];
     const none = { t: new Float64Array(0), cols: [], n: 0 };
     const [fg, ir, er, mi, me, efi] = await Promise.all([
-      track(`${P} FGM`, hapi(`TH${L}_L2_FGM@0`, [`th${l}_fgs_btotal`, `th${l}_fgs_gse`], a, b, true)),
-      track(`${P} ESA ion spectra`, hapi(`TH${L}_L2_ESA@2`, esa("ir"), a, b, true)),
-      track(`${P} ESA electron spectra`, hapi(`TH${L}_L2_ESA@3`, esa("er"), a, b, true)),
+      track(`${P} FGM`, hapi(`TH${L}_L2_FGM@0`, [`th${l}_fgs_btotal`, `th${l}_fgs_gse`], a, b, true).catch(() => none)),
+      track(`${P} ESA ion spectra`, hapi(`TH${L}_L2_ESA@2`, esa("ir"), a, b, true).catch(() => none)),
+      track(`${P} ESA electron spectra`, hapi(`TH${L}_L2_ESA@3`, esa("er"), a, b, true).catch(() => none)),
       track(`${P} ion moments (MOM)`, hapi(`TH${L}_L2_MOM@0`, mom("i"), a, b, true).catch(() => none)),
       track(`${P} electron moments (MOM)`, hapi(`TH${L}_L2_MOM@1`, mom("e"), a, b, true).catch(() => none)),
       hapi(`TH${L}_L2_FIT@1`, [`th${l}_efs_dot0_gse`], a, b, true).catch(() => null),
@@ -456,22 +457,27 @@
     for (let i = 0; i < fg.n; i++) { b4[i * 4] = bm[i * 4 + 1]; b4[i * 4 + 1] = bm[i * 4 + 2]; b4[i * 4 + 2] = bm[i * 4 + 3]; b4[i * 4 + 3] = bm[i * 4]; }
     sv.fgm = set({ t: [f32(fg.t), 1], b: [b4, 4] });
     // the spectra: the reduced-mode sweeps, the table chosen by how many channels are live (prepare_hso_missions)
+    // Helios's per-probe ESA calibration of the THEMIS-A tables (HSODataClient: B, C, D and E)
+    const CAL = { ion: { B: 0.9753, C: 0.9753, D: 0.9753, E: 0.9727 }, elec: { B: 0.9825, C: 0.9825, D: 0.9825, E: 0.9835 } };
     const spectra = (r, tables, sp) => {
-      const n = r.n, flux = new Float32Array(n * 32).fill(NaN), eidx = new Uint8Array(n), tabs = [], keys = [];
+      const n = r.n, flux = new Float32Array(n * 32).fill(NaN), eidx = new Uint8Array(n), tabs = [], keys = [], top = [];
+      const cal = (CAL[sp === "dis" ? "ion" : "elec"][L] || 1);
       for (let i = 0; i < n; i++) {
         const row = []; for (let c = 0; c < 32; c++) row.push(r.cols[2 + c][i]);
-        const live = row.filter(isFinite).length, tab = tables[live];
+        let last = -1; for (let c = 0; c < 32; c++) if (isFinite(row[c])) last = c;   // the sweep: its last live column (Helios)
+        const tab = tables[last + 1];
         if (!tab) continue;
         let k = keys.indexOf(tab.length);
-        if (k < 0) { keys.push(tab.length); tabs.push(tab); k = tabs.length - 1; }
+        if (k < 0) { keys.push(tab.length); tabs.push(tab); top.push(-1); k = tabs.length - 1; }
         eidx[i] = k;
-        const asc = row.slice().reverse().filter(isFinite);
-        for (let c = 0; c < Math.min(tab.length, asc.length); c++) flux[i * 32 + c] = asc[c];
+        const asc = row.slice(0, last + 1).reverse();                  // each value in its own channel, gaps kept
+        for (let c = 0; c < Math.min(tab.length, asc.length); c++) { flux[i * 32 + c] = asc[c]; if (asc[c] > 0) top[k] = Math.max(top[k], c); }
       }
-      if (!tabs.length) tabs.push(tables[32]);
+      if (!tabs.length) { tabs.push(tables[32]); top.push(31); }
       const etab = new Float32Array(tabs.length * 32);
-      tabs.forEach((tb, k) => { for (let c = 0; c < 32; c++) etab[k * 32 + c] = c < tb.length ? tb[c] : tb[tb.length - 1] * 1.3 ** (c - tb.length + 1); });
-      return { spec: [spec8(flux, n, 32, sp), 32], etab: [etab, 32], eidx: [eidx, 1] };
+      tabs.forEach((tb, k) => { for (let c = 0; c < 32; c++) etab[k * 32 + c] = (c < tb.length ? tb[c] : tb[tb.length - 1] * (1 + 1e-3 * (c - tb.length + 1))) * cal; });
+      // channels empty at every record (the dead top one) stay off the axis, as Helios drops them
+      return { spec: [spec8(flux, n, 32, sp), 32], etab: [etab, 32], eidx: [eidx, 1], etabN: top.map((t, k) => Math.max(2, t + 1)) };
     };
     // the moments: MOM where it has data, ESA reduced mode where it does not
     const moments = (m, r) => {
@@ -486,8 +492,9 @@
     };
     // moments and spectra keep their own clocks: the moments as dis/des, the spectra as isp/esp
     sv.dis = set(moments(mi, ir)); sv.des = set(moments(me, er));
-    sv.isp = set({ t: [f32(ir.t), 1], ...spectra(ir, { 32: ION32, 31: ION32, 24: ION24, 23: ION24 }, "dis") });
-    sv.esp = set({ t: [f32(er.t), 1], ...spectra(er, { 32: ELEC32, 31: ELEC32 }, "des") });
+    const withN = (o) => { const { etabN, ...rest } = o; const S = set(rest); S.etabN = etabN; S.fillGaps = true; return S; };
+    sv.isp = withN({ t: [f32(ir.t), 1], ...spectra(ir, { 32: ION32, 31: ION32, 24: ION24, 23: ION24 }, "dis") });
+    sv.esp = withN({ t: [f32(er.t), 1], ...spectra(er, { 32: ELEC32, 31: ELEC32 }, "des") });
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
     if (efi && efi.n) sv.efi = set({ t: [f32(efi.t), 1], e: [stack(efi.cols, 0, 3), 3] });
     const label = { B: "ARTEMIS-P1", C: "ARTEMIS-P2" }[L] || `THEMIS-${L}`;
@@ -544,7 +551,7 @@
     const peace = track(`Cluster-${N} PEACE spectrogram (ESA CSA)`, peaceSpectra(C, a, b)).catch(() => null);
     const cisP = ["N_p", "N_O1", "N_He1", "N_He2", "N_HIA", "V_p_xyz_gse", "V_HIA_xyz_gse", "T_p_par", "T_p_perp", "T_HIA_par", "T_HIA_perp"].map(q => `${q}__${C}_PP_CIS`);
     const [fg, cis, pea, sp, bins] = await Promise.all([
-      track(`Cluster-${N} FGM`, hapi(`${C}_CP_FGM_SPIN`, [`B_vec_xyz_gse__${C}_CP_FGM_SPIN`, `B_mag__${C}_CP_FGM_SPIN`], a, b, true)),
+      track(`Cluster-${N} FGM`, hapi(`${C}_CP_FGM_SPIN`, [`B_vec_xyz_gse__${C}_CP_FGM_SPIN`, `B_mag__${C}_CP_FGM_SPIN`], a, b, true).catch(() => none)),
       N === 2 ? none : track(`Cluster-${N} CIS`, hapi(`${C}_PP_CIS`, cisP, a, b, true).catch(() => none)),
       track(`Cluster-${N} PEACE`, hapi(`${C}_PP_PEA`, [`N_e_den__${C}_PP_PEA`, `V_e_xyz_gse__${C}_PP_PEA`, `T_e_par__${C}_PP_PEA`, `T_e_perp__${C}_PP_PEA`], a, b, true).catch(() => none)),
       specId ? hapi(specId[0], [specId[1]], a, b, true).catch(() => none) : none,
@@ -591,6 +598,7 @@
     if (sv.dis && sv.des) { sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3; }
     const relabel = { ionSpec: { spec: "isp", label: N === 4 ? "CODIF H^{+}" : "HIA ions", title: N === 4 ? "CODIF H⁺ spectrogram" : "HIA ion spectrogram" } };
     return { sv, bu: null, kind: "c4", label: `Cluster-${N}`, relabel, empty: !fg.n,
+             banner: N === 2 ? "Cluster-2 carries no working CIS instrument: there are no ion density, velocity, temperature or ion-spectrogram panels for this spacecraft, at any epoch. The field and PEACE electron panels are unaffected." : null,
              notes: `Cluster via CDAWeb HAPI, live, as Helios reads it: FGM spin; CIS prime-parameter moments from ${sensor || "no CIS sensor"}` +
                     `${N === 2 ? " (Cluster-2 has no working CIS)" : ""} and CIS composition; PEACE prime-parameter moments; the ${N === 4 ? "CODIF H⁺" : "HIA"} ion spectrogram; ` +
                     "PEACE's pitch-angle DEFlux from ESA's Cluster Science Archive. Records outside physical bounds, isolated density dropouts and CIS glitch cells are dropped, as in Helios." };
@@ -604,12 +612,23 @@
     const [a, b] = window_;
     const P = ["F", "BX_GSE", "BY_GSM", "BZ_GSM", "flow_speed", "proton_density", "T", "Pressure", "E", "Beta", "Mach_num", "Mgs_mach_num", "AE_INDEX", "SYM_H", "PC_N_INDEX"];
     const F = [9999.99, 9999.99, 9999.99, 9999.99, 99999.9, 999.99, 9999999, 99.99, 999.99, 999.99, 999.9, 99.9, 99999, 99999, 999.99];
-    const r = await track("OMNI window", hapi("OMNI_HRO_1MIN", P, a - 3600e3, b + 3600e3, true));
+    const [r2, r1] = await track("OMNI window", Promise.all([hapi("OMNI_HRO2_1MIN", P, a - 3600e3, b + 3600e3, true).catch(() => null),
+                                                             hapi("OMNI_HRO_1MIN", P, a - 3600e3, b + 3600e3, true)]));
+    // HRO2 where it has the minute, HRO filling its ends (OmniPanel)
+    let r = r1;
+    if (r2 && r2.n) {
+      const t2 = new Set(Array.from(r2.t, x => Math.round(x))), keep = [];
+      for (let i = 0; i < r1.n; i++) if (!t2.has(Math.round(r1.t[i]))) keep.push(i);
+      const idx = Array.from({ length: r2.n }, (_, i) => [r2.t[i], 2, i]).concat(keep.map(i => [r1.t[i], 1, i])).sort((p, q) => p[0] - q[0]);
+      r = { n: idx.length, t: Float64Array.from(idx, x => x[0]), cols: P.map((_, k) => Float64Array.from(idx, ([, w, i]) => (w === 2 ? r2 : r1).cols[k][i])) };
+    }
+    r.t = Float64Array.from(r.t, x => x + 30);                    // each record at the middle of its minute
     const c = P.map((_, k) => fillNaN(r.cols[k], F[k]));
+    for (let i = 0; i < r.n; i++) if (c[5][i] > 0 && c[4][i] > 0) c[7][i] = 2e-6 * c[5][i] * c[4][i] ** 2;   // Pdyn from n and V
     const n = r.n, r0 = new Float32Array(n), tp = new Float32Array(n);
     for (let i = 0; i < n; i++) {                             // Shue et al. (1998) stand-off, from the minute's Bz and pressure
       r0[i] = (10.22 + 1.29 * Math.tanh(0.184 * (c[3][i] + 8.14))) * Math.pow(c[7][i], -1 / 6.6);
-      tp[i] = c[6][i] * KELVIN_EV;
+      tp[i] = c[6][i];                                         // K, on a log axis (OmniPanel)
     }
     const one = (a_) => [a_, 1];
     const sv = { omni: set({ t: one(f32(r.t)), bt: one(c[0]), bx: one(c[1]), by: one(c[2]), bz: one(c[3]), v: one(c[4]), np: one(c[5]), tp: one(tp),
@@ -624,13 +643,13 @@
     let B = null, rows = [];                                // rows: [t, n, vx, vy, vz, speed, T eV]
     const vec = (r, j = 0) => r.n ? { t: r.t, x: fillNaN(r.cols[j], 1e30), y: fillNaN(r.cols[j + 1], 1e30), z: fillNaN(r.cols[j + 2], 1e30) } : null;
     if (key === "ace") {
-      const [m, sw] = await Promise.all([hapi("AC_H0_MFI", ["BGSEc"], a, b, true), hapi("AC_H0_SWE", ["Np", "Vp", "Tpr", "V_GSE"], a, b, true)]);
+      const nil = { t: [], cols: [], n: 0 }, [m, sw] = await Promise.all([hapi("AC_H0_MFI", ["BGSEc"], a, b, true).catch(() => nil), hapi("AC_H0_SWE", ["Np", "Vp", "Tpr", "V_GSE"], a, b, true).catch(() => nil)]);
       B = vec(m) || vec(await hapi("AC_K0_MFI", ["BGSEc"], a, b, true));
       if (sw.n) for (let i = 0; i < sw.n; i++) rows.push([sw.t[i], sw.cols[0][i], sw.cols[3][i], sw.cols[4][i], sw.cols[5][i], sw.cols[1][i], sw.cols[2][i] * KELVIN_EV]);
       else { const k = await hapi("AC_K0_SWE", ["Np", "Vp", "Tpr"], a, b, true); for (let i = 0; i < k.n; i++) rows.push([k.t[i], k.cols[0][i], NaN, NaN, NaN, k.cols[1][i], k.cols[2][i] * KELVIN_EV]); }
     } else if (key === "wind") {
-      const [m, sw] = await Promise.all([hapi("WI_H0_MFI@0", ["BGSE"], a, b, true),
-        hapi("WI_H1_SWE", ["fit_flag", "Proton_V_nonlin", "Proton_VX_nonlin", "Proton_VY_nonlin", "Proton_VZ_nonlin", "Proton_W_nonlin", "Proton_Np_nonlin"], a, b, true)]);
+      const nil = { t: [], cols: [], n: 0 }, [m, sw] = await Promise.all([hapi("WI_H0_MFI@0", ["BGSE"], a, b, true).catch(() => nil),
+        hapi("WI_H1_SWE", ["fit_flag", "Proton_V_nonlin", "Proton_VX_nonlin", "Proton_VY_nonlin", "Proton_VZ_nonlin", "Proton_W_nonlin", "Proton_Np_nonlin"], a, b, true).catch(() => nil)]);
       B = vec(m) || vec(await hapi("WI_K0_MFI", ["BGSEc"], a, b, true));
       const ok = (x) => (x < 99990 ? x : NaN);
       for (let i = 0; i < sw.n; i++) if (sw.cols[0][i] >= 1) rows.push([sw.t[i], ok(sw.cols[6][i]), ok(sw.cols[2][i]), ok(sw.cols[3][i]), ok(sw.cols[4][i]), ok(sw.cols[1][i]), thermalEV(ok(sw.cols[5][i]))]);
@@ -639,7 +658,7 @@
         for (let i = 0; i < k.n; i++) rows.push([k.t[i], k.cols[4][i], k.cols[0][i], k.cols[1][i], k.cols[2][i], Math.hypot(k.cols[0][i], k.cols[1][i], k.cols[2][i]), thermalEV(k.cols[3][i])]);
       }
     } else {
-      const [m, fc] = await Promise.all([hapi("DSCOVR_H0_MAG", ["B1GSE"], a, b, true), hapi("DSCOVR_H1_FC", ["V_GSE", "THERMAL_SPD", "Np", "THERMAL_TEMP"], a, b, true)]);
+      const nil = { t: [], cols: [], n: 0 }, [m, fc] = await Promise.all([hapi("DSCOVR_H0_MAG", ["B1GSE"], a, b, true).catch(() => nil), hapi("DSCOVR_H1_FC", ["V_GSE", "THERMAL_SPD", "Np", "THERMAL_TEMP"], a, b, true).catch(() => nil)]);
       B = vec(m);
       for (let i = 0; i < fc.n; i++) {
         const tK = fc.cols[5][i];
@@ -684,7 +703,7 @@
   async function goesWindow(key) {
     const sat = key.slice(1), [a, b] = window_, feed = sat === "18" ? "goess" : "goesp", feedName = feed === "goess" ? "SWPC secondary feed" : "SWPC primary feed";
     const [own, part, xrs] = await Promise.all([
-      track(`GOES-${sat} magnetometer (NOAA L2)`, latis(`noaa_goes${sat}_magn_1m`, a, b)),
+      sat === "19" ? Promise.resolve([]) : track(`GOES-${sat} magnetometer (NOAA L2)`, latis(`noaa_goes${sat}_magn_1m`, a, b)),
       track(`GOES ${feed === "goess" ? "secondary" : "primary"} feed particles`, latis(`${feed}_part_flux_P5M`, a, b)),
       track(`GOES-${sat} X-rays (XRS)`, latis(`noaa_goes${sat}_xrs_1m`, a, b)),
     ]);
@@ -713,13 +732,15 @@
     if (E) sv.gele = E.set;
     if (xrs.length) {
       const n = xrs.length, f = new Float32Array(n * 2);
-      xrs.forEach((r, i) => { f[i * 2] = r[2] > 0 ? r[2] : NaN; f[i * 2 + 1] = r[1] > 0 ? r[1] : NaN; });   // long (1–8 Å), short (0.5–4 Å)
+      // long (1–8 Å) and short (0.5–4 Å): the quality-masked columns, or the raw value where its flag is 0 (Helios)
+      const pick = (raw, flag, masked) => (masked > 0 ? masked : flag === 0 && raw > 0 ? raw : NaN);
+      xrs.forEach((r, i) => { f[i * 2] = pick(r[2], r[4], r[6]); f[i * 2 + 1] = pick(r[1], r[3], r[5]); });
       sv.gxrs = set({ t: [Float32Array.from(xrs, r => r[0]), 1], f: [f, 2] });
     }
-    const PCOL = ["#d8282a", "#ee8a1c", "#c9a400", "#1e8a36", "#0e9aa7", "#2a46d6", "#8e44ad", "#151515"], ECOL = ["#2a46d6", "#1e8a36", "#d8282a"];
+    const PCOL = ["#001af2", "#d90d0d", "#008000", "#ff9900", "#7f33b3", "#008c8c"], ECOL = PCOL;   // Helios's fluxPalette, in order of appearance
     const relabel = {
-      gP: { lines: (P ? P.keep : []).map((c, k) => ({ ds: "gpro", name: "f", c: k, color: PCOL[k % 8], label: `${PL[c]} MeV` })), title: `Protons > E · ${feed === "goess" ? "secondary" : "primary"} feed` },
-      gE: { lines: (E ? E.keep : []).map((c, k) => ({ ds: "gele", name: "f", c: k, color: ECOL[k % 3], label: `${EL[c]} MeV` })), title: `Electrons > E · ${feed === "goess" ? "secondary" : "primary"} feed` },
+      gP: { lines: (P ? P.keep : []).map((c, k) => ({ ds: "gpro", name: "f", c: k, color: PCOL[k % 6], label: `${PL[c]} MeV` })), title: `Protons >E, ${feed === "goess" ? "secondary" : "primary"} feed`, label: `Protons >E, ${feed === "goess" ? "secondary" : "primary"} feed` },
+      gE: { lines: (E ? E.keep : []).map((c, k) => ({ ds: "gele", name: "f", c: k, color: ECOL[k % 6], label: `${EL[c]} MeV` })), title: `Electrons >E, ${feed === "goess" ? "secondary" : "primary"} feed`, label: `Electrons >E, ${feed === "goess" ? "secondary" : "primary"} feed` },
     };
     if (fromFeed) relabel.b = { title: "B — payload frame (Hp, He, Hn)", lines: [{ ds: "fgm", name: "b", c: 3, color: "#151515", label: "|B|" },
       { ds: "fgm", name: "b", c: 0, color: "#2a46d6", label: "H_{p}", vec: true }, { ds: "fgm", name: "b", c: 1, color: "#1e8a36", label: "H_{e}", vec: true },
@@ -929,14 +950,11 @@
           for (let p = 0; p < np; p++) { const v = +tok[oD + p * ne + k]; if (v >= 0 && v < 1e30) { s += v * w[p]; ws += w[p]; } }
           if (ws > 0) omni[k] = s / ws;
         }
-        const order = E.map((e, k) => [isFinite(e) ? e : Infinity, k]).sort((p, q) => p[0] - q[0]).map(x => x[1]);
-        const Es = order.map(k => E[k]), Fs = order.map(k => omni[k]);
-        const last = Es.filter(isFinite).pop() || 1;                          // unused levels continue the sweep upward
-        let extra = 0;
-        const tab = Es.map(e => (isFinite(e) ? +e.toFixed(1) : +(last * 1.15 ** ++extra).toFixed(1)));
-        const key = tab.join(",");
-        if (!keys.has(key)) { keys.set(key, tabs.length); tabs.push(tab); }
-        T.push(sec(ms)); rows.push(Fs); eidx.push(keys.get(key));
+        const order = E.map((e, k) => [e, k]).filter(([e]) => isFinite(e)).sort((p, q) => p[0] - q[0]).map(x => x[1]);
+        if (!order.length) continue;
+        if (!tabs.length) tabs.push(order.map(k => +E[k].toFixed(1)));          // the first good record's valid levels
+        const Fs = tabs[0].map((_, j) => (j < order.length ? omni[order[j]] : NaN));
+        T.push(sec(ms)); rows.push(Fs); eidx.push(0);
       }
     }
     if (!T.length) return null;
@@ -1512,7 +1530,8 @@
     get bytes() { return bytes; },
     load: () => context(),
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
-    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))),
+    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
+      .catch((e) => { delete craftCache[key]; throw e; })),
     scene,
     vdf: (n, sp) => vdfStore(n, sp),
     hpcaDist: (n, sp, t) => hpcaDist(n, sp, t),
