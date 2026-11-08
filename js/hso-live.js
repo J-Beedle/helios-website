@@ -29,6 +29,15 @@
           622.6, 798.32, 1023.63, 1312.53, 1682.97, 2157.95, 2766.99, 3547.92, 4549.25, 5833.18, 7479.48, 9590.41, 12297.11,
           15767.72, 20217.84, 25923.91],
   };
+  const FPI_P2 = { dis: [2.16, 3.91, 7.07, 10.93, 14.47, 19.16, 25.37, 33.59, 44.48, 58.89, 77.98, 103.24, 136.7, 180.99, 239.63, 317.28,
+                         420.09, 556.22, 736.45, 975.08, 1291.03, 1709.37, 2263.26, 2996.62, 3967.62, 5253.24, 6955.46, 9209.24, 12193.31, 16144.31, 21375.56, 28301.89] };
+  const FPI_P3 = { dis: [2.16, 3.91, 7.07, 10.93, 14.24, 18.54, 24.14, 31.44, 40.94, 53.32, 69.44, 90.43, 117.77, 153.36, 199.72, 260.1,
+                         338.72, 441.11, 574.45, 748.1, 974.23, 1268.72, 1652.24, 2151.68, 2802.1, 3649.12, 4752.19, 6188.69, 8059.43, 10495.65, 13668.31, 17800.0],
+                   des: [6.52, 8.54, 11.17, 14.63, 19.15, 25.07, 32.81, 42.95, 56.23, 73.6, 96.34, 126.12, 165.09, 216.11, 282.89, 370.31,
+                         484.74, 634.54, 830.63, 1087.31, 1423.32, 1863.16, 2438.92, 3192.61, 4179.2, 5470.68, 7161.25, 9374.25, 12271.12, 16063.2, 21027.11, 27525.0] };
+  /** The table a record most likely flew when its own file could not be read (Helios's FPIEnergyTables.assumed): P1
+   *  before 2016-09-26, then the P2 ions to 2018-02-01 and the P3 ("sheath") ions after; the electrons' P2 = P3. */
+  const fpiAssumed = (sp, ms) => (ms < Date.UTC(2016, 8, 26) ? FPI_E[sp] : sp === "des" ? FPI_P3.des : ms < Date.UTC(2018, 1, 1) ? FPI_P2.dis : FPI_P3.dis);
   // FPI's two burst energy tables per species, alternating record by record: table k serves step-table parity k
   const FPI_EB = {
     dis: [[10.64, 13.66, 17.55, 22.55, 28.96, 37.2, 47.78, 61.37, 78.83, 101.26, 130.06, 167.06, 214.59, 275.64, 354.05, 454.78, 584.15,
@@ -205,15 +214,14 @@
   /** J = e nₑ (Vᵢ − Vₑ) on the electrons' times, µA/m², none across gaps in the ions (prepare_hso_demo.current). */
   function current(ti, vi, te, ne, ve) {
     const n = te.length, out = new Float32Array(n * 3).fill(NaN);
-    if (ti.length < 2) return out;
-    const dts = []; for (let i = 1; i < ti.length; i++) dts.push(ti[i] - ti[i - 1]);
-    dts.sort((p, r) => p - r);
-    const gap = 3 * dts[dts.length >> 1];
+    if (ti.length < 2 || n < 2) return out;
+    const med = (t) => { const d = []; for (let i = 1; i < t.length; i++) d.push(t[i] - t[i - 1]); d.sort((p, r) => p - r); return d[d.length >> 1]; };
+    const shift = med(te) / 2 - med(ti) / 2;                // 0.03/2 − 0.15/2 = −60 ms in burst, 0 in fast survey
     let k = 0;
     for (let i = 0; i < n; i++) {
-      const t = te[i];
+      const t = te[i] + shift;
       while (k < ti.length - 2 && ti[k + 1] < t) k++;
-      if (t < ti[0] || t > ti[ti.length - 1] || ti[k + 1] - ti[k] > gap) continue;
+      if (t < ti[0] || t > ti[ti.length - 1]) continue;
       const f = (t - ti[k]) / (ti[k + 1] - ti[k]);
       for (let c = 0; c < 3; c++) out[i * 3 + c] = 1.602176634e-4 * ne[i] * (vi[k * 3 + c] + (vi[(k + 1) * 3 + c] - vi[k * 3 + c]) * f - ve[i * 3 + c]);
     }
@@ -367,14 +375,19 @@
     return p;
   }
   /** Relabel a record set with the tables flown: each record takes the nearest file record's table. */
-  function applyTables(S, tb) {
+  function applyTables(S, tb, burst = false) {
     if (!tb || !S.t.length) return false;
-    S.etab = Float32Array.from(tb.tables.flat()); S.cols.etab = 32;
-    let k = 0;
+    const within = burst ? 10 : 2, nT = tb.tables.length, guess = fpiAssumed(S.sp || "dis", AT);
+    S.etab = Float32Array.from(tb.tables.flat().concat(guess)); S.cols.etab = 32;
+    let k = 0, assumed = 0;
     for (let i = 0; i < S.t.length; i++) {
-      while (k < tb.t.length - 1 && Math.abs(tb.t[k + 1] - S.t[i]) <= Math.abs(tb.t[k] - S.t[i])) k++;
-      S.eidx[i] = tb.idx[k];
+      const t = S.t[i];
+      while (k < tb.t.length - 1 && tb.t[k + 1] <= t) k++;
+      const di = tb.t[k] <= t ? t - tb.t[k] : Infinity, j = tb.t[k] <= t ? k + 1 : k, dj = j < tb.t.length ? tb.t[j] - t : Infinity;
+      const pick = di <= dj ? (di <= within ? k : -1) : (dj <= within ? j : -1);   // at-or-before wins a tie
+      if (pick < 0) { S.eidx[i] = nT; assumed++; } else S.eidx[i] = tb.idx[pick];
     }
+    if (assumed) console.warn(`FPI ${S.sp}: ${assumed} records without a table in their files take the ${new Date(AT).toISOString().slice(0, 10)} guess`);
     return true;
   }
   const P1_END = Date.UTC(2016, 2, 1);                       // after P1, a burst record's table is the fast table of its moment
@@ -386,7 +399,7 @@
     return gapFilled(set({
       t: [f32(r.t), 1], n: [f32(r.cols[32]), 1], v: [stack(r.cols, 33, 3), 3], tpar: [f32(r.cols[36 + o]), 1], tperp: [f32(r.cols[37 + o]), 1],
       ...(withST ? { vst: [stack(r.cols, 36, 3).map(x => (isFinite(x) ? x : 0)), 3] } : {}),
-      spec: [spec8(flux, n, nc, sp), nc], etab: [Float32Array.from(FPI_E[sp]), nc], eidx: [new Uint8Array(n), 1],
+      spec: [spec8(flux, n, nc, sp), nc], etab: [Float32Array.from(fpiAssumed(sp, AT)), nc], eidx: [new Uint8Array(n), 1],
     }));
   }
   const gapFilled = (S) => { S.fillGaps = true; return S; };
@@ -397,7 +410,7 @@
     return gapFilled(set({
       t: [f32(r.t), 1], n: [f32(r.cols[33]), 1], v: [stack(r.cols, 34, 3), 3], tpar: [f32(r.cols[37 + o]), 1], tperp: [f32(r.cols[38 + o]), 1],
       ...(withST ? { vst: [stack(r.cols, 37, 3).map(x => (isFinite(x) ? x : 0)), 3] } : {}),
-      spec: [spec8(stack(r.cols, 1, 32), n, 32, sp), 32], etab: [Float32Array.from(FPI_EB[sp].flat()), 32], eidx: [eidx, 1],
+      spec: [spec8(stack(r.cols, 1, 32), n, 32, sp), 32], etab: [Float32Array.from(AT < Date.UTC(2016, 8, 26) ? FPI_EB[sp].flat() : fpiAssumed(sp, AT).concat(fpiAssumed(sp, AT))), 32], eidx: [eidx, 1],
     }));
   }
   async function mms(n) {
@@ -424,12 +437,14 @@
       des: fpiSet(de, "des", true),
     };
     const [tbI, tbE] = await Promise.all([track(`MMS${n} FPI energy tables (L2 files)`, Promise.all([fpiTables(n, "dis", a, b), fpiTables(n, "des", a, b)]))]).then(x => x[0]);
+    sv.dis.sp = "dis"; sv.des.sp = "des";
     applyTables(sv.dis, tbI); applyTables(sv.des, tbE);
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
     const bu = burst.then((B3) => {                          // the burst data follow the survey, drawn when they arrive
       if (!B3 || !(B3[0].n || B3[1].n || B3[2].n)) return null;
       const out = { fgm: set({ t: [f32(B3[0].t), 1], b: [stack(B3[0].cols, 0, 4), 4] }), dis: fpiBurstSet(B3[1], "dis", false), des: fpiBurstSet(B3[2], "des", true) };
-      if (AT >= P1_END) { applyTables(out.dis, tbI); applyTables(out.des, tbE); }   // P2 on: both parities fly the fast table
+      out.dis.sp = "dis"; out.des.sp = "des";
+      if (AT >= P1_END) { applyTables(out.dis, tbI, true); applyTables(out.des, tbE, true); }   // P2 on: both parities fly the fast table
       out.des.j = current(out.dis.t, out.dis.v, out.des.t, out.des.n, out.des.v); out.des.cols.j = 3;
       return out;
     });

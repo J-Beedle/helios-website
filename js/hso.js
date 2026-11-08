@@ -467,18 +467,33 @@
   /** Pressure in nPa: n kT for a species (T as (T∥ + 2T⊥)/3), B²/2μ₀ for the field. */
   const pSpecies = (L) => (L.n && L.tpar ? (i) => QE * L.n[i] * (L.tpar[i] + 2 * L.tperp[i]) / 3 : null);
   const pField = (L) => { const b = L.b, st = L.cols.b; return b ? (i) => 3.979e-4 * b[i * st + 3] ** 2 : null; };
-  /** J resolved along and across B: B from the same tier's FGM at each J time (Helios's J∥ / J⊥). */
-  const jAlong = (perp) => (L, P) => {
-    const F = P.fgmFor(L), J = P.jFor(L);
+  /** J along and across B (Helios getJparallel): c = 0–2 the J∥ or J⊥ vector's component, c = 3 the signed J·B̂;
+   *  B the mean over each DES record's accumulation. */
+  const jAlong = (perp, c) => (L, P) => {
+    const F = P.fgmFor(L), J = P.jFor(L), dt = L.dt || 0.03;
     if (!F || !J) return null;
-    const ft = F.t, fb = F.b, fs = F.cols.b;
     return (i) => {
-      let k = lower(ft, L.t[i]);
-      if (k >= ft.length) k = ft.length - 1;
-      if (Math.abs(ft[k] - L.t[i]) > 2) return NaN;
-      const bx = fb[k * fs], by = fb[k * fs + 1], bz = fb[k * fs + 2], m = Math.hypot(bx, by, bz) || 1;
-      const jx = J(i, 0), jy = J(i, 1), jz = J(i, 2), par = (jx * bx + jy * by + jz * bz) / m;
-      return perp ? Math.hypot(jx - par * bx / m, jy - par * by / m, jz - par * bz / m) : par;
+      const b = meanIn(F, "b", L.t[i], L.t[i] + dt, 2);
+      if (!b) return NaN;
+      const m = Math.hypot(b[0], b[1], b[2]);
+      if (!(m > 0)) return NaN;
+      const j = [J(i, 0), J(i, 1), J(i, 2)], par = (j[0] * b[0] + j[1] * b[1] + j[2] * b[2]) / m;
+      if (c === 3) return par;
+      return perp ? j[c] - par * b[c] / m : par * b[c] / m;
+    };
+  };
+  /** Pᵢ + Pₑ (+ P_B) on the ion grid (Helios summedOverAccumulation): each DIS record plus the mean Pₑ (DES by its
+   *  accumulation's middle) and P_B over that record's own accumulation; no point where either is missing. */
+  const pSum = (withB) => (L, P) => {
+    const pi = pSpecies(L), E = P.set(L, "des"), F = P.fgmFor(L) || P.set(L, "fgm"), pe = E && pSpecies(E), pb = F && pField(F);
+    if (!pi || !pe || (withB && !pb)) return null;
+    const step = L.dt || 4.5, hE = (E.dt || 0) / 2;
+    const meanOver = (O, f, t0, t1, sh) => { let s = 0, m = 0; for (let k = lower(O.t, t0 - sh); k < O.t.length && O.t[k] + sh < t1; k++) { const v = f(k); if (isFinite(v)) { s += v; m++; } } return m ? s / m : NaN; };
+    return (i) => {
+      const t0 = L.t[i], nx = i + 1 < L.t.length ? L.t[i + 1] - t0 : step, t1 = t0 + (nx > 0 ? Math.min(nx, 1.5 * step) : step);
+      let v = pi(i) + meanOver(E, pe, t0, t1, hE);
+      if (withB) v += meanOver(F, pb, t0, t1, 0);
+      return v;
     };
   };
   // E′, J·E′ and the frozen-in comparisons (Helios's DerivedVariables): each computed at the velocity's records, with E
@@ -556,13 +571,16 @@
     tanis: { title: "T anisotropy  T∥/T⊥ − 1", label: "T_{∥}/T_{⊥} − 1", unit: "", w: 0.8, zero: true,
              lines: [derive("dis", COL.ni, "A_{i}", (L) => (L.tpar ? (i) => L.tpar[i] / L.tperp[i] - 1 : null)),
                      derive("des", COL.ne, "A_{e}", (L) => (L.tpar ? (i) => L.tpar[i] / L.tperp[i] - 1 : null))] },
-    p: { title: "Pressure  Pᵢ / Pₑ / P_B", label: "P", unit: "(nPa)", w: 0.9, floor: 0,
-         lines: [derive("dis", COL.ni, "P_{i}", pSpecies), derive("des", COL.ne, "P_{e}", pSpecies), derive("fgm", COL.mag, "P_{B}", pField)] },
+    p: { title: "Pressure  Pᵢ / Pₑ / Pᵢ+Pₑ / P_B / P_tot", label: "P", unit: "(nPa)", w: 0.9,
+         lines: [derive("dis", COL.ni, "P_{i}", pSpecies), derive("des", COL.ne, "P_{e}", pSpecies), derive("dis", COL.y, "P_{i}+P_{e}", pSum(false)),
+                 derive("fgm", COL.mag, "P_{B}", pField), derive("dis", COL.z, "P_{tot}", pSum(true))] },
     vi: { title: "Ion velocity  Vᵢ", label: "V_{i}", unit: "(km/s)", w: 1, zero: true, lines: XYZ("dis", "v") },
     ve: { title: "Electron velocity  Vₑ", label: "V_{e}", unit: "(km/s)", w: 1, zero: true, lines: XYZ("des", "v") },
     jfpi: { title: "Current  J (FPI)", label: "J_{FPI}", unit: "(µA/m²)", w: 1, zero: true, lines: XYZ("des", "j") },
-    jpar: { title: "J∥  (parallel current)", label: "J_{∥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.par, "J_{∥}", jAlong(false))] },
-    jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.perp, "J_{⊥}", jAlong(true))] },
+    jpar: { title: "J∥  (parallel current)", label: "J_{∥}", unit: "(µA/m²)", w: 0.8, zero: true,
+            lines: [derive("des", COL.x, "X", jAlong(false, 0)), derive("des", COL.y, "Y", jAlong(false, 1)), derive("des", COL.z, "Z", jAlong(false, 2)), derive("des", COL.mag, "J_{∥}·B̂", jAlong(false, 3))] },
+    jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, zero: true,
+             lines: [derive("des", COL.x, "X", jAlong(true, 0)), derive("des", COL.y, "Y", jAlong(true, 1)), derive("des", COL.z, "Z", jAlong(true, 2))] },
     e: { title: "E — electric field", label: "E", unit: "(mV/m)", w: 1, zero: true, lazy: "edp", lines: XYZ("efi", "e") },
     pot: { title: "Spacecraft potential", label: "V_{sc}", unit: "(V)", w: 0.7, lazy: "edp", lines: [Sc("pot", "v", 0, COL.x, "V_{sc}")] },
     epsd: { title: "E-field spectrogram (DSP, omni)", label: "DSP E", unit: "(Hz)", w: 1, spec: "epsd", range: "epsd", lazy: "dsp", cbar: "(V/m)²/Hz" },
@@ -746,13 +764,13 @@
   }
   /** Boxcar mean over w samples, centered; the edges keep their raw values (Helios's Smooth traces). */
   function boxcar(vals, w) {
-    const n = vals.length, out = Float64Array.from(vals), h0 = Math.floor((w - 1) / 2), h1 = w - 1 - h0;
+    const n = vals.length, out = Float64Array.from(vals), h0 = Math.ceil((w - 1) / 2), h1 = w - 1 - h0;
     let s = 0, c = 0;
     const add = (v, k) => { if (isFinite(v)) { s += k * v; c += k; } };
     for (let j = 0; j < Math.min(n, w); j++) add(vals[j], 1);
     for (let i = h0; i < n - h1; i++) {
       if (i > h0) { add(vals[i - h0 - 1], -1); add(vals[i + h1], 1); }
-      if (isFinite(vals[i])) out[i] = c ? s / c : NaN;
+      if (c) out[i] = s / c;
     }
     return out;
   }
@@ -850,7 +868,7 @@
    *   onMark(k, t), interval: {a, b, live, label} | null, onInterval(a, b), bands: [{kind, a, b}], paint, onPaint(kind, a, b) }.
    */
   function Panel(D, app, cv, over, cfg = {}) {
-    cfg = Object.assign({ mission: "mms", coverage: true, tracker: true, spintone: true, smooth: false, smoothW: 5, outliers: false,
+    cfg = Object.assign({ mission: "mms", coverage: true, tracker: true, spintone: true, smooth: false, smoothW: 10, outliers: false,
                           lmn: null, marks: [], interval: null, bands: [], paint: null }, cfg);
     let L = null;                                          // the layout last drawn
     const tiers = () => (D.bu ? [D.sv, D.bu] : [D.sv]);
