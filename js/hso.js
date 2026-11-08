@@ -283,7 +283,7 @@
     }
     return [lo, hi];
   }
-  function stroke(ctx, R, a, b, rr, acc, yOf, color, width) {
+  function stroke(ctx, R, a, b, rr, acc, yOf, color, width, shift) {
     const kx = R.w / (b - a);
     ctx.save(); ctx.beginPath(); ctx.rect(R.x, R.y, R.w, R.h); ctx.clip();
     ctx.strokeStyle = color; ctx.lineWidth = width || 1.1; ctx.lineJoin = "round"; ctx.beginPath();
@@ -300,7 +300,8 @@
     for (const [L, i0, i1] of rr) {
       const f = acc(L);
       if (!f) continue;
-      const t = L.t, j0 = Math.max(0, i0), j1 = Math.min(t.length, i1);
+      const t0 = L.t, sh = shift ? shift(L) : 0, t = sh ? { length: t0.length } : t0, j0 = Math.max(0, i0), j1 = Math.min(t0.length, i1);
+      if (sh) for (let i = j0; i < j1; i++) t[i] = t0[i] + sh;
       if (j1 - j0 < R.w * 3) {
         for (let i = j0; i < j1; i++) {
           const y0 = f(i);
@@ -361,7 +362,7 @@
         else { const v = S.spec[i * nc + j]; if (v > 1) q.push(store[0] + (v - 1) / 254 * (store[1] - store[0])); }
       }
     }
-    if (q.length <= 30) return rangeKey === "dis" ? [3, 7] : [4, 9];
+    if (q.length <= 30) return ({ dis: [3, 7], hpH: [3, 7], hpHepp: [2, 6], hpHep: [1, 5], hpO: [1, 5], epsd: [-16, -8] })[rangeKey] || [4, 9];
     q.sort((x, y) => x - y);
     const lg = (l) => l;
     const hi = Math.ceil(lg(q[Math.floor(q.length * 0.995)]) - 1e-9);
@@ -491,44 +492,60 @@
   };
   const v3 = (O, name, k) => { const a = O[name], st = O.cols[name]; return [a[k * st], a[k * st + 1], a[k * st + 2]]; };
   const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  /** At each velocity record: { e, b, v } (GSE), or null where E or B is missing. */
-  const fieldsAt = (L, P) => {
-    const E = P.set(L, "efi"), F = P.set(L, "fgm"), V = P.vel(L);
-    if (!E || !F || !V) return null;
+  /** The mean of a vector set over [t0, t1], or the nearest sample within tol where none falls inside. */
+  const meanIn = (O, name, t0, t1, tol) => {
+    let k = lower(O.t, t0), s0 = 0, s1 = 0, s2 = 0, m = 0;
+    const a = O[name], st = O.cols[name];
+    for (; k < O.t.length && O.t[k] <= t1; k++) { const x = a[k * st], y = a[k * st + 1], z = a[k * st + 2]; if (isFinite(x) && isFinite(y) && isFinite(z)) { s0 += x; s1 += y; s2 += z; m++; } }
+    if (m) return [s0 / m, s1 / m, s2 / m];
+    const j = nearestK(O, (t0 + t1) / 2, tol);
+    return j < 0 ? null : v3(O, name, j);
+  };
+  /** At each velocity record: { e, b, v } (GSE), E and B averaged over the record's own accumulation (Helios: a
+   *  point sample aliased the upper-hybrid waves into J·E′). e is null where there is no E. */
+  const fieldsAt = (L, P, needE = true) => {
+    const E = P.set(L, "efiN") || P.set(L, "efi"), F = P.set(L, "fgm"), V = P.vel(L), dt = L.dt || 4.5;
+    if ((needE && !E) || !F || !V) return null;
     return (i) => {
-      const t = L.t[i], ke = nearestK(E, t, Math.max(2, E.dt || 1)), kb = nearestK(F, t, Math.max(2, F.dt || 1));
-      return ke < 0 || kb < 0 ? null : { e: v3(E, "e", ke), b: v3(F, "b", kb), v: [V(i, 0), V(i, 1), V(i, 2)] };
+      const t = L.t[i], b = meanIn(F, "b", t, t + dt, 2), e = E ? meanIn(E, "e", t, t + dt, 2) : null;
+      return !b || (needE && !e) ? null : { e, b, v: [V(i, 0), V(i, 1), V(i, 2)] };
     };
   };
   /** E′ = E + V×B, component c, in mV/m. */
   const ePrime = (c) => (L, P) => { const f = fieldsAt(L, P); return f && ((i) => { const q = f(i); return q ? q.e[c] + 1e-3 * cross(q.v, q.b)[c] : NaN; }); };
   /** −V×B, component c, in mV/m. */
-  const minusVxB = (c) => (L, P) => { const f = fieldsAt(L, P); return f && ((i) => { const q = f(i); return q ? -1e-3 * cross(q.v, q.b)[c] : NaN; }); };
+  const minusVxB = (c) => (L, P) => { const f = fieldsAt(L, P, false); return f && ((i) => { const q = f(i); return q ? -1e-3 * cross(q.v, q.b)[c] : NaN; }); };   // needs no E
   /** J·E′ (E′ in the electron frame), nW/m³: J [µA/m²] × E [mV/m]. */
   const jDotEp = (L, P) => {
     const f = fieldsAt(L, P), J = P.jFor(L);
     return f && J && ((i) => { const q = f(i); if (!q) return NaN; const vb = cross(q.v, q.b); return [0, 1, 2].reduce((s, c) => s + J(i, c) * (q.e[c] + 1e-3 * vb[c]), 0); });
   };
-  /** The E×B drift, component c, km/s (E mV/m, B nT): 10³ E×B / B². */
+  /** The E×B drift, component c, km/s (E mV/m, B nT): 10³ E×B / B², B interpolated linearly to E's times (Helios). */
   const exb = (c) => (L, P) => {
     const F = P.set(L, "fgm");
     if (!F) return null;
-    return (i) => { const kb = nearestK(F, L.t[i], 2); if (kb < 0) return NaN; const e = v3(L, "e", i), b = v3(F, "b", kb), b2 = b[0] ** 2 + b[1] ** 2 + b[2] ** 2; return b2 > 0 ? 1e3 * cross(e, b)[c] / b2 : NaN; };
+    return (i) => {
+      const t = L.t[i];
+      let k = lower(F.t, t);
+      if (k <= 0 || k >= F.t.length || F.t[k] - F.t[k - 1] > 4) return NaN;
+      const f = (t - F.t[k - 1]) / (F.t[k] - F.t[k - 1]), b0 = v3(F, "b", k - 1), b1 = v3(F, "b", k), b = [0, 1, 2].map(j => b0[j] + (b1[j] - b0[j]) * f);
+      const e = v3(L, "e", i), b2 = b[0] ** 2 + b[1] ** 2 + b[2] ** 2;
+      return b2 > 0 ? 1e3 * cross(e, b)[c] / b2 : NaN;
+    };
   };
-  /** V⊥ of the ions, component c (B from the same tier). */
+  /** V⊥, component c, with B averaged over the record's accumulation. */
   const vPerp = (c) => (L, P) => {
-    const F = P.set(L, "fgm"), V = P.vel(L);
-    if (!F || !V) return null;
-    return (i) => { const kb = nearestK(F, L.t[i], 2); if (kb < 0) return NaN; const b = v3(F, "b", kb), m = Math.hypot(...b) || 1, v = [V(i, 0), V(i, 1), V(i, 2)];
-                    const par = (v[0] * b[0] + v[1] * b[1] + v[2] * b[2]) / m; return v[c] - par * b[c] / m; };
+    const f = fieldsAt(L, P, false);
+    return f && ((i) => { const q = f(i); if (!q) return NaN; const b = q.b, m = Math.hypot(...b) || 1, v = q.v, par = (v[0] * b[0] + v[1] * b[1] + v[2] * b[2]) / m; return v[c] - par * b[c] / m; });
   };
+  const midStamp = (L) => (L.dt || 0) / 2;                  // drawn at the middle of each accumulation (Helios FrozenIn)
   const HP_COL = { H: "#000000", Hep: "#008000", Hepp: "#d90d0d", O: "#001af2" }, HP_LAB = { H: "H^{+}", Hepp: "He^{++}", Hep: "He^{+}", O: "O^{+}" };
-  const hpSpec = (k, name) => ({ title: `HPCA ${name} spectrogram`, label: `HPCA ${HP_LAB[k]}`, short: HP_LAB[k], unit: "(eV)", w: 1, spec: `hp${k}`, range: `hp${k}`, lazy: `hp${k}` });
-  const hpVel = (k, name) => ({ title: `HPCA ${name} velocity (GSE)`, label: `V_{${HP_LAB[k].replace(/\^\{(.*)\}/, "$1")}}`, unit: "(km/s)", w: 0.9, zero: true, lazy: "hpcaMom", lines: XYZ("hpm", `v${k}`) });
+  const hpSpec = (k, name) => ({ title: `Spectrogram  ${name}`, label: `HPCA ${HP_LAB[k]}`, short: HP_LAB[k], unit: "(eV)", w: 1, spec: `hp${k}`, range: `hp${k}`, lazy: `hp${k}` });
+  const hpVel = (k, name) => ({ title: `Velocity  V(${name})`, label: `V ${HP_LAB[k]}`, unit: "(km/s)", w: 0.9, zero: true, lazy: "hpcaMom", lines: XYZ("hpm", `v${k}`) });
   // in Helios's order, H⁺ He⁺ He⁺⁺ O⁺ (the moments set keeps H⁺ He⁺⁺ He⁺ O⁺ columns)
   const four = (name, f) => [["H", 0], ["Hep", 2], ["Hepp", 1], ["O", 3]].map(([k, j]) => f(k, j));
   const fz = (sp, c) => ({ title: `E vs −V${sp === "des" ? "ₑ" : "ᵢ"}×B  · ${"xyz"[c]}`, label: `E_{${"xyz"[c]}}`, unit: "(mV/m)", w: 0.8, zero: true, lazy: "edp",
-                          lines: [Sc("efi", "e", c, COL.mag, `E_{${"xyz"[c]}}`), derive(sp, sp === "des" ? COL.ne : COL.ni, `−V_{${sp === "des" ? "e" : "i"}}×B`, minusVxB(c))] });
+                          lines: [Sc("efi", "e", c, COL.mag, `E_{${"xyz"[c]}}`), Object.assign(derive(sp, COL.z, `−V_{${sp === "des" ? "e" : "i"}}×B`, minusVxB(c)), { shift: midStamp })] });
   const KINDS = {
     b: { title: "B — magnetic field", label: "B", unit: "(nT)", w: 1.25, zero: true, lines: [Sc("fgm", "b", 3, COL.mag, "|B|"), ...XYZ("fgm", "b")] },
     ionSpec: { title: "Ion spectrogram", label: "Ions", unit: "(eV)", w: 1, spec: "dis", range: "dis" },
@@ -547,8 +564,8 @@
     jpar: { title: "J∥  (parallel current)", label: "J_{∥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.par, "J_{∥}", jAlong(false))] },
     jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, zero: true, lines: [derive("des", COL.perp, "J_{⊥}", jAlong(true))] },
     e: { title: "E — electric field", label: "E", unit: "(mV/m)", w: 1, zero: true, lazy: "edp", lines: XYZ("efi", "e") },
-    pot: { title: "Spacecraft potential", label: "V_{sc}", unit: "(V)", w: 0.7, lazy: "edp", lines: [Sc("pot", "v", 0, COL.mag, "V_{sc}")] },
-    epsd: { title: "E-field spectrogram (DSP, omni)", label: "E PSD", unit: "(Hz)", w: 1, spec: "epsd", range: "epsd", lazy: "dsp", cbar: "(V/m)²/Hz" },
+    pot: { title: "Spacecraft potential", label: "V_{sc}", unit: "(V)", w: 0.7, lazy: "edp", lines: [Sc("pot", "v", 0, COL.x, "V_{sc}")] },
+    epsd: { title: "E-field spectrogram (DSP, omni)", label: "DSP E", unit: "(Hz)", w: 1, spec: "epsd", range: "epsd", lazy: "dsp", cbar: "(V/m)²/Hz" },
     epE: { title: "E′ = E + Vₑ×B  (electron frame)", label: "E′_{e}", unit: "(mV/m)", w: 0.9, zero: true, lazy: "edp",
            lines: [0, 1, 2].map(c => derive("des", [COL.x, COL.y, COL.z][c], "XYZ"[c], ePrime(c))) },
     epI: { title: "E′ = E + Vᵢ×B  (ion frame)", label: "E′_{i}", unit: "(mV/m)", w: 0.9, zero: true, lazy: "edp",
@@ -557,10 +574,11 @@
     fzEx: fz("des", 0), fzEy: fz("des", 1), fzEz: fz("des", 2), fzIx: fz("dis", 0), fzIy: fz("dis", 1), fzIz: fz("dis", 2),
     exbX: null, exbY: null, exbZ: null,
     hpH: hpSpec("H", "H⁺"), hpHepp: hpSpec("Hepp", "He⁺⁺"), hpHep: hpSpec("Hep", "He⁺"), hpO: hpSpec("O", "O⁺"),
-    hpN: { title: "HPCA densities  H⁺ He⁺ He⁺⁺ O⁺", label: "N", unit: "(cm⁻³)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("n", (k, j) => Sc("hpm", "n", j, HP_COL[k], HP_LAB[k])) },
+    hpN: { title: "Densities  H⁺ He⁺ He⁺⁺ O⁺", label: "N HPCA", unit: "(cm⁻³)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("n", (k, j) => Sc("hpm", "n", j, HP_COL[k], HP_LAB[k])) },
     hpVH: hpVel("H", "H⁺"), hpVHepp: hpVel("Hepp", "He⁺⁺"), hpVHep: hpVel("Hep", "He⁺"), hpVO: hpVel("O", "O⁺"),
-    hpT: { title: "HPCA temperatures (scalar)", label: "T", unit: "(eV)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("T", (k, j) => Sc("hpm", "T", j, HP_COL[k], HP_LAB[k])) },
-    hpP: { title: "HPCA partial pressures  n kT", label: "P", unit: "(nPa)", w: 0.9, log: true, lazy: "hpcaMom",
+    hpV: { title: "Bulk speeds  |V| by species", label: "|V| HPCA", unit: "(km/s)", w: 0.9, lazy: "hpcaMom", lines: four("V", (k, j) => Sc("hpm", "speed", j, HP_COL[k], HP_LAB[k])) },
+    hpT: { title: "Temperatures by species", label: "T HPCA", unit: "(eV)", w: 0.9, log: true, lazy: "hpcaMom", lines: four("T", (k, j) => Sc("hpm", "T", j, HP_COL[k], HP_LAB[k])) },
+    hpP: { title: "Pressures by species", label: "P HPCA", unit: "(nPa)", w: 0.9, log: true, lazy: "hpcaMom",
            lines: four("P", (k, j) => derive("hpm", HP_COL[k], HP_LAB[k], (L) => (L.n && L.T ? (i) => QE * L.n[i * 4 + j] * L.T[i * 4 + j] : null))) },
     // the OMNI window (Helios's OmniPanel.rows) and the L1 monitors' plasma
     omBt: { title: "IMF |B|", label: "|B|", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "bt", 0, COL.mag, "|B|")] },
@@ -591,8 +609,9 @@
             lines: [Sc("cmpO", "v", 0, COL.x, "O^{+}"), Sc("cmpHe1", "v", 0, COL.z, "He^{+}"), Sc("cmpHe2", "v", 0, COL.y, "He^{++}")] },
   };
   for (const [k, c] of [["exbX", 0], ["exbY", 1], ["exbZ", 2]])
-    KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp",
-                 lines: [derive("efi", COL.mag, "E×B/B²", exb(c)), derive("dis", COL.ni, "V_{i⊥}", vPerp(c))] };
+    KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V⊥_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp",
+                 lines: [derive("efi", COL.mag, "E×B/B²", exb(c)), Object.assign(derive("des", COL.z, "V_{e⊥}", vPerp(c)), { shift: midStamp }),
+                         Object.assign(derive("dis", COL.x, "V_{i⊥}", vPerp(c)), { shift: midStamp })] };
   const NA = (title) => ({ title, avail: false });
   /** A subplot whose data are on their way: a bar to the bytes CDAWeb said it would send (the CDF subsets), or a
    *  moving segment with the megabytes so far where it did not say (HAPI). */
@@ -633,7 +652,7 @@
         ["Reconnection", [NA("Agyrotropy  √Q  (Swisdak 2016)"), NA("Nongyrotropy  D_ng  (Aunai 2013)"), LIVE ? "jdotE" : NA("J·E′ — dissipation"), NA("J∥·E∥ — parallel dissipation"), NA("D_e — dissipation (electron frame)"), NA("Pressure–strain  e⁻  (4 s/c)"), NA("Pressure–strain  ions  (4 s/c)"), LIVE ? "epE" : NA("E′ = E + Vₑ×B  (electron frame)"), LIVE ? "epI" : NA("E′ = E + Vᵢ×B  (ion frame)"), NA("E′ = E + V(H⁺)×B"), NA("E′ = E + V(He⁺)×B"), NA("E′ = E + V(O⁺)×B")]],
         ["Frozen-in", LIVE ? ["fzEx", "fzEy", "fzEz", "fzIx", "fzIy", "fzIz", "exbX", "exbY", "exbZ"]
           : [NA("E vs −Vₑ×B  · x"), NA("E vs −Vₑ×B  · y"), NA("E vs −Vₑ×B  · z"), NA("E vs −Vᵢ×B  · x"), NA("E vs −Vᵢ×B  · y"), NA("E vs −Vᵢ×B  · z"), NA("E×B/B² vs V⊥  · x"), NA("E×B/B² vs V⊥  · y"), NA("E×B/B² vs V⊥  · z")]],
-        ["HPCA · composition", LIVE ? ["hpH", "hpHepp", "hpHep", "hpO", "hpN", "hpVH", "hpVHepp", "hpVHep", "hpVO", "hpT", "hpP"]
+        ["HPCA · composition", LIVE ? ["hpH", "hpHepp", "hpHep", "hpO", "hpN", "hpV", "hpVH", "hpVHep", "hpVHepp", "hpVO", "hpT", "hpP"]
           : [NA("Spectrogram  H⁺"), NA("Spectrogram  He⁺⁺"), NA("Spectrogram  He⁺"), NA("Spectrogram  O⁺"), NA("Densities  H⁺ He⁺ He⁺⁺ O⁺")]],
         ["HPCA · pitch angles", [NA("H⁺ PAD  1–300 eV"), NA("H⁺ PAD  300 eV–3 keV"), NA("H⁺ PAD  3–40 keV"), NA("He⁺ PAD  1–400 eV"), NA("He⁺ PAD  400 eV–4 keV"), NA("He⁺ PAD  4–40 keV"), NA("O⁺ PAD  1 eV–1 keV"), NA("O⁺ PAD  1–10 keV"), NA("O⁺ PAD  10–40 keV")]],
         ["Waves & potential", [LIVE ? "epsd" : NA("E-field spectrogram"), NA("B-field spectrogram"), LIVE ? "pot" : NA("Spacecraft potential")]],
@@ -895,6 +914,7 @@
       const { ctx, w, h, dpr } = sizeCanvas(cv), a = app.a, b = app.b;
       sizeCanvas(over);
       const mission = cfg.mission, keys = cfg.stack || MISSIONS[mission].stack;
+      if (D.sv.efiN && mission === "mms") D.sv.efi = b - a <= 240 ? D.sv.efiN : b - a <= 7200 ? D.sv.efi15 : D.sv.efi45;
       let rows = keys.map(k => Object.assign({ key: k }, kindOf(mission, k), D.relabel && D.relabel[k])).filter(r => r.title && r.avail !== false);
       // live, other missions: as Helios, which fetches only the window, a subplot with nothing in the window is left out
       if (LIVE && mission !== "mms") {
@@ -1013,7 +1033,7 @@
             ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(Rw.x, y); ctx.lineTo(Rw.x + Rw.w, y); ctx.stroke(); ctx.restore();
             rich(ctx, label, Rw.x + 4, y - 7, { size: 10, weight: 600, color });
           }
-          r.lines.forEach((line, i) => stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1));
+          r.lines.forEach((line, i) => stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1, line.shift));
           const n = r.lines.length;                       // the legend, top to bottom, at the right
           r.lines.forEach((line, i) =>
             rich(ctx, R && line.vec ? LMN[line.c] : line.label, Rw.x + Rw.w + 6, Rw.y + Rw.h / 2 + (i - (n - 1) / 2) * Math.min(13, (Rw.h - 6) / n), { size: 10.5, weight: 600, color: line.color }));
