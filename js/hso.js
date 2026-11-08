@@ -1276,6 +1276,8 @@
     if (ip < 0) { let bd = 5.625 + 1e-9; for (let k = 0; k < 32; k++) { if (!isFinite(pv[k])) continue; const d = Math.abs(wrap180(az - pv[k])); if (d <= bd) { bd = d; ip = k; } } }
     return ip < 0 ? -1 : F.base + (ip * 16 + it) * 32 + lo;
   }
+  /** A bin's f from its 8-bit code: the live stores keep 0 for fill, 1 for a measured zero; the demo's 0 is both. */
+  const fOf = (V, q, span) => (V.enc2 ? (q === 0 ? NaN : q === 1 ? 0 : 10 ** (V.lo + (q - 2) / 253 * span)) : (q ? 10 ** (V.lo + (q - 1) / 254 * span) : 0));
   /** One record's cut: f on an n × n grid (row = the second axis, from −vMax up); a measured zero is 0, a velocity
    *  outside the energy table NaN. `rot` (rows) takes the instrument frame to the cut's; `shift` relabels the axes. */
   function cutRecord(V, i, plane, rot, shift, vMax, n) {
@@ -1288,8 +1290,7 @@
         const v = rot ? [rot[0][0] * r[0] + rot[1][0] * r[1] + rot[2][0] * r[2], rot[0][1] * r[0] + rot[1][1] * r[1] + rot[2][1] * r[2], rot[0][2] * r[0] + rot[1][2] * r[1] + rot[2][2] * r[2]] : r;
         const k = binOf(F, v[0], v[1], v[2]);
         if (k < 0) continue;
-        const q = V.D[k];
-        out[ib * n + ia] = q ? 10 ** (V.lo + (q - 1) / 254 * span) : 0;
+        out[ib * n + ia] = fOf(V, V.D[k], span);
       }
     }
     return out;
@@ -1319,12 +1320,15 @@
   /** The records a cut at t draws: the one whose 30 ms accumulation holds t, or the N whose centers are nearest. */
   function recordsAt(V, t, N) {
     const dt = recDt(V);
-    if (N === 1) {
+    if (!V.t.length) return [];
+    if (N === 1) {                                          // the record holding t, else the nearest within 0.35 s (Helios)
       const i = lower(V.t, t + 1e-6) - 1;
-      return i >= 0 && t - V.t[i] < dt + 0.0005 ? [i] : [];
+      if (i >= 0 && t - V.t[i] < dt + 0.0005) return [i];
+      const j = V.t.reduce((b, x, k) => (Math.abs(x + dt / 2 - t) < Math.abs(V.t[b] + dt / 2 - t) ? k : b), 0);
+      return Math.abs(V.t[j] + dt / 2 - t) <= 0.35 ? [j] : [];
     }
-    if (t < V.t[0] - dt || t > V.t[V.t.length - 1] + 2 * dt) return [];
-    return V.t.map((x, i) => [Math.abs(x + dt / 2 - t), i]).sort((p, q) => p[0] - q[0]).slice(0, N).map(p => p[1]).sort((p, q) => p - q);
+    const lim = (N / 2 + 1) * dt;                            // records farther than that are not this cut's
+    return V.t.map((x, i) => [Math.abs(x + dt / 2 - t), i]).filter(p => p[0] <= lim).sort((p, q) => p[0] - q[0]).slice(0, N).map(p => p[1]).sort((p, q) => p - q);
   }
   const mean3 = (arr, recs) => [0, 1, 2].map(c => recs.reduce((s, i) => s + arr[i * 3 + c], 0) / recs.length);
   const LABELS = { dbcs: ["Vx", "Vy", "Vz"], lmn: ["VL", "VM", "VN"], fac: ["V∥", "V⊥1", "V⊥2"] };   // SliceRotation.labels
@@ -1337,17 +1341,23 @@
   function cutFPI(V, t, o) {
     const recs = recordsAt(V, t, o.records);
     if (!recs.length) return null;
-    const G = V.dbcsToGSE, bulk = mean3(V.V, recs);
+    const G = V.dbcsToGSE, noMEC = V.live && !V.mecOK;
+    let bulk = mean3(V.V, recs);
+    const noV = !bulk.every(isFinite);
+    if (noV) bulk = [0, 0, 0];                              // no moment: the spacecraft frame (Helios)
+    o = Object.assign({}, o, { subtract: o.subtract && !noV });
     let rot = null, labels = LABELS.dbcs, tag = "DBCS";
-    if (o.frame === "instrument" && o.lmn) { rot = mul3(o.lmn, G); labels = LABELS.lmn; tag = "LMN"; }
-    else if (o.frame === "gse") { rot = G; tag = "GSE"; }
+    if (noMEC && (o.frame === "gse" || o.frame === "gsm" || (o.frame === "instrument" && o.lmn))) tag = "DBCS (no MEC attitude)";
+    else if (o.frame === "instrument" && o.lmn) { rot = mul3(o.lmn, G); labels = LABELS.lmn; tag = "LMN"; }
+    else if (o.frame === "gse" || (o.frame === "gsm" && !o.gsm)) { rot = G; tag = "GSE"; }
     else if (o.frame === "gsm") { rot = mul3(o.gsm, G); tag = "GSM"; }
     else if (o.frame === "fac") {
-      const b = unit3(mean3(V.B, recs)), c = cross3(b, unit3(bulk)), m = Math.hypot(...c);
+      const b = unit3(mean3(V.B, recs)), c = noV ? [0, 0, 0] : cross3(b, unit3(bulk)), m = Math.hypot(...c);
       if (m > 1e-9) { const cc = c.map(x => x / m); rot = [b, cross3(cc, b), cc]; labels = LABELS.fac; tag = "B-aligned"; }
       else tag = "DBCS (no B or V for B-aligned)";
     }
     const bulkRot = rot ? apply3(rot, bulk) : bulk, n = 100, planes = [[0, 1], [0, 2], [1, 2]];
+    if (V.sp === "dis" && o.interp !== "geometric") return cutFPI2D(V, recs, o, rot, labels, tag, bulk, noV);
     const slices = planes.map(([ax, ay], plane) => {
       const per = recs.map(i => cutRecord(V, i, plane, rot, o.subtract ? bulkRot : [0, 0, 0], o.vmax, n));
       let f = per[0];
@@ -1358,9 +1368,65 @@
       if (o.sigma > 0) f = gaussianBlur(f, n, o.sigma);
       return { f, n, vMax: o.vmax, labels: [labels[ax], labels[ay]], mark: o.subtract ? null : [bulkRot[ax], bulkRot[ay]] };
     });
-    const k = recs.length, ms = Math.round(k * recDt(V) * 1000), note = [tag, o.subtract ? `axes −V(${V.sp === "dis" ? "DIS" : "DES"}), s/c-origin plane` : "s/c frame", "geometric",
+    const k = recs.length, ms = Math.round(k * recDt(V) * 1000), note = [tag, o.subtract ? `axes −V(${V.sp === "dis" ? "DIS" : "DES"}), s/c-origin plane` : noV ? "s/c frame (no bulk V)" : "s/c frame", "geometric",
       k === o.records ? (k > 1 ? `${k} rec · ${ms} ms` : null) : `${k}/${o.records} rec · ${ms} ms`].filter(Boolean).join(" · ");
     return { slices, tag, note, start: V.t[recs[0]], end: V.t[recs[k - 1]] + recDt(V) };
+  }
+
+  /** pyspedas slice2d_2di + slice2d_smooth: points (a, b, f) → Delaunay-linear on linspace(−max|v|, max|v|, 150)
+   *  (cell centers of a grid n/(n−1) wider), smoothed in ITS cells, then sampled onto the display's ±vDisp. */
+  function grid2D(xs, ys, fs, smooth, vDisp) {
+    const n = 150;
+    let ext = 1; for (let j = 0; j < xs.length; j++) ext = Math.max(ext, Math.abs(xs[j]), Math.abs(ys[j]));
+    const vg = ext * n / (n - 1), g = slice2dSmooth(interpGrid(xs, ys, fs, n, vg), n, smooth);
+    const f = new Float64Array(n * n).fill(NaN), cell = 2 * vg / n;
+    for (let ib = 0; ib < n; ib++) for (let ia = 0; ia < n; ia++) {
+      const X = -vDisp + (ia + 0.5) * 2 * vDisp / n, Y = -vDisp + (ib + 0.5) * 2 * vDisp / n;
+      const ja = Math.floor((X + vg) / cell), jb = Math.floor((Y + vg) / cell);
+      if (ja >= 0 && ja < n && jb >= 0 && jb < n) f[ib * n + ia] = g[jb * n + ja];
+    }
+    return { f, n };
+  }
+  /** Helios's sliceFPI2D, the ion default (pyspedas interpolation='2d', subtract_bulk=True): every bin of every record
+   *  a point at its radial bin center (the mean of its edge speeds) — measured zeros included, fill not; v − V first,
+   *  then the frame; kept within ±20° of the plane; the records' points pooled; grid2D with smooth 7. */
+  function cutFPI2D(V, recs, o, rot, labels, tag, bulk, noV) {
+    const sub = o.subtract ? bulk : [0, 0, 0], slab = Math.sin(20 * Math.PI / 180), span = V.hi - V.lo, P = [[], [], []];
+    const lat = Array.from({ length: 16 }, (_, it) => (-84.375 + 11.25 * it) * Math.PI / 180);
+    for (const i of recs) {
+      const F = footprints(V, i), sp = Array.from({ length: 32 }, (_, e) => (F.vEdge[e] + F.vEdge[e + 1]) / 2);
+      for (let ip = 0; ip < 32; ip++) {
+        const pv = F.phiVel[ip];
+        if (!isFinite(pv)) continue;
+        const cp = Math.cos(pv * Math.PI / 180), sn = Math.sin(pv * Math.PI / 180);
+        for (let it = 0; it < 16; it++) {
+          const cl = Math.cos(lat[it]), sl = Math.sin(lat[it]);
+          for (let e = 0; e < 32; e++) {
+            const f = fOf(V, V.D[F.base + (ip * 16 + it) * 32 + e], span), v = sp[e];
+            if (!isFinite(f) || !isFinite(v)) continue;
+            let w = [v * cl * cp - sub[0], v * cl * sn - sub[1], v * sl - sub[2]];
+            if (rot) w = apply3(rot, w);
+            const mag = Math.hypot(w[0], w[1], w[2]);
+            if (!(mag > 0)) continue;
+            if (Math.abs(w[2]) <= slab * mag) P[0].push(w[0], w[1], f);
+            if (Math.abs(w[1]) <= slab * mag) P[1].push(w[0], w[2], f);
+            if (Math.abs(w[0]) <= slab * mag) P[2].push(w[1], w[2], f);
+          }
+        }
+      }
+    }
+    const vD = o.vmax, sm = o.smooth ?? 7;
+    const slices = P.map((pts, pl) => {
+      const xs = [], ys = [], fs = [];
+      for (let j = 0; j < pts.length; j += 3) { xs.push(pts[j]); ys.push(pts[j + 1]); fs.push(pts[j + 2]); }
+      const g = grid2D(xs, ys, fs, sm, vD), [ax, ay] = [[0, 1], [0, 2], [1, 2]][pl];
+      const bR = rot ? apply3(rot, bulk) : bulk;
+      return { f: g.f, n: g.n, vMax: vD, labels: [labels[ax], labels[ay]], mark: o.subtract || noV ? null : [bR[ax], bR[ay]] };
+    });
+    const k = recs.length, ms = Math.round(k * recDt(V) * 1000);
+    const note = [tag, o.subtract ? "axes −V(DIS)" : noV ? "s/c frame (no bulk V)" : "s/c frame", `±20° slab · 2-D interpolation · smooth ${sm}`,
+      k === o.records ? (k > 1 ? `${k} rec pooled · ${ms} ms` : null) : `${k}/${o.records} rec · ${ms} ms`].filter(Boolean).join(" · ");
+    return { slices, tag, note, start: V.t[recs[0]], end: V.t[recs[k - 1]] + recDt(V), zLo: -27, zHi: -20 };
   }
 
   // ───────────────────────── HPCA cuts (Helios's sliceHPCA: pyspedas mms_part_slice2d, interpolation='2d') ─────────────────────────
@@ -1468,14 +1534,19 @@
    *  directions are in the despun spin-plane frame (x toward the Sun, z the spin axis: within a few degrees of GSE). */
   function cutHPCA(A, o) {
     const R = HPCA_RECIPE[A.sp], slab = Math.sin(R.theta * DEG), bulk = o.subtract ? A.bulk : [0, 0, 0];
-    let rot = null, labels = LABELS.dbcs, tag = "despun (≈GSE)";
-    if (o.frame === "instrument" && o.lmn) { rot = o.lmn; labels = LABELS.lmn; tag = "LMN"; }
-    else if (o.frame === "gsm" && o.gsm) { rot = o.gsm; tag = "GSM"; }
+    const Ax = A.axes, toGSE = Ax && [[Ax[0][0], Ax[1][0], Ax[2][0]], [Ax[0][1], Ax[1][1], Ax[2][1]], [Ax[0][2], Ax[1][2], Ax[2][2]]];
+    let rot = null, labels = LABELS.dbcs, tag = "DBCS (despun)";
+    const wantsGSE = o.frame === "gse" || o.frame === "gsm" || (o.frame === "instrument" && o.lmn);
+    if (wantsGSE && !toGSE) tag = "DBCS (no MEC attitude)";
+    else if (o.frame === "instrument" && o.lmn) { rot = mul3(o.lmn, toGSE); labels = LABELS.lmn; tag = "LMN"; }
+    else if (o.frame === "gse" || (o.frame === "gsm" && !o.gsm)) { rot = toGSE; tag = "GSE"; }
+    else if (o.frame === "gsm") { rot = mul3(o.gsm, toGSE); tag = "GSM"; }
     else if (o.frame === "fac") {
-      if (A.b) {
-        const b = unit3(A.b), c = cross3(b, unit3(A.bulk.some(x => x) ? A.bulk : [1, 0, 0])), m = Math.hypot(...c);
+      const bd = A.b && Ax ? apply3(Ax, A.b) : null;        // B (GSE) in the despun frame
+      if (bd && A.bulk.some(x => x)) {
+        const b = unit3(bd), c = cross3(b, unit3(A.bulk)), m = Math.hypot(...c);
         if (m > 1e-9) { const cc = c.map(x => x / m); rot = [b, cross3(cc, b), cc]; labels = LABELS.fac; tag = "B-aligned"; }
-      } else tag = "despun (no B for B-aligned)";
+      } else tag = !bd ? "DBCS (no B for B-aligned)" : "DBCS (no V for B-aligned)";
     }
     const P = [[], [], []];                                 // per plane: a, b, f
     for (let a = 0; a < 16; a++) for (let k = 0; k < 16; k++) {
@@ -1491,21 +1562,11 @@
         [[0, 1, 2], [0, 2, 1], [1, 2, 0]].forEach(([ax, ay, off], pl) => { if (Math.abs(w[off]) / mag <= slab) { P[pl].push(w[ax], w[ay], f); } });
       }
     }
-    const n = 150;
     const slices = P.map((pts, pl) => {
       const xs = [], ys = [], fs = [];
       for (let j = 0; j < pts.length; j += 3) { xs.push(pts[j]); ys.push(pts[j + 1]); fs.push(pts[j + 2]); }
-      let ext = 1; for (let j = 0; j < xs.length; j++) ext = Math.max(ext, Math.abs(xs[j]), Math.abs(ys[j]));
-      const vg = ext * n / (n - 1), g = slice2dSmooth(interpGrid(xs, ys, fs, n, vg), n, R.smooth);
-      // onto the display grid (±recipe |v|), nearest cell
-      const f = new Float64Array(n * n).fill(NaN), cell = 2 * vg / n;
-      for (let ib = 0; ib < n; ib++) for (let ia = 0; ia < n; ia++) {
-        const X = -R.vMax + (ia + 0.5) * 2 * R.vMax / n, Y = -R.vMax + (ib + 0.5) * 2 * R.vMax / n;
-        const ja = Math.floor((X + vg) / cell), jb = Math.floor((Y + vg) / cell);
-        if (ja >= 0 && ja < n && jb >= 0 && jb < n) f[ib * n + ia] = g[jb * n + ja];
-      }
-      const [ax, ay] = [[0, 1], [0, 2], [1, 2]][pl];
-      return { f, n, vMax: R.vMax, labels: [labels[ax], labels[ay]], mark: null, points: xs.length };
+      const g = grid2D(xs, ys, fs, R.smooth, R.vMax), [ax, ay] = [[0, 1], [0, 2], [1, 2]][pl];
+      return { f: g.f, n: g.n, vMax: R.vMax, labels: [labels[ax], labels[ay]], mark: null, points: xs.length };
     });
     const note = [tag, o.subtract ? `axes −V(HPCA ${R.name})` : "s/c frame", `±${R.theta}° slab · 2-D interpolation · smooth ${R.smooth}`, "survey half-spin · azimuths from MEC"].join(" · ");
     return { slices, tag, note, start: A.t0, end: A.t0 + 10, zLo: R.zLo, zHi: R.zHi };
@@ -2434,11 +2495,7 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
       let zlo = W.vdf.zlo, zhi = W.vdf.zhi;
-      if (ion) {
-        let mx = -Infinity;
-        for (const sl of out.slices) for (const f of sl.f) if (f > 0 && isFinite(f)) mx = Math.max(mx, Math.log10(f));
-        if (isFinite(mx)) { zhi = Math.ceil(mx); zlo = zhi - 6; }
-      }
+      if (ion) { zlo = out.zLo ?? -27; zhi = out.zHi ?? -20; }
       out.slices.forEach((s, k) => drawSlice(ctx, 0, k * 216, w, 216, s, zlo, zhi, W.vdf.contours));
     }
     /** An HPCA cut: the survey half-spin nearest the cut's time, fetched once per time, cut with the species' recipe. */
@@ -2461,7 +2518,7 @@
       }
       if (!c.hp.A) return show(`fetching the HPCA ${R.name} survey half-spin from CDAWeb…`);
       if (c.hp.A.error) return show(c.hp.A.error);
-      const o = vdfOpts(), key = JSON.stringify([o.frame, o.subtract, !!o.lmn, !!o.gsm]);
+      const o = vdfOpts(), key = JSON.stringify([o.frame, o.subtract, o.lmn, o.gsm]);
       if (c.hp.key !== key) { c.hp.out = cutHPCA(c.hp.A, o); c.hp.key = key; }
       const out = c.hp.out;
       cv.hidden = false; msg.hidden = true;

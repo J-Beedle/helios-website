@@ -1257,7 +1257,7 @@
     if (vdfStores[`${n}${sp}`]) return vdfStores[`${n}${sp}`];
     const sc = `mms${n}`, P = DIST[sp], S = vdfStores[`${n}${sp}`] = {
       n, t: [], E: new Float32Array(0), PHI: new Float32Array(0), B: new Float32Array(0), V: new Float32Array(0), Q: new Float32Array(0),
-      D: new Uint8Array(0), lo: P.lo, hi: P.hi, dt: P.dt, sp, dbcsToGSE: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], spans: [], pending: null, live: true,
+      D: new Uint8Array(0), lo: P.lo, hi: P.hi, dt: P.dt, sp, dbcsToGSE: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], mecOK: false, spans: [], pending: null, live: true, enc2: true,
       covers(t) { return this.spans.some(([a, b]) => t >= a && t <= b); },
       ensure(t) {
         if (this.covers(t)) return Promise.resolve(true);
@@ -1267,13 +1267,13 @@
           hapiBinary(`MMS${n}_FPI_BRST_L2_${sp.toUpperCase()}-DIST`, [`${sc}_${sp}_dist_brst`, `${sc}_${sp}_phi_brst`, `${sc}_${sp}_energy_brst`], a, b, 16384 + 64),
           hapi(`MMS${n}_FPI_BRST_L2_${sp.toUpperCase()}-MOMS`, [`${sc}_${sp}_bulkv_dbcs_brst`], a - 100, b + 100, true),
           hapi(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_dmpa_brst_l2`], a - 100, b + 100, true),
-          this.spans.length ? null : hapi(`MMS${n}_MEC_SRVY_L2_EPHT89D`, [`${sc}_mec_quat_eci_to_dbcs`, `${sc}_mec_quat_eci_to_gse`], a - 60e3, b + 60e3, true),
+          this.mecOK ? null : hapi(`MMS${n}_MEC_SRVY_L2_EPHT89D`, [`${sc}_mec_quat_eci_to_dbcs`, `${sc}_mec_quat_eci_to_gse`], a - 60e3, b + 60e3, true).catch(() => null),
         ])).then(([dist, mom, fgm, mecq]) => {
           if (mecq && mecq.n) {                              // DBCS → GSE = (ECI → GSE)(ECI → DBCS)ᵀ, turned the way that puts the Sun on +X
             const i = nearest(mecq.t, t), q = (c) => rot(mecq.cols[c][i], mecq.cols[c + 1][i], mecq.cols[c + 2][i], mecq.cols[c + 3][i]);
             const sun = sunJ2000(T0 + t * 1000).u, G0 = q(4), flip = app(T_(G0), sun)[0] > app(G0, sun)[0];
             const G = flip ? T_(G0) : G0, Dm = flip ? T_(q(0)) : q(0), M = mul(G, T_(Dm));
-            this.dbcsToGSE = [M.slice(0, 3), M.slice(3, 6), M.slice(6, 9)];
+            if (M.every(isFinite)) { this.dbcsToGSE = [M.slice(0, 3), M.slice(3, 6), M.slice(6, 9)]; this.mecOK = true; }
           }
           this.spans.push([t - P.pad, t + P.pad]);
           const have = new Set(this.t.map(x => x.toFixed(4))), add = dist.filter(d => !have.has(d.t.toFixed(4)));
@@ -1291,7 +1291,8 @@
             const d = add[r.i].v;
             for (let j = 0; j < 16384; j++) {
               const f = d[j];
-              if (f > 0 && f < 1e-10) D[k * 16384 + j] = Math.max(1, Math.min(255, Math.round(1 + (Math.log10(f) - P.lo) / span * 254)));
+              if (f === 0) D[k * 16384 + j] = 1;
+              else if (f > 0 && f < 1e-10) D[k * 16384 + j] = Math.max(2, Math.min(255, Math.round(2 + (Math.log10(f) - P.lo) / span * 253)));
             }
             PHI.set(d.subarray(16384, 16416), k * 32); E.set(d.subarray(16416, 16448), k * 32);
             const vi = nearest(mom.t, r.t);                   // the moments share the distributions' records
@@ -1420,6 +1421,15 @@
     colat: [123.75, 101.25, 78.75, 56.25, 33.75, 11.25, 11.25, 33.75, 56.25, 78.75, 101.25, 123.75, 146.25, 168.75, 168.75, 146.25],
   };
   const HPCA_VAR = { H: "hplus", He: "heplus", O: "oplus" };
+  /** The despun spin-plane frame's axes as GSE rows: x the Sun projected on the spin plane, z the spin axis. */
+  function despunAxes(qb, qg) {
+    const M = mul(rot(...qb), T_(rot(...qg))), z = [M[6], M[7], M[8]];
+    let rx = [1 - z[0] * z[0], -z[0] * z[1], -z[0] * z[2]];
+    const rm = Math.hypot(...rx);
+    if (!(rm > 1e-6)) return null;
+    rx = rx.map(v => v / rm);
+    return [rx, [z[1] * rx[2] - z[2] * rx[1], z[2] * rx[0] - z[0] * rx[2], z[0] * rx[1] - z[1] * rx[0]], z];
+  }
   /** ψ: the BCS x-axis' azimuth in the spin plane from the projected Sun (GSE x), degrees. */
   function sunPhase(qb, qg) {
     const Rb = rot(...qb), Rg = rot(...qg), M = mul(Rb, T_(Rg));          // GSE → BCS
@@ -1459,11 +1469,13 @@
       ]);
       // the spin phase: MEC's 30-s samples unwrapped with the nominal rate, interpolated to the sector-0 sweep
       const ts = [], ps = [];
+      let axes = null, best_ = Infinity;
       for (let i = 0; i < mec.n; i++) {
         const q = mec.cols.slice(0, 8).map(c => c[i]);
         if (!q.every(v => isFinite(v) && Math.abs(v) <= 1.5)) continue;
         const ph = sunPhase(q.slice(0, 4), q.slice(4, 8));
         if (isFinite(ph)) { ts.push(mec.t[i]); ps.push(ph); }
+        if (Math.abs(mec.t[i] - t0) < best_) { best_ = Math.abs(mec.t[i] - t0); axes = despunAxes(q.slice(0, 4), q.slice(4, 8)); }
       }
       if (ts.length < 2) return { error: "No MEC attitude near this time for HPCA's spin phase." };
       const un = [ps[0]];
@@ -1480,10 +1492,10 @@
         for (let e = 0; e < 63; e++) { let v = (c + HPCA_AZ.energy[e] * scale) % 360; if (v < 0) v += 360; phi[(a * 16 + k) * 63 + e] = v; }
       }
       let bulk = [0, 0, 0];
-      if (mom && mom.n) { const i = nearest(mom.t, t0 + 5); const v = [0, 1, 2].map(c => mom.cols[c][i]); if (v.every(x => isFinite(x) && Math.abs(x) < 1e4)) bulk = v; }
+      if (mom && mom.n) { const i = nearest(mom.t, t); const v = [0, 1, 2].map(c => mom.cols[c][i]); if (v.every(x => isFinite(x) && Math.abs(x) < 1e4)) bulk = v; }   // the moment at the cut's time
       let b = null;
       if (fg && fg.n) { const s = [0, 0, 0]; let m = 0; for (let i = 0; i < fg.n; i++) if (fg.t[i] >= t0 && fg.t[i] <= t0 + 10 && [0, 1, 2].every(c => isFinite(fg.cols[c][i]))) { for (let c = 0; c < 3; c++) s[c] += fg.cols[c][i]; m++; } if (m) b = s.map(x => x / m); }
-      return { t0, psd, phi, colat: HPCA_AZ.colat, energy: HPCA_E, bulk, b, sp };
+      return { t0, psd, phi, colat: HPCA_AZ.colat, energy: HPCA_E, bulk, b, sp, axes };
     })().catch((e) => ({ error: `CDAWeb did not answer: ${e.message || e}` })));
     hpcaMemo.set(key, p);
     return p;
