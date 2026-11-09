@@ -652,7 +652,10 @@
       }
       for (const f of S.fleet) {
         if (f.orbit.length < 2 || f.cat === "moon" || !kept(f, posAt(f, time), reach)) continue;
-        if (lunar(f)) occluded(ctx, f.orbit); else path(ctx, f.orbit);
+        // a de-drifted lunar loop rides the Moon while the time machine moves (FleetObject.orbitAnchor)
+        let orb = f.orbit;
+        if (f.anchor != null && moon) { const m1 = posAt(moon, time), m0 = posAt(moon, f.anchor), d = [0, 1, 2].map(k => m1[k] - m0[k]); orb = orb.map(p => [p[0] + d[0], p[1] + d[1], p[2] + d[2]]); }
+        if (lunar(f)) occluded(ctx, orb); else path(ctx, orb);
         stroke(ctx, f.cat === "cluster" ? "rgba(158,158,158,0.38)" : rgba(CAT[f.cat], 0.45), 0.9, [3, 3]);
       }
       const l1s = S.fleet.filter(f => f.cat === "l1" && len3(posAt(f, time)) <= reach);
@@ -881,7 +884,7 @@
       // the legend
       if (P.W >= 420) {
         const lines = ["ALL-SKY IMAGERS", "imaging now   daylight", `${stationMarks.length} in view · ${S.asi.length} that day`, "Drag to turn the globe"];
-        const x = 12, w = 200, h = o.sky ? 90 : 74, y = P.H - 38 - h;
+        const x = 12, w = 200, h = o.sky ? 90 : 74, y = P.H - 80 - h;   // above the GSE axis glyph (its "GSE" at H − 67) and the time bar
         roundRect(ctx, x, y, w, h, 8); ctx.fillStyle = "rgba(11,11,14,0.86)"; ctx.fill(); stroke(ctx, rgba(DS.hairline, 0.12), 1);
         text(ctx, lines[0], x + 10, y + 13, `700 9.5px ${MONO}`, rgba(DS.textSecondary), "left");
         circle(ctx, x + 14, y + 30, 4, rgba(NET.themis)); ctx.beginPath(); ctx.arc(x + 14, y + 30, 4, 0, TAU); stroke(ctx, "rgba(255,255,255,0.85)", 0.8);

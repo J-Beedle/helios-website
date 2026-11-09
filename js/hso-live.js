@@ -1334,19 +1334,21 @@
   async function scene() {
     const keoP = track("All-sky imager keograms (UCalgary)", keogramLists()).catch(() => ({}));
     const driverP = track("Kp (OMNI2) and AL (OMNI)", auroralDriver()).catch(() => ({ kp: null, al: null }));
-    const [[m1, ...others], sites, starsBuf, fleetA, fleetB, fleetC] = await Promise.all([
+    const [[m1, ...others], sites, starsBuf, fleetA, fleetB, fleetC, fleetD] = await Promise.all([
       mec(),
       fetch("assets/data/live/asi-sites.json").then(r => r.json()),
       fetch("assets/data/hso/stars.bin").then(r => r.arrayBuffer()),
-      track("Fleet: THEMIS, ARTEMIS, Moon, SDO, Van Allen Probes, Arase, TRACERS", ssc(["themisa", "themisd", "themise", ...(AT >= Date.UTC(2011, 6, 1) ? ["artemisp1", "artemisp2"] : []), "moon", "sdo", "rbspa", "rbspb",
+      track("Fleet: THEMIS, SDO, Van Allen Probes, Arase, TRACERS", ssc(["themisa", "themisd", "themise", "sdo", "rbspa", "rbspb",
         ...(AT >= Date.UTC(2017, 0, 1) ? ["arase"] : []), ...(AT >= Date.UTC(2025, 6, 23) ? ["tracers1", "tracers2"] : [])], AT - 13 * 3600e3, AT + 13 * 3600e3)).catch(() => ({})),
+      // the Moon and ARTEMIS to 31 h ahead: ARTEMIS's loop is drawn over the 30 h from the moment, about the Moon
+      track("Fleet: the Moon and ARTEMIS", ssc(["moon", ...(AT >= Date.UTC(2011, 6, 1) ? ["artemisp1", "artemisp2"] : [])], AT - 13 * 3600e3, AT + 31 * 3600e3)).catch(() => ({})),
       track("Fleet: Cluster", ssc(["cluster1", "cluster2", "cluster3", "cluster4"], AT - 27 * 3600e3, AT + 27 * 3600e3)).catch(() => ({})),
       track("Fleet: Geotail and the L1 monitors", ssc(["geotail", "ace", "dscovr", "wind"], AT - 62 * 3600e3, AT + 62 * 3600e3)).catch(() => ({})),
     ]);
     const GOES_SINCE = { goes16: Date.UTC(2017, 0, 1), goes17: Date.UTC(2018, 2, 1), goes18: Date.UTC(2022, 2, 1), goes19: Date.UTC(2024, 5, 1) };
     const goes = await track("Fleet: GOES-16 to 19", Promise.all(Object.entries(GOES_SINCE).filter(([, t]) => AT >= t)
       .map(([id]) => ssc([id], AT - 13 * 3600e3, AT + 13 * 3600e3).catch(() => ({}))))).then(xs => Object.assign({}, ...xs)).catch(() => ({}));
-    const fleetData = Object.assign({}, fleetA, fleetB, fleetC, goes);
+    const fleetData = Object.assign({}, fleetA, fleetB, fleetC, fleetD, goes);
     // MMS1's track every 4 minutes over ±43 h, one period of it drawn; MMS2–4 beside it in km
     const T = [], P = [];
     for (let i = 0; i < m1.n; i++) {
@@ -1396,7 +1398,21 @@
       const pos = posAt(o, HALF);
       let orbit = m && !(cat === "goes" && fleet.some(f => f.cat === "goes")) ? thin(o, HALF - (span_[cat] || 12) * 3600, HALF + (span_[cat] || 12) * 3600, m) : [];
       if (cat === "moon") orbit = lunarRing(pos, posAt(o, HALF - 12 * 3600), posAt(o, HALF + 12 * 3600));
-      fleet.push({ id: name, cat, pos: r3(pos), orbit, timeline: timeline(o) });
+      let anchor = null;
+      const mo = fleetData.moon;
+      if (cat === "artemis" && mo && mo.t.length) {
+        // FleetClient.deDrift: 30 h from the moment (slid back where the ephemeris ends), each sample taken about the
+        // Moon at its own time and set on the Moon at the loop's start, so ~30 h at 60 R_E reads as a lunar orbit
+        const end = Math.min(HALF + 30 * 3600, o.t[o.t.length - 1]), st = Math.max(o.t[0], end - 30 * 3600);
+        const idx = []; for (let i = 0; i < o.t.length; i++) if (o.t[i] >= st && o.t[i] <= end) idx.push(i);
+        const k = Math.max(1, Math.ceil(idx.length / m)), use = idx.filter((_, j) => j % k === 0);
+        if (use.length > 1) {
+          anchor = o.t[use[0]];
+          const m0 = posAt(mo, anchor);
+          orbit = use.map(i => { const mi = posAt(mo, o.t[i]); return r3([0, 1, 2].map(c => o.p[i][c] - mi[c] + m0[c])); });
+        }
+      }
+      fleet.push({ id: name, cat, pos: r3(pos), orbit, anchor, timeline: timeline(o) });
     }
     // the planets in the sky and the inner solar system, in GSE's axes at the moment
     const AU_KM = 149597870.7, RE_AU = AU_KM / RE_KM, earth = planet("earth", AT);
