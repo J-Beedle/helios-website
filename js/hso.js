@@ -588,8 +588,12 @@
   const hpVel = (k, name) => ({ title: `Velocity  V(${name})`, label: `V ${HP_LAB[k]}`, unit: "(km/s)", w: 0.9, zero: true, lazy: "hpcaMom", lines: XYZ("hpm", `v${k}`) });
   // in Helios's order, H⁺ He⁺ He⁺⁺ O⁺ (the moments set keeps H⁺ He⁺⁺ He⁺ O⁺ columns)
   const four = (name, f) => [["H", 0], ["Hep", 2], ["Hepp", 1], ["O", 3]].map(([k, j]) => f(k, j));
+  /** A derived vector component that turns with the LMN frame: mk(cc) makes component cc's line; under LMN the
+   *  three are combined along the frame's row c, as the stored vectors are. */
+  const rotd = (line, c, mk, lmnLabel = null) => Object.assign(line, { c, rot: mk, lmnLabel });
   const fz = (sp, c) => ({ title: `E vs −V${sp === "des" ? "ₑ" : "ᵢ"}×B  · ${"xyz"[c]}`, label: `E_{${"xyz"[c]}}`, unit: "(mV/m)", w: 0.8, zero: true, lazy: "edp",
-                          lines: [Sc("efi", "e", c, COL.mag, `E_{${"xyz"[c]}}`), Object.assign(derive(sp, COL.z, `−V_{${sp === "des" ? "e" : "i"}}×B`, minusVxB(c)), { shift: midStamp })] });
+                          comp: c, lines: [Object.assign(Vc("efi", "e", c, COL.mag, `E_{${"xyz"[c]}}`), { lmnLabel: (k) => `E_{${k}}` }),
+                                           Object.assign(rotd(derive(sp, COL.z, `−V_{${sp === "des" ? "e" : "i"}}×B`, minusVxB(c)), c, minusVxB, () => `−V_{${sp === "des" ? "e" : "i"}}×B`), { shift: midStamp })] });
   const KINDS = {
     b: { title: "B — magnetic field", label: "B", unit: "(nT)", w: 1.25, zero: true, lines: [Sc("fgm", "b", 3, COL.mag, "|B|"), ...XYZ("fgm", "b")] },
     ionSpec: { title: "Ion spectrogram", label: "Ions", unit: "(eV)", w: 1, spec: "dis", range: "dis" },
@@ -607,16 +611,16 @@
     ve: { title: "Electron velocity  Vₑ", label: "V_{e}", unit: "(km/s)", w: 1, zero: true, lines: XYZ("des", "v") },
     jfpi: { title: "Current  J (FPI)", label: "J_{FPI}", unit: "(µA/m²)", w: 1, zero: true, lines: XYZ("des", "j") },
     jpar: { title: "J∥  (parallel current)", label: "J_{∥}", unit: "(µA/m²)", w: 0.8, zero: true,
-            lines: [derive("des", COL.x, "X", jAlong(false, 0)), derive("des", COL.y, "Y", jAlong(false, 1)), derive("des", COL.z, "Z", jAlong(false, 2)), derive("des", COL.mag, "J_{∥}·B̂", jAlong(false, 3))] },
+            lines: [...[0, 1, 2].map(c => rotd(derive("des", [COL.x, COL.y, COL.z][c], "XYZ"[c], jAlong(false, c)), c, (cc) => jAlong(false, cc))), derive("des", COL.mag, "J_{∥}·B̂", jAlong(false, 3))] },
     jperp: { title: "J⊥  (perpendicular current)", label: "J_{⊥}", unit: "(µA/m²)", w: 0.8, zero: true,
-             lines: [derive("des", COL.x, "X", jAlong(true, 0)), derive("des", COL.y, "Y", jAlong(true, 1)), derive("des", COL.z, "Z", jAlong(true, 2))] },
+             lines: [0, 1, 2].map(c => rotd(derive("des", [COL.x, COL.y, COL.z][c], "XYZ"[c], jAlong(true, c)), c, (cc) => jAlong(true, cc))) },
     e: { title: "E — electric field", label: "E", unit: "(mV/m)", w: 1, zero: true, lazy: "edp", lines: XYZ("efi", "e") },
     pot: { title: "Spacecraft potential", label: "V_{sc}", unit: "(V)", w: 0.7, lazy: "edp", lines: [Sc("pot", "v", 0, COL.x, "V_{sc}")] },
     epsd: { title: "E-field spectrogram (DSP, omni)", label: "DSP E", unit: "(Hz)", w: 1, spec: "epsd", range: "epsd", lazy: "dsp", cbar: "(V/m)²/Hz" },
     epE: { title: "E′ = E + Vₑ×B  (electron frame)", label: "E′_{e}", unit: "(mV/m)", w: 0.9, zero: true, lazy: "edp",
-           lines: [0, 1, 2].map(c => derive("des", [COL.x, COL.y, COL.z][c], "XYZ"[c], ePrime(c))) },
+           lines: [0, 1, 2].map(c => rotd(derive("des", [COL.x, COL.y, COL.z][c], "XYZ"[c], ePrime(c)), c, ePrime)) },
     epI: { title: "E′ = E + Vᵢ×B  (ion frame)", label: "E′_{i}", unit: "(mV/m)", w: 0.9, zero: true, lazy: "edp",
-           lines: [0, 1, 2].map(c => derive("dis", [COL.x, COL.y, COL.z][c], "XYZ"[c], ePrime(c))) },
+           lines: [0, 1, 2].map(c => rotd(derive("dis", [COL.x, COL.y, COL.z][c], "XYZ"[c], ePrime(c)), c, ePrime)) },
     jdotE: { title: "J·E′ — dissipation", label: "J·E′", unit: "(nW/m³)", w: 0.8, zero: true, lazy: "edp", lines: [derive("des", COL.mag, "J·E′", jDotEp)] },
     fzEx: fz("des", 0), fzEy: fz("des", 1), fzEz: fz("des", 2), fzIx: fz("dis", 0), fzIy: fz("dis", 1), fzIz: fz("dis", 2),
     exbX: null, exbY: null, exbZ: null,
@@ -667,9 +671,10 @@
             lines: [Sc("cmpO", "v", 0, COL.x, "O^{+}"), Sc("cmpHe1", "v", 0, COL.z, "He^{+}"), Sc("cmpHe2", "v", 0, COL.y, "He^{++}")] },
   };
   for (const [k, c] of [["exbX", 0], ["exbY", 1], ["exbZ", 2]])
-    KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V⊥_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp",
-                 lines: [derive("efi", COL.mag, "E×B/B²", exb(c)), Object.assign(derive("des", COL.z, "V_{e⊥}", vPerp(c)), { shift: midStamp }),
-                         Object.assign(derive("dis", COL.x, "V_{i⊥}", vPerp(c)), { shift: midStamp })] };
+    KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V⊥_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp", comp: c,
+                 lines: [rotd(derive("efi", COL.mag, "E×B/B²", exb(c)), c, exb, () => "E×B/B²"),
+                         Object.assign(rotd(derive("des", COL.z, "V_{e⊥}", vPerp(c)), c, vPerp, () => "V_{e⊥}"), { shift: midStamp }),
+                         Object.assign(rotd(derive("dis", COL.x, "V_{i⊥}", vPerp(c)), c, vPerp, () => "V_{i⊥}"), { shift: midStamp })] };
   const NA = (title) => ({ title, avail: false });
   /** A subplot whose data are on their way: a bar to the bytes CDAWeb said it would send (the CDF subsets), or a
    *  moving segment with the megabytes so far where it did not say (HAPI). */
@@ -914,7 +919,56 @@
    * { mission, stack, coverage, tracker, spintone, outliers, smooth, smoothW, lmn: {R} | null, marks: [{t, color}],
    *   onMark(k, t), interval: {a, b, live, label} | null, onInterval(a, b), bands: [{kind, a, b}], paint, onPaint(kind, a, b) }.
    */
+  // ── Helios's resolution tiers (HSODataClient.dataTier), by the window's ±range: ≤ 20 min the data as they are;
+  //    ≤ 2 h burst kept, B box-averaged to 0.15 s and the burst electron moments onto the ion records; wider, burst
+  //    dropped and B box-averaged to 4.5 s. Spectrograms and the ions are untouched (reduceElectronsToIonGrid). ──
+  const NOT_AVG = new Set(["t", "spec", "eidx", "specLog", "store", "edges"]);
+  /** Every per-record field of S averaged over boxes [lo_k, hi_k) (NaN skipped; empty boxes NaN), stamped at grid. */
+  function boxSet(S, grid, lo, hi) {
+    const n = S.t.length, m = grid.length, out = { t: Float32Array.from(grid), cols: {} };
+    const keys = Object.keys(S.cols || {}).filter(k => !NOT_AVG.has(k) && S[k] && S[k].length === n * S.cols[k] && !(S[k] instanceof Uint8Array));
+    for (const k of keys) { out[k] = new Float32Array(m * S.cols[k]).fill(NaN); out.cols[k] = S.cols[k]; }
+    let j0 = 0;
+    for (let g = 0; g < m; g++) {
+      while (j0 < n && S.t[j0] < lo[g]) j0++;
+      let j1 = j0; while (j1 < n && S.t[j1] < hi[g]) j1++;
+      if (j1 > j0) for (const k of keys) {
+        const st = S.cols[k], src = S[k], dst = out[k];
+        for (let c = 0; c < st; c++) { let sum = 0, cnt = 0; for (let j = j0; j < j1; j++) { const v = src[j * st + c]; if (isFinite(v)) { sum += v; cnt++; } } if (cnt) dst[g * st + c] = sum / cnt; }
+      }
+    }
+    cadence(out);
+    return out;
+  }
+  /** boxAverageRegular: a regular grid over the set's own span at `step` s, each box centered on its stamp. */
+  function regularSet(S, step) {
+    if (!S || S.t.length < 2) return S;
+    const t0 = S.t[0], m = Math.floor((S.t[S.t.length - 1] - t0) / step) + 1;
+    if (m < 2) return S;
+    const grid = Float64Array.from({ length: m }, (_, k) => t0 + k * step);
+    return boxSet(S, grid, grid.map(t => t - step / 2), grid.map(t => t + step / 2));
+  }
+  /** onIonGrid: the electron records inside each ion record's accumulation [tᵢ, tᵢ₊₁), on the ion stamps. */
+  function onIonGrid(E, I) {
+    if (!E || !I || I.t.length < 2) return E;
+    const g = I.t, hi = Float64Array.from(g, (t, k) => (k + 1 < g.length ? Math.min(g[k + 1], t + 3 * I.dt) : t + I.dt));
+    return boxSet(E, g, g, hi);
+  }
+  function tierOf(span) { return span <= 1200 ? "native" : span <= 7200 ? "reduced" : "survey"; }
+  function tierView(D0, tier) {
+    if (tier === "native") return D0;
+    const key = `tier|${tier}|${Object.keys(D0.sv).length}|${D0.bu ? Object.keys(D0.bu).length : 0}`;
+    return memo(D0.sv, key, () => {
+      const V = Object.create(D0), step = tier === "reduced" ? 0.15 : 4.5;
+      V.sv = Object.assign({}, D0.sv, { fgm: regularSet(D0.sv.fgm, step) });
+      if (tier === "survey") V.bu = null;
+      else if (D0.bu) V.bu = Object.assign({}, D0.bu, { fgm: regularSet(D0.bu.fgm, step), des: onIonGrid(D0.bu.des, D0.bu.dis) });
+      V.tier = tier;
+      return V;
+    });
+  }
   function Panel(D, app, cv, over, cfg = {}) {
+    const D0 = D;                                          // the window's own view; D is its resolution tier's while drawing
     cfg = Object.assign({ mission: "mms", coverage: true, tracker: true, spintone: true, smooth: false, smoothW: 10, outliers: false,
                           lmn: null, marks: [], interval: null, bands: [], paint: null }, cfg);
     let L = null;                                          // the layout last drawn
@@ -939,14 +993,17 @@
     function accessor(line, R, rowKey) {
       return (S) => {
         let f;
-        if (line.derive) f = line.derive(S, P);
+        if (line.derive && line.rot && R) {                // a derived vector, turned into LMN
+          const g = [0, 1, 2].map(cc => line.rot(cc)(S, P)), r = R[line.c];
+          f = g.every(Boolean) ? (i) => r[0] * g[0](i) + r[1] * g[1](i) + r[2] * g[2](i) : null;
+        } else if (line.derive) f = line.derive(S, P);
         else {
           if (!S[line.name]) return null;
           if (line.vec && R) { const g = [0, 1, 2].map(c => component(line, S, c)), r = R[line.c]; f = (i) => r[0] * g[0](i) + r[1] * g[1](i) + r[2] * g[2](i); }
           else f = component(line, S, line.c);
         }
         if (!f) return null;
-        const n = S.t.length, id = `${line.ds}.${line.name || line.label}.${line.c ?? ""}|${cfg.spintone}`;
+        const n = S.t.length, id = `${line.ds}.${line.name || line.label}.${line.c ?? ""}|${cfg.spintone}${line.rot && R ? `|${R.flat().map(x => x.toFixed(5)).join()}` : ""}`;
         if (cfg.outliers && spikes(line, rowKey)) {
           const bad = memo(S, `bad|${line.vec ? `${line.name}|${cfg.spintone}` : id}`, () => {
             if (!line.vec) return outliers(Float64Array.from({ length: n }, (_, i) => f(i)));
@@ -966,6 +1023,8 @@
       };
     }
     const LMN = ["L", "M", "N"];
+    /** A line's legend: under LMN a turned vector names its axis (E_L, or the line's own name where the row says it). */
+    const legendOf = (line, R) => (R && (line.vec || line.rot) ? (line.lmnLabel ? line.lmnLabel(LMN[line.c]) : LMN[line.c]) : line.label);
     function layout(w, h, rows) {
       const narrow = w < 500, left = narrow ? 62 : 100, right = narrow ? 44 : 64, top = cfg.coverage && D.bu ? 24 : 12, bottom = 40;
       const H = h - top - bottom;
@@ -979,7 +1038,8 @@
       const { ctx, w, h, dpr } = sizeCanvas(cv), a = app.a, b = app.b;
       sizeCanvas(over);
       const mission = cfg.mission, keys = cfg.stack || MISSIONS[mission].stack;
-      if (D.sv.efiN && mission === "mms") D.sv.efi = b - a <= 240 ? D.sv.efiN : b - a <= 7200 ? D.sv.efi15 : D.sv.efi45;
+      D = LIVE && mission === "mms" && app.home ? tierView(D0, tierOf(app.home[1] - app.home[0])) : D0;
+      if (D.sv.efiN && mission === "mms") D.sv.efi = D0.sv.efi = b - a <= 240 ? D.sv.efiN : b - a <= 7200 ? D.sv.efi15 : D.sv.efi45;
       let rows = keys.map(k => Object.assign({ key: k }, kindOf(mission, k), D.relabel && D.relabel[k])).filter(r => r.title && r.avail !== false);
       // live, other missions: as Helios, which fetches only the window, a subplot with nothing in the window is left out
       if (LIVE && mission !== "mms") {
@@ -1034,7 +1094,7 @@
           if (E && E.zLo != null) win[0] = E.zLo;
           if (E && E.zHi != null) win[1] = E.zHi;
           if (win[1] <= win[0]) win[1] = win[0] + 1;
-          spectrogram(ctx, Rw, a, b, D, r.spec, true, dpr, LIVE ? win : null);
+          spectrogram(ctx, Rw, a, b, D.tier === "survey" ? D : D0, r.spec, true, dpr, LIVE ? win : null);   // the electrons' spectra keep their cadence
           energyAxis(ctx, Rw, D.erange[r.spec]);
           colorbar(ctx, Rw.x + Rw.w + 6, Rw.y + 4, 9, Rw.h - 8, win, L.narrow ? null : r.cbar || (r.spec === "esp" && mission === "c4" ? "keV/cm²-s-sr-keV" : "eV/cm²-sr-eV-s"));
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
@@ -1118,17 +1178,17 @@
                                                   : stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1, line.shift));
           const n = r.lines.length;                       // the legend, top to bottom, at the right
           r.lines.forEach((line, i) =>
-            rich(ctx, R && line.vec ? LMN[line.c] : line.label, Rw.x + Rw.w + 6, Rw.y + Rw.h / 2 + (i - (n - 1) / 2) * Math.min(13, (Rw.h - 6) / n), { size: 10.5, weight: 600, color: line.color }));
+            rich(ctx, legendOf(line, R), Rw.x + Rw.w + 6, Rw.y + Rw.h / 2 + (i - (n - 1) / 2) * Math.min(13, (Rw.h - 6) / n), { size: 10.5, weight: 600, color: line.color }));
         }
         // the row's frame, name and letter
         ctx.strokeStyle = "rgba(29,29,34,0.45)"; ctx.lineWidth = 1;
         ctx.strokeRect(Math.round(Rw.x) + 0.5, Math.round(Rw.y) + 0.5, Math.round(Rw.w) - 1, Math.round(Rw.h));
-        const cy = Rw.y + Rw.h / 2;
+        const cy = Rw.y + Rw.h / 2, rowLabel = R && r.comp != null ? r.label.replace(/\{[xyz]\}/, `{${LMN[r.comp]}}`) : r.label;
         if (L.narrow) {
-          rich(ctx, r.short || r.label, 6, cy - 6, { size: 10.5, weight: 600 });
+          rich(ctx, r.short || rowLabel, 6, cy - 6, { size: 10.5, weight: 600 });
           rich(ctx, r.unit, 6, cy + 7, { size: 9, color: INK2 });
         } else {
-          rich(ctx, r.label, Rw.x - 66, cy - 7, { size: 11.5, weight: 600, align: "center" });
+          rich(ctx, rowLabel, Rw.x - 66, cy - 7, { size: 11.5, weight: 600, align: "center" });
           rich(ctx, r.unit, Rw.x - 66, cy + 7, { size: 10, align: "center", color: INK2 });
         }
         rich(ctx, `(${"abcdefghijklmnopqrst"[Rw.k]})`, Rw.x + Rw.w - 6, Rw.y + 9, { size: 10, align: "right", color: INK2 });
@@ -1235,7 +1295,7 @@
             ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2); ctx.fillStyle = line.color; ctx.fill();
             ctx.lineWidth = 0.6; ctx.strokeStyle = "#fff"; ctx.stroke();
           }
-          chip.push([`${cfg.lmn && line.vec ? LMN[line.c] : line.label} ${fmtVal(v)}`, line.color]);
+          chip.push([`${legendOf(line, cfg.lmn)} ${fmtVal(v)}`, line.color]);
         });
         if (!chip.length) return;
         const bw = Math.max(...chip.map(([str]) => rich(ctx, str, 0, 0, { size: fs, weight: 600, measure: true }))) + 2 * padX;
