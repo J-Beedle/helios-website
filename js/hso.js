@@ -3125,6 +3125,8 @@
     return true;
   }
 
+  /** The reason for a failed load where it is one of ours to tell (no MMS positions at all for the moment). */
+  const why = (e) => (/^No MMS positions/.test(e && e.message) ? ` ${e.message}` : "");
   async function start() {
     const root = $("#app");
     if (!root) return;
@@ -3132,7 +3134,7 @@
       let D;
       try { D = await load(); } catch (e) {                  // say why when the reason is known (no MMS ephemeris yet for a recent moment)
         const p = Object.assign(document.createElement("p"), { className: "solo-fail" });
-        p.textContent = `The data could not be loaded.${/^No MMS ephemeris/.test(e && e.message) ? ` ${e.message} MMS's ephemeris reaches the archive some weeks after the day.` : ""}`;
+        p.textContent = `The data could not be loaded.${why(e)}`;
         document.body.appendChild(p);
         return;
       }
@@ -3143,7 +3145,7 @@
     const sceneData = LIVE ? SRC.scene() : Promise.all([fetch(BASE + "scene.json").then(r => r.json()), fetchBuf("stars.bin")]);
     let D, S = null, stars = null;
     try { D = await load(); } catch (e) {
-      $("#app-loading").textContent = $("#stage-loading").textContent = "The demo's data could not be loaded.";
+      $("#app-loading").textContent = $("#stage-loading").textContent = LIVE ? `The data could not be loaded.${why(e)}` : "The demo's data could not be loaded.";
       return;
     }
     try { [S, stars] = await sceneData; Stage(D, S, stars); } catch (e) { $("#stage-loading").textContent = "The HSO screen could not load."; }

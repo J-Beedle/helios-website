@@ -116,10 +116,13 @@
   /** fetch, retried three times (1.5, 3, 6 s apart) on a network error, a 5xx/429 answer, or no answer within `wait` ms
    *  (CDAWeb sometimes sits on a request under load, then answers a retry in seconds). */
   async function get(url, init, wait = 45000, onBytes = null) {
+    const outer = init && init.signal;                       // the caller's own cancel: at once, and no retry after it
     for (let k = 0; ; k++) {
+      if (outer && outer.aborted) throw new DOMException("cancelled", "AbortError");
       const ac = new AbortController(), timer = setTimeout(() => ac.abort(), wait);
+      if (outer) outer.addEventListener("abort", () => ac.abort(), { once: true });
       try {
-        const r = await fetch(url, Object.assign({ signal: ac.signal }, init));
+        const r = await fetch(url, Object.assign({}, init, { signal: ac.signal }));
         if (r.ok && onBytes && r.body) {                    // streamed, so a progress bar can follow it
           const rd = r.body.getReader(), parts = [];
           let n = 0;
@@ -132,7 +135,7 @@
         clearTimeout(timer);
         if ((r.status >= 500 || r.status === 429) && k < 3) { await sleep(1500 * 2 ** k); continue; }
         return r;
-      } catch (e) { clearTimeout(timer); if (k >= 3) throw e; await sleep(1500 * 2 ** k); }
+      } catch (e) { clearTimeout(timer); if (k >= 3 || (outer && outer.aborted)) throw e; await sleep(1500 * 2 ** k); }
     }
   }
 
@@ -194,7 +197,7 @@
     await relay;
     const url = `${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`;
     const u8 = await kept(url, () => slot(async () => {
-      const r = await get(url, undefined, 45000, P && P.add);
+      const r = await get(url, P && P.signal ? { signal: P.signal } : undefined, 45000, P && P.add);   // P: progress, and a cancel
       if (r.status === 404) return null;
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
       const body = await bodyOf(r); bytes += body.length; emit();
@@ -225,10 +228,10 @@
     return { t: Float64Array.from(t), cols, n: rows.length };
   }
   /** A long request cut into pieces fetched side by side, joined in order. */
-  async function hapiChunked(id, params, a, b, k, first) {
+  async function hapiChunked(id, params, a, b, k, first, P = null) {
     // whole-second edges, each piece ending where the next begins (HAPI's time.max is exclusive and to the second here)
     const edge = (i) => (i === 0 ? Math.floor(a / 1000) * 1000 : i === k ? Math.ceil(b / 1000) * 1000 : Math.round((a + i * (b - a) / k) / 1000) * 1000);
-    const parts = await Promise.all(Array.from({ length: k }, (_, i) => hapi(id, params, edge(i), edge(i + 1), first, i < k - 1)));
+    const parts = await Promise.all(Array.from({ length: k }, (_, i) => hapi(id, params, edge(i), edge(i + 1), first, i < k - 1, P)));
     const n = parts.reduce((s, p) => s + p.n, 0), nc = Math.max(0, ...parts.map(p => p.cols.length)), t = new Float64Array(n);
     const cols = Array.from({ length: nc }, () => new Float64Array(n));
     let o = 0;
@@ -489,14 +492,14 @@
     // CDAWeb's CDF subsets (gzip inside, one request each, the energy table of every record in the same file): a
     // quarter of the bytes of HAPI's CSV and its full float32 digits. HAPI stays as the way back where a subset fails.
     const burst = Promise.all([
-      track(`MMS${n} burst FGM`, viaCDF(`MMS${n}_FGM_BRST_L2`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, () => hapiChunked(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, 6))),
-      track(`MMS${n} burst FPI ions`, viaCDF(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, () => hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb), [`${sc}_dis_energy_brst`])),
-      track(`MMS${n} burst FPI electrons`, viaCDF(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, () => hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3), [`${sc}_des_energy_brst`])),
+      track(`MMS${n} burst FGM`, viaCDF(`MMS${n}_FGM_BRST_L2`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, (P) => hapiChunked(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, 6, false, P), [], `MMS${n}_FGM_BRST_L2@0`)),
+      track(`MMS${n} burst FPI ions`, viaCDF(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, (P) => hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, false, false, P), [`${sc}_dis_energy_brst`])),
+      track(`MMS${n} burst FPI electrons`, viaCDF(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, (P) => hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3, false, P), [`${sc}_des_energy_brst`])),
     ]).catch((e) => { console.warn(e); return null; });
     const [fg, di, de] = await Promise.all([
-      track(`MMS${n} FGM`, viaCDF(`MMS${n}_FGM_SRVY_L2`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, () => hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8, true))),
-      track(`MMS${n} FPI ions`, viaCDF(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, () => hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, true), [`${sc}_dis_energy_fast`])),
-      track(`MMS${n} FPI electrons`, viaCDF(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, () => hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, true), [`${sc}_des_energy_fast`])),
+      track(`MMS${n} FGM`, viaCDF(`MMS${n}_FGM_SRVY_L2`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, (P) => hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8, true, P), [], `MMS${n}_FGM_SRVY_L2@0`)),
+      track(`MMS${n} FPI ions`, viaCDF(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, (P) => hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, true, false, P), [`${sc}_dis_energy_fast`])),
+      track(`MMS${n} FPI electrons`, viaCDF(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, (P) => hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, true, false, P), [`${sc}_des_energy_fast`])),
     ]);
     // the survey field as served (8 or 16 S/s): the window's resolution tier averages it (hso.js tierView), as Helios
     const sv = {
@@ -519,8 +522,8 @@
       return T.length && tables.length < 250 ? { t: T, idx, tables } : null;
     };
     let tbI = inFile(di, `${sc}_dis_energy_fast`), tbE = inFile(de, `${sc}_des_energy_fast`);
-    if (!tbI || !tbE) {
-      const [fi, fe] = await track(`MMS${n} FPI energy tables (L2 files)`, Promise.all([tbI || fpiTables(n, "dis", a, b), tbE || fpiTables(n, "des", a, b)]));
+    if ((!tbI && di.n) || (!tbE && de.n)) {                  // (nothing to label where there are no records)
+      const [fi, fe] = await track(`MMS${n} FPI energy tables (L2 files)`, Promise.all([tbI || (di.n ? fpiTables(n, "dis", a, b) : null), tbE || (de.n ? fpiTables(n, "des", a, b) : null)]));
       tbI = fi; tbE = fe;
     }
     sv.dis.sp = "dis"; sv.des.sp = "des";
@@ -1340,12 +1343,76 @@
   function mec() {
     if (mecP) return mecP;
     const a = AT - 43 * 3600e3, b = AT + 43 * 3600e3, k0 = T0 + KEEP[0] * 1000, k1 = T0 + KEEP[1] * 1000;
+    const none = { t: new Float64Array(0), cols: [], n: 0 };
     mecP = Promise.all([
       track("MMS ephemeris (MEC)", hapiChunked("MMS1_MEC_SRVY_L2_EPHT89D", ["mms1_mec_dipole_tilt", "mms1_mec_kp",
-        "mms1_mec_quat_eci_to_geo", "mms1_mec_quat_eci_to_sm", "mms1_mec_r_gse", "mms1_mec_quat_eci_to_gse"], a, b, 4).then(mecCols)),
+        "mms1_mec_quat_eci_to_geo", "mms1_mec_quat_eci_to_sm", "mms1_mec_r_gse", "mms1_mec_quat_eci_to_gse"], a, b, 4)
+        .then(r => (r.n ? mecCols(r) : Object.assign(none, { empty: true })), () => Object.assign(none, { empty: true }))),
       ...[2, 3, 4].map(n => hapi(`MMS${n}_MEC_SRVY_L2_EPHT89D`, [`mms${n}_mec_r_gse`], k0, k1).catch(() => null)),
-    ]);
+    ]).then((got) => (got[0].n ? got : mecFromSSC(a, b, k0, k1)));
     return mecP;
+  }
+  // ── a moment MEC has not reached (its files follow the day by weeks): the same columns from SSCWeb's positions and
+  //    frames worked out here, so the HSO and the other missions' windows open while MMS's own data are still to come ──
+  /** Rotations about z and y of the FRAME by a (radians), row-major. */
+  const R3 = (a) => [Math.cos(a), Math.sin(a), 0, -Math.sin(a), Math.cos(a), 0, 0, 0, 1];
+  const R2 = (a) => [Math.cos(a), 0, -Math.sin(a), 0, 1, 0, Math.sin(a), 0, Math.cos(a)];
+  /** IGRF-14's dipole axis (toward the northern geomagnetic pole) in GEO at a date. */
+  function dipoleGEO(ms) {
+    const T = window.IGRF14, yr = 1970 + ms / (365.2425 * 864e5), last = T.epochs.length - 1;
+    const at = (k, h) => {
+      const A = h ? T.h : T.g, SV = h ? T.hSV : T.gSV;
+      if (yr >= T.epochs[last]) return A[last][k] + SV[k] * (yr - T.epochs[last]);
+      if (yr <= T.epochs[0]) return A[0][k];
+      const i = Math.min(Math.floor((yr - T.epochs[0]) / 5), last - 1), f = (yr - T.epochs[i]) / (T.epochs[i + 1] - T.epochs[i]);
+      return A[i][k] + (A[i + 1][k] - A[i][k]) * f;
+    };
+    const g10 = at(0, false), g11 = at(1, false), h11 = at(1, true), b0 = Math.hypot(g10, g11, h11);
+    return [-g11 / b0, -h11 / b0, -g10 / b0];
+  }
+  /** ECI (J2000) → GSE, GEO and SM, and the dipole tilt (deg), computed: IAU 1976 precession to the equator of date,
+   *  GMST (IAU 1982) about its pole, the Sun and ecliptic pole of date (Astronomical Almanac, ~0.01°), the IGRF dipole
+   *  (Hapgood 1992's chain). Within a few hundredths of a degree of MEC's quaternions; nutation is left out. */
+  function framesAt(ms) {
+    const d = (ms - Date.UTC(2000, 0, 1, 12)) / 864e5, Tc = d / 36525, as = Math.PI / 648000;
+    const zeta = (2306.2181 * Tc + 0.30188 * Tc * Tc + 0.017998 * Tc ** 3) * as, z = (2306.2181 * Tc + 1.09468 * Tc * Tc + 0.018203 * Tc ** 3) * as;
+    const th = (2004.3109 * Tc - 0.42665 * Tc * Tc - 0.041833 * Tc ** 3) * as;
+    const P = mul(R3(-z), mul(R2(th), R3(-zeta)));          // J2000 → mean equator and equinox of date
+    const gmst = ((280.46061837 + 360.98564736629 * d + 0.000387933 * Tc * Tc - Tc ** 3 / 38710000) % 360) * DEG;
+    const geoD = R3(gmst), gseD = j2000ToGSEApprox(ms);      // of date → GEO; of date → GSE (the Almanac's Sun is of date)
+    const gse = mul(gseD, P), geo = mul(geoD, P);
+    const dip = app(mul(gseD, T_(geoD)), dipoleGEO(ms));     // the dipole in GSE
+    let Y = [dip[2] * 0 - 0, dip[2], -dip[1]];               // dip × X̂
+    const ny = Math.hypot(...Y); Y = Y.map(v => v / ny);
+    const X = [Y[1] * dip[2] - Y[2] * dip[1], Y[2] * dip[0] - Y[0] * dip[2], Y[0] * dip[1] - Y[1] * dip[0]];   // Y × Z
+    const sm = mul([...X, ...Y, ...dip], gse);
+    return { gse, geo, sm, tilt: Math.asin(Math.max(-1, Math.min(1, dip[0]))) / DEG };
+  }
+  /** A rotation matrix (row-major) as the quaternion (x, y, z, w) rot() turns back into it. */
+  function quatOf(M) {
+    const tr = M[0] + M[4] + M[8];
+    if (tr > 0) { const S = Math.sqrt(tr + 1) * 2; return [(M[7] - M[5]) / S, (M[2] - M[6]) / S, (M[3] - M[1]) / S, S / 4]; }
+    if (M[0] > M[4] && M[0] > M[8]) { const S = Math.sqrt(1 + M[0] - M[4] - M[8]) * 2; return [S / 4, (M[1] + M[3]) / S, (M[2] + M[6]) / S, (M[7] - M[5]) / S]; }
+    if (M[4] > M[8]) { const S = Math.sqrt(1 + M[4] - M[0] - M[8]) * 2; return [(M[1] + M[3]) / S, S / 4, (M[5] + M[7]) / S, (M[2] - M[6]) / S]; }
+    const S = Math.sqrt(1 + M[8] - M[0] - M[4]) * 2; return [(M[2] + M[6]) / S, (M[5] + M[7]) / S, S / 4, (M[3] - M[1]) / S];
+  }
+  async function mecFromSSC(a, b, k0, k1) {
+    const pos = await track("MMS positions (SSCWeb) and computed frames — MEC has not reached this moment", ssc(["mms1", "mms2", "mms3", "mms4"], a, b)).catch(() => ({}));
+    const o1 = pos.mms1, none = { t: new Float64Array(0), cols: [], n: 0 };
+    if (!o1 || !o1.t.length) return [none, null, null, null];
+    const n = o1.t.length, cols = Array.from({ length: 17 }, () => new Float64Array(n));
+    for (let i = 0; i < n; i++) {
+      const F = framesAt(T0 + o1.t[i] * 1000), Q = [quatOf(F.gse), quatOf(F.geo), quatOf(F.sm)];
+      for (let c = 0; c < 3; c++) cols[c][i] = o1.p[i][c] * RE_KM;
+      cols[3][i] = NaN; cols[4][i] = F.tilt;                 // Kp comes from OMNI2 (auroralDriver)
+      Q.forEach((q4, k) => { for (let c = 0; c < 4; c++) cols[5 + 4 * k + c][i] = q4[c]; });
+    }
+    const other = (o) => {
+      if (!o || !o.t.length) return null;
+      const keep = []; for (let i = 0; i < o.t.length; i++) { const ms = T0 + o.t[i] * 1000; if (ms >= k0 && ms <= k1) keep.push(i); }
+      return { t: Float64Array.from(keep, i => o.t[i]), cols: [0, 1, 2].map(c => Float64Array.from(keep, i => o.p[i][c] * RE_KM)), n: keep.length };
+    };
+    return [{ t: Float64Array.from(o1.t), cols, n, computed: true }, other(pos.mms2), other(pos.mms3), other(pos.mms4)];
   }
   /** MEC's columns in the order the rest reads them: r[3], Kp, tilt, GSE[4], GEO[4], SM[4]. */
   function mecCols(r) {
@@ -1357,7 +1424,7 @@
   async function context() {
     const [[m1], omni] = await Promise.all([mec(), track("OMNI solar wind", hapi("OMNI_HRO_1MIN",
       ["F", "BX_GSE", "BY_GSM", "BZ_GSM", "flow_speed", "proton_density", "Pressure"], T0 - 3600e3, T0 + (SPAN + 3600) * 1000))]);
-    if (!m1.n) throw new Error("No MMS ephemeris for this moment (MEC starts 2015-09-01).");
+    if (!m1.n) throw new Error("No MMS positions for this moment: neither CDAWeb's MEC (from 2015-09-01) nor SSCWeb has any. MMS launched in March 2015.");
     // MMS1's orbit, a point a minute across the overview, for the view's MMS1 marker
     const ot = [], or = [];
     for (let i = 0; i < m1.n; i++) {
@@ -1644,17 +1711,18 @@
   const cdasStamp = (ms) => iso(ms).replace(/[-:]/g, "").replace(/\.\d+/, "");
   /** One CDAS subset as a CDF (its variables gzip-compressed), read whole: the survey ION product is full resolution
    *  ([16 anodes × 63 energies] per 0.625-s sweep), 64 MB per species-hour as HAPI CSV, a few MB this way. */
-  async function cdas(id, vars, a, b, P = null) {
+  async function cdas(id, vars, a, b, P = null, signal = undefined) {
     const url = `${CDAS}/${id}/data/${cdasStamp(a)},${cdasStamp(b)}/${vars.join(",")}?format=cdf`;
     const u8 = await kept(url, () => slot(async () => {
       // no-store: the answer names a temporary file, so a copy of it in the browser's HTTP cache would point at nothing later
-      const r = await get(url, { headers: { Accept: "application/json" }, cache: "no-store" }, 120000);
+      const r = await get(url, { headers: { Accept: "application/json" }, cache: "no-store", signal }, 120000);
+      if (r.status === 404) return new Uint8Array(0);        // CDAS's "no data in the interval"
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
       const j = await r.json(), f = j.FileDescription && j.FileDescription[0];
       if (!f) return new Uint8Array(0);                      // no data in the interval
       if (!/^https:\/\/cdaweb\.gsfc\.nasa\.gov\//.test(f.Name)) throw new Error(`${id}: a file outside CDAWeb`);
       if (P) P.expect(f.Length || 0);                         // CDAWeb says each subset's size: the bar knows its end
-      const fr = await get(f.Name, undefined, 120000, P && P.add);
+      const fr = await get(f.Name, { signal }, 120000, P && P.add);
       if (!fr.ok) throw new Error(`CDF ${fr.status}`);
       const body = await bodyOf(fr); bytes += body.length; emit();
       return body;
@@ -1664,8 +1732,8 @@
   /** A CDAS subset in hapi()'s shape — { t (s after T0), cols, n }: the variables' elements as columns in the order
    *  asked, fill as NaN, the rows inside [a, b] — with `extra` support variables (FPI's energy table per record, which
    *  come in the same file) as { name: Float64Array[n × elems] }. Full float32 values, where HAPI's CSV prints six digits. */
-  async function cdasRows(id, vars, a, b, extra = []) {
-    const cdf = await cdas(id, vars, a, b), none = { t: new Float64Array(0), cols: [], n: 0, extra: {} };
+  async function cdasRows(id, vars, a, b, extra = [], signal = undefined) {
+    const cdf = await cdas(id, vars, a, b, null, signal), none = { t: new Float64Array(0), cols: [], n: 0, extra: {} };
     if (!cdf) return none;
     const epName = await cdf.epochOf(vars[0]);
     if (!epName) throw new Error(`${id}: no epoch`);
@@ -1678,8 +1746,56 @@
     for (const name of extra) { const v = await cdf.variable(name).catch(() => null); if (v && v.n === ep.n) { const o = new Float64Array(n * v.elems); keepI.forEach((i, k) => o.set(v.data.subarray(i * v.elems, (i + 1) * v.elems), k * v.elems)); ex[name] = o; } }
     return { t: Float64Array.from(keepI, i => sec(ep.data[i])), cols, n, extra: ex };
   }
-  /** The CDF subset where CDAWeb cuts one, HAPI's CSV where it does not (or answers nothing). */
-  const viaCDF = (id, vars, a, b, viaHAPI, extra) => cdasRows(id, vars, a, b, extra).then(r => (r.n ? r : viaHAPI()), (e) => { console.warn("CDAS", id, e.message || e); return viaHAPI(); });
+  /** Whether HAPI has any record of `param` in [a, b]: the first bytes of its answer, then the request dropped. true,
+   *  false, or null where it could not say. HAPI tells "no data" in a tenth of a second; the subset service takes
+   *  seconds to (and a busy one, twenty). */
+  async function hapiHas(id, param, a, b) {
+    await relay;
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 8000);
+    try {
+      const r = await fetch(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${param}&time.min=${iso(a)}&time.max=${iso(b)}`, { signal: ac.signal, cache: "no-store" });
+      if (r.status === 404) return false;
+      if (!r.ok || !r.body) return null;
+      // CDAWeb's answer opens with the nearest record BEFORE the interval, and an empty interval is that record alone:
+      // so the rows are read until one falls inside (data) or the answer ends without one (none)
+      const rd = r.body.getReader();
+      let text = "";
+      for (let k = 0; k < 4; k++) {
+        const { done, value } = await rd.read();
+        if (value) text += textOf(value);
+        if (k === 0 && /^\s*[{,]/.test(text)) return /1201|no data/i.test(text) ? false : null;
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length - (done ? 0 : 1); i++) {   // whole lines only
+          const ms = lines[i].length > 19 ? hapiTime(lines[i].split(",")[0]) : NaN;
+          if (ms >= a && ms <= b) return true;
+        }
+        if (done) return false;
+      }
+      return null;
+    } catch (e) { return null; } finally { clearTimeout(timer); ac.abort(); }
+  }
+  /** The CDF subset where CDAWeb cuts one, HAPI's CSV where it does not; nothing at all where HAPI says there is nothing
+   *  (`hid`: the HAPI name of the same data, for the probe). */
+  async function viaCDF(id, vars, a, b, viaHAPI, extra, hid = id) {
+    const ac = new AbortController();
+    const cd = cdasRows(id, vars, a, b, extra, ac.signal).then(r => (r.n ? r : null), (e) => { if (!ac.signal.aborted) console.warn("CDAS", id, e.message || e); return null; });
+    const has = await Promise.race([hapiHas(hid, vars[0], a, b), cd.then(r => (r ? true : null))]);
+    if (has === false) { ac.abort(); return { t: new Float64Array(0), cols: [], n: 0, extra: {} }; }
+    // The subset service is quick for most years and slow for some (2024's burst products took it 15 s): where it has
+    // not answered within HEDGE, HAPI is asked as well and the first with data is used. HAPI's values are its CSV's
+    // (FPI to three digits), so the route is noted on the rows.
+    let timer;
+    const first = await Promise.race([cd.then(r => ({ r })), new Promise(res => { timer = setTimeout(res, HEDGE, null); })]);
+    clearTimeout(timer);
+    if (first) return first.r || viaHAPI();
+    const hc = new AbortController();
+    const hp = Promise.resolve().then(() => viaHAPI({ signal: hc.signal })).then(r => (r && r.n ? r : null), () => null);
+    const win = await Promise.race([cd.then(r => r && { r, cdf: true }), hp.then(r => r && { r })]) || await Promise.all([cd, hp]).then(([x, y]) => (x ? { r: x, cdf: true } : y ? { r: y } : null));
+    if (!win) return { t: new Float64Array(0), cols: [], n: 0, extra: {} };
+    if (win.cdf) hc.abort(); else { ac.abort(); console.info(`${id}: from HAPI (the CDF subset was slow)`); }   // the loser is dropped
+    return win.r;
+  }
+  const HEDGE = 3500;
   /** The sky-mean differential energy flux per half-spin, eV/(cm² s sr eV): per sweep the mean over the anodes with a
    *  value (negatives as 0), × E; the mean of those over the sweeps of a half-spin, which closes where start_azimuth = 0.
    *  A column is stamped with its half-spin's first sweep; only half-spins starting in [a, b) are kept (chunks never
