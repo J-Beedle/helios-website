@@ -3130,7 +3130,12 @@
     if (!root) return;
     if (SOLO && SOLO !== "hso") {                          // a data window alone: no scene, no workspace
       let D;
-      try { D = await load(); } catch (e) { document.body.insertAdjacentHTML("beforeend", '<p class="solo-fail">The data could not be loaded.</p>'); return; }
+      try { D = await load(); } catch (e) {                  // say why when the reason is known (no MMS ephemeris yet for a recent moment)
+        const p = Object.assign(document.createElement("p"), { className: "solo-fail" });
+        p.textContent = `The data could not be loaded.${/^No MMS ephemeris/.test(e && e.message) ? ` ${e.message} MMS's ephemeris reaches the archive some weeks after the day.` : ""}`;
+        document.body.appendChild(p);
+        return;
+      }
       if (await solo(D)) return;
     }
     if (SOLO === "hso") document.body.classList.add("solo", "solo-hso");

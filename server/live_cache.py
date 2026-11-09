@@ -260,10 +260,11 @@ def make_handler(cache, up, hapi, origin):
                 if u.path == "/hapi/data":
                     body, ctype = hapi.data(u.query)
                     return self.send(200, body, ctype)
-                if u.path.startswith("/hapi/"):
+                # only the endpoints the page uses: a relay must not fetch whatever path a caller writes
+                if u.path in ("/hapi/catalog", "/hapi/info", "/hapi/capabilities", "/hapi/about"):
                     body, ctype = hapi.passthrough(u.path[len("/hapi/"):], u.query)
                     return self.send(200, body, ctype or "application/json")
-                if u.path.startswith("/sscweb/"):
+                if re.fullmatch(r"/sscweb/locations/[A-Za-z0-9_,]+/\d{8}T\d{6}Z,\d{8}T\d{6}Z/gse/", u.path):
                     return self.send(200, sscweb(cache, up, u.path[len("/sscweb/"):]), "application/json")
                 self.send(404, b'{"error":"not found"}', "application/json")
             except Exception as e:                         # an upstream that would not answer
