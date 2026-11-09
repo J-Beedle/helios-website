@@ -208,7 +208,14 @@
     if (D.craft[key]) return D.craft[key];
     if (LIVE) {
       const C = Object.assign({ segs: {}, erange: {} }, await SRC.mission(key));
-      for (const ds of Object.keys(C.sv)) { cadence(C.sv[ds]); C.segs[ds] = []; if (C.sv[ds].etab) C.erange[ds] = edges([C.sv[ds]]); }
+      const settle = (ds) => { cadence(C.sv[ds]); C.segs[ds] = []; if (C.sv[ds].etab) C.erange[ds] = edges([C.sv[ds]]); };
+      for (const ds of Object.keys(C.sv)) settle(ds);
+      // record sets from a slow archive join the craft when they land; its open windows take their rows back
+      if (C.later) C.later.then((sets) => {
+        const ks = Object.keys(sets || {});
+        for (const ds of ks) { C.sv[ds] = sets[ds]; settle(ds); }
+        if (ks.length) window.dispatchEvent(new CustomEvent("hso-late", { detail: key }));
+      }).catch(() => {});
       return (D.craft[key] = C);
     }
     missionsIndex = missionsIndex || await fetch(BASE + "missions.json").then(r => r.json());
@@ -314,14 +321,20 @@
     ctx.strokeStyle = color; ctx.lineWidth = width || 1.1; ctx.lineJoin = "round"; ctx.beginPath();
     // Helios (MMSStackPlot.drawLine): a break only where the spacing exceeds max(3 × the median of the last five
     // spacings, 60 s); a non-finite sample (fill, a despiked point) is skipped and the line bridged over it
-    let pen = false, prev = -Infinity;
-    const last5 = [];
+    // (the same rule without an allocation per sample: no spacing under 60 s is a gap, so the median of the last five is
+    // only worked out for the rare longer one)
+    let pen = false, prev = -Infinity, nd = 0;
+    const d5 = new Float64Array(5), s5 = new Float64Array(5);
     const isGap = (t) => {
       if (prev === -Infinity) return true;
-      const dt = t - prev, med = last5.length ? last5.slice().sort((p, q) => p - q)[last5.length >> 1] : dt;
-      return dt > Math.max(3 * med, 60);
+      const dt = t - prev;
+      if (!(dt > 60)) return false;
+      const m = Math.min(nd, 5);
+      if (!m) return false;                                  // no spacing yet: the median is this one, and dt > 3 dt never holds
+      for (let i = 0; i < m; i++) { const v = d5[i]; let j = i - 1; while (j >= 0 && s5[j] > v) { s5[j + 1] = s5[j]; j--; } s5[j + 1] = v; }
+      return dt > 3 * s5[m >> 1];
     };
-    const note = (t) => { if (prev > -Infinity) { last5.push(t - prev); if (last5.length > 5) last5.shift(); } prev = t; };
+    const note = (t) => { if (prev > -Infinity) { d5[nd % 5] = t - prev; nd++; } prev = t; };
     for (const [L, i0, i1] of rr) {
       const f = acc(L);
       if (!f) continue;
@@ -401,7 +414,9 @@
     // live: each 8-bit flux re-read on the window's own color range (specRange)
     const store = win ? (D.sv[ds] && D.sv[ds].store) || D.m.spectra[ds === "des" || ds === "esp" ? "des" : "dis"].log10 : null;
     const cmap = win ? Uint16Array.from({ length: 256 }, (_, v) => v === 0 ? 0 : Math.round(clamp(((store[0] + (v - 1) / 254 * (store[1] - store[0])) - win[0]) / (win[1] - win[0]), 0, 1) * 255) * 3) : null;
-    const img = new ImageData(W, H), px = img.data, [elo, ehi] = D.erange[ds], maps = new Map();
+    const img = new ImageData(W, H), px = new Uint32Array(img.data.buffer), [elo, ehi] = D.erange[ds], maps = new Map();
+    const col32 = new Uint32Array(256).fill(0xffffffff);     // code → ABGR (little-endian RGBA); 0, no data, white
+    for (let v = 1; v < 256; v++) { const c = cmap ? cmap[v] : Math.round((v - 1) * 255 / 254) * 3; col32[v] = (0xff000000 | (LUT[c + 2] << 16) | (LUT[c + 1] << 8) | LUT[c]) >>> 0; }
     const rows = (L, k) => {
       const key = (L === D.bu ? "b" : "s") + k;
       let m = maps.get(key);
@@ -419,7 +434,7 @@
     };
     const segs = burst && D.bu ? D.segs[ds] || [] : [];
     let si = 0;
-    const colMax = new Uint8Array(H);
+    const colMax = new Uint8Array(H), chan = [], seen = [], used = [];
     for (let x = 0; x < W; x++) {
       const t = a + (x + 0.5) / W * (b - a);
       while (si < segs.length && segs[si][1] < t) si++;
@@ -433,20 +448,30 @@
       if (win) {
         const ta = a + x / W * (b - a), tb = a + (x + 1) / W * (b - a), k0 = lower(tt, ta), k1 = lower(tt, tb);
         if (k1 - k0 >= 2) {
-          many = true; colMax.fill(0);
+          // the maximum per channel for each energy table in the column first (records × channels), then onto the rows:
+          // the same picture as going record by record down every row, at a fraction of the work in burst
+          many = true; colMax.fill(0); used.length = 0;
+          const sp = S.spec, ei = S.eidx;
           for (let k = k0; k < k1; k++) {
-            const rk = rows(L, S.eidx[k]), bk = k * nc;
-            for (let y = 0; y < H; y++) { if (rk[y] < 0) continue; const v = S.spec[bk + rk[y]]; if (v > colMax[y]) colMax[y] = v; }
+            const e = ei[k];
+            let cm = chan[e];
+            if (!cm || cm.length < nc) cm = chan[e] = new Uint8Array(nc);
+            if (seen[e] !== x + 1) { seen[e] = x + 1; cm.fill(0); used.push(e); }
+            const bk = k * nc;
+            for (let c = 0; c < nc; c++) { const v = sp[bk + c]; if (v > cm[c]) cm[c] = v; }
+          }
+          for (const e of used) {
+            const rk = rows(L, e), cm = chan[e];
+            for (let y = 0; y < H; y++) { const j = rk[y]; if (j >= 0 && cm[j] > colMax[y]) colMax[y] = cm[j]; }
           }
         }
       }
-      for (let y = 0; y < H; y++) {
-        const o = (y * W + x) * 4, j = ok ? rm[y] : -1;
-        let q = many ? colMax[y] : j < 0 ? 0 : S.spec[base + j];
-        if (!q && j >= 0 && S.fillGaps && i > 0 && i + 1 < tt.length && S.spec[(i + 1) * nc + j]) q = S.spec[(i - 1) * nc + j];   // an isolated empty cell
-        if (q === 0) { px[o] = px[o + 1] = px[o + 2] = 255; px[o + 3] = 255; continue; }
-        const c = cmap ? cmap[q] : Math.round((q - 1) * 255 / 254) * 3;
-        px[o] = LUT[c]; px[o + 1] = LUT[c + 1]; px[o + 2] = LUT[c + 2]; px[o + 3] = 255;
+      const fill = S.fillGaps && i > 0 && i + 1 < tt.length, spc = S.spec;
+      for (let y = 0, o = x; y < H; y++, o += W) {            // one 32-bit write a pixel, its color looked up once per code
+        const j = ok ? rm[y] : -1;
+        let q = many ? colMax[y] : j < 0 ? 0 : spc[base + j];
+        if (!q && fill && j >= 0 && spc[(i + 1) * nc + j]) q = spc[(i - 1) * nc + j];   // an isolated empty cell
+        px[o] = col32[q];
       }
     }
     scratch.width = W; scratch.height = H;
@@ -925,7 +950,7 @@
   const NOT_AVG = new Set(["t", "spec", "eidx", "specLog", "store", "edges"]);
   /** Every per-record field of S averaged over boxes [lo_k, hi_k) (NaN skipped; empty boxes NaN), stamped at grid. */
   function boxSet(S, grid, lo, hi) {
-    const n = S.t.length, m = grid.length, out = { t: Float32Array.from(grid), cols: {} };
+    const n = S.t.length, m = grid.length, out = { t: Float64Array.from(grid), cols: {} };
     const keys = Object.keys(S.cols || {}).filter(k => !NOT_AVG.has(k) && S[k] && S[k].length === n * S.cols[k] && !(S[k] instanceof Uint8Array));
     for (const k of keys) { out[k] = new Float32Array(m * S.cols[k]).fill(NaN); out.cols[k] = S.cols[k]; }
     let j0 = 0;
@@ -942,7 +967,7 @@
   }
   /** boxAverageRegular: a regular grid over the set's own span at `step` s, each box centered on its stamp. */
   function regularSet(S, step) {
-    if (!S || S.t.length < 2) return S;
+    if (!S || S.t.length < 2 || S.dt >= step) return S;      // already as coarse as the tier asks
     const t0 = S.t[0], m = Math.floor((S.t[S.t.length - 1] - t0) / step) + 1;
     if (m < 2) return S;
     const grid = Float64Array.from({ length: m }, (_, k) => t0 + k * step);
@@ -951,8 +976,10 @@
   /** onIonGrid: the electron records inside each ion record's accumulation [tᵢ, tᵢ₊₁), on the ion stamps. */
   function onIonGrid(E, I) {
     if (!E || !I || I.t.length < 2) return E;
-    const g = I.t, hi = Float64Array.from(g, (t, k) => (k + 1 < g.length ? Math.min(g[k + 1], t + 3 * I.dt) : t + I.dt));
-    return boxSet(E, g, g, hi);
+    // Helios's desRecords: the electron records whose MIDDLE falls in the ion record's accumulation (stamps are starts)
+    const g = I.t, h = (E.dt || 0) / 2, lo = Float64Array.from(g, t => t - h);
+    const hi = Float64Array.from(g, (t, k) => (k + 1 < g.length ? Math.min(g[k + 1], t + 3 * I.dt) : t + I.dt) - h);
+    return boxSet(E, g, lo, hi);
   }
   function tierOf(span) { return span <= 1200 ? "native" : span <= 7200 ? "reduced" : "survey"; }
   function tierView(D0, tier) {
@@ -2196,6 +2223,17 @@
         });
       }
     }
+    // a late record set (loadMission): the default rows it carries come back to the figure, in their default places
+    window.addEventListener("hso-late", (e) => {
+      if (e.detail !== W.n || !W.dropped) return;
+      const back = [...W.dropped].filter(q => has(W.view, C.mission, q));
+      if (back.length) {
+        const def = MISSIONS[C.mission].stack;
+        C.stack = def.filter(q => C.stack.includes(q) || back.includes(q)).concat(C.stack.filter(q => !def.includes(q)));
+        back.forEach(q => W.dropped.delete(q));
+      }
+      renderSide(); W.redraw();
+    });
     W.rangeText = () => {
       const ch = W.view.span ? IDX_CHOICES : WINDOW_CHOICES, menu = $(".fw-range .pick-menu", el);
       if (menu.dataset.set !== String(ch)) { menu.innerHTML = ch.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join(""); menu.dataset.set = String(ch); }
@@ -2238,7 +2276,7 @@
       W.n = k;
       if (newMission || LIVE) {                              // live: only the subplots that probe has data for that day
         C.mission = Cr.mission; C.stack = MISSIONS[Cr.mission].stack.slice();
-        if (LIVE) { const kept = C.stack.filter(q => has(W.view, Cr.mission, q)); if (kept.length) C.stack = kept; }
+        if (LIVE) { const all = C.stack, kept = all.filter(q => has(W.view, Cr.mission, q)); if (kept.length) C.stack = kept; W.dropped = new Set(all.filter(q => !C.stack.includes(q))); }
         if (Cr.mission !== "mms") W.vdf.on = false;
       }
       // a frame belongs to the craft it was solved on (Helios keys it by craft): a new craft starts in GSE
@@ -3027,10 +3065,10 @@
       el.innerHTML = `<div class="kg-h"><b>${site.code.toUpperCase()}</b><span>${esc(site.name)}</span><button class="kg-x" aria-label="Close">×</button></div><p class="kg-c">No keogram published for ${day}: the camera did not image that night, or UCalgary did not answer.</p>`;
     } else {
       el.innerHTML = `<div class="kg-h"><b>${site.code.toUpperCase()}</b><span>${esc(site.name)} · ${day} · 00–24 UT</span><button class="kg-x" aria-label="Close">×</button></div>
-        ${nets.length > 1 ? `<div class="kg-tabs">${nets.map((n, i) => `<button data-net="${n}" class="${i ? "" : "on"}">${NET_LABEL[n] || n}</button>`).join("")}</div>` : ""}
-        <div class="kg-img"><img alt="${esc(site.name)} keogram" src="${site.keo[nets[0]]}"><i class="kg-cur"></i></div>
+        ${nets.length > 1 ? `<div class="kg-tabs">${nets.map((n, i) => `<button data-net="${esc(n)}" class="${i ? "" : "on"}">${esc(NET_LABEL[n] || n)}</button>`).join("")}</div>` : ""}
+        <div class="kg-img"><img alt="${esc(site.name)} keogram" src="${esc(site.keo[nets[0]])}"><i class="kg-cur"></i></div>
         <div class="kg-ax">${[0, 3, 6, 9, 12, 15, 18, 21, 24].map(h => `<span style="left:${h / 24 * 100}%">${String(h).padStart(2, "0")}</span>`).join("")}</div>
-        <p class="kg-c">${NET_LABEL[nets[0]] || nets[0]} daily keogram · University of Calgary · the line is the view's time</p>`;
+        <p class="kg-c">${esc(NET_LABEL[nets[0]] || nets[0])} daily keogram · University of Calgary · the line is the view's time</p>`;
       el.querySelectorAll("[data-net]").forEach(b => b.addEventListener("click", () => {
         el.querySelectorAll("[data-net]").forEach(x => x.classList.toggle("on", x === b));
         el.querySelector("img").src = site.keo[b.dataset.net];
@@ -3063,7 +3101,7 @@
     const q = new URLSearchParams(location.search), key = /^\d$/.test(SOLO) ? +SOLO : SOLO;
     document.body.classList.add("solo");
     if (SOLO === "hso") { document.body.classList.add("solo-hso"); return false; }
-    if (!CRAFT[key]) return false;
+    if (!Object.hasOwn(CRAFT, key)) return false;            // a key from the URL: only the table's own
     document.body.classList.add("solo-win");
     const el = document.createElement("div");
     el.setAttribute("role", "region");
@@ -3079,7 +3117,7 @@
     $(".tl", el).style.display = "none";
     document.title = `${CRAFT[key].name} · ${new Date(SRC.at).toISOString().slice(0, 16).replace("T", " ")} UTC · Helios live`;
     await W.setCraft(key);
-    const stack = (q.get("stack") || "").split(",").filter(k => KINDS[k]);
+    const stack = (q.get("stack") || "").split(",").filter(k => Object.hasOwn(KINDS, k));
     if (stack.length) { W.cfg.stack = stack; }
     const [a, b] = span();
     if (!W.spanned || (q.has("a") && q.has("b"))) { W.app.home = [a, b]; W.app.setFocus(a, b); }

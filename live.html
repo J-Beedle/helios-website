@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Helios · Live HSO (prototype)</title>
   <meta name="robots" content="noindex">
+  <!-- This page runs its own scripts only and talks to the archives it names, nothing else (a relay named in
+       assets/data/live/config.json has to be added to connect-src here too). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://data.phys.ucalgary.ca; connect-src 'self' https://cdaweb.gsfc.nasa.gov https://sscweb.gsfc.nasa.gov https://csa.esac.esa.int https://lasp.colorado.edu https://www.ncei.noaa.gov https://api.phys.ucalgary.ca https://data.phys.ucalgary.ca; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="description" content="A slice of Helios in your browser: MMS1's magnetic field and FPI plasma data from the electron diffusion region crossing of 16 October 2015, in the workspace and magnetosphere view Helios uses.">
   <meta name="theme-color" content="#000000">
   <meta property="og:type" content="website">
@@ -256,9 +260,9 @@
   <script src="js/site.js?v=38"></script>
   <script src="js/igrf14.js?v=38"></script>
   <script src="js/fieldlines.js?v=39"></script>
-  <script src="js/hsoview.js?v=54"></script>
-  <script src="js/live-page.js?v=38"></script>
-  <script src="js/hso-live.js?v=69"></script>
-  <script src="js/hso.js?v=66"></script>
+  <script src="js/hsoview.js?v=55"></script>
+  <script src="js/live-page.js?v=39"></script>
+  <script src="js/hso-live.js?v=70"></script>
+  <script src="js/hso.js?v=67"></script>
 </body>
 </html>

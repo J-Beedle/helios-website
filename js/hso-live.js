@@ -79,17 +79,20 @@
     return p.then((v) => { tasks.set(label, v && v.empty ? "none" : "ok"); emit(); return v; },
                   (e) => { tasks.set(label, "error"); emit(); console.warn(label, e); throw e; });
   }
-  function emit() { window.dispatchEvent(new CustomEvent("hso-live", { detail: { tasks: [...tasks], bytes, relay: viaRelay } })); }
+  let emitQueued = false;
+  function emit() {                                         // at most once a frame: a download reports every chunk
+    if (emitQueued) return;
+    emitQueued = true;
+    setTimeout(() => { emitQueued = false; window.dispatchEvent(new CustomEvent("hso-live", { detail: { tasks: [...tasks], bytes, kept: keptBytes, relay: viaRelay } })); }, 60);
+  }
 
   // ───────────────────────── the relay (server/live_cache.py): the archives behind one cached origin ─────────────────────────
-  // ?cache=<url> or assets/data/live/config.json's "cache" names it; ?cache=off, no config or no answer within 2.5 s
-  // means the archives directly, as before.
+  // assets/data/live/config.json's "cache" names it (an https origin); no config or no answer within 2.5 s means the
+  // archives directly. Never from the page's URL: a link must not be able to put another server behind the figures.
   let viaRelay = false;
   const relay = (async () => {
-    let url = q.get("cache");
-    if (url === null) url = (await fetch("assets/data/live/config.json").then(r => r.json()).catch(() => ({}))).cache || "";
-    url = url.replace(/\/$/, "");
-    if (!url || url === "off") return false;
+    let url = String((await fetch("assets/data/live/config.json").then(r => r.json()).catch(() => ({}))).cache || "").replace(/\/$/, "");
+    if (!/^https:\/\/[a-z0-9.-]+(:\d+)?(\/[\w./-]*)?$/i.test(url)) return false;
     try {
       const r = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2500) });
       if (r.ok) { HAPI = `${url}/hapi`; SSC = `${url}/sscweb`; viaRelay = true; emit(); return true; }
@@ -98,13 +101,13 @@
   })();
 
   // ───────────────────────── a polite client: a few requests at a time, retried when the server is busy ─────────────────────────
-  let MAXQ = 4;
+  let MAXQ = 6;                                             // Helios's RequestGate width
   const queue = [];
   let active = 0;
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   /** Runs fn when one of MAXQ slots is free; `first` jumps the queue (a VDF cut the viewer is waiting on). */
   async function slot(fn, first) {
-    if (await relay && MAXQ < 6) MAXQ = 6;                    // the relay keeps its own limit on the archives
+    await relay;
     return new Promise((res, rej) => {
       const run = () => { active++; fn().then(res, rej).finally(() => { active--; const next = queue.shift(); if (next) next(); }); };
       if (active < MAXQ) run(); else if (first) queue.unshift(run); else queue.push(run);
@@ -133,6 +136,50 @@
     }
   }
 
+  // ───────────────────────── kept between visits (Cache Storage) ─────────────────────────
+  // The archives send no cache headers, so a reload, a window opened in its own tab or a shared link fetched everything
+  // again. A moment more than 45 days old is settled data: its answers are kept in this browser for a week (400 MB at
+  // most, the oldest dropped first), keyed by the request. Nothing is kept for recent moments, whose files still change.
+  const KEEP_MS = 7 * 864e5, KEEP_MAX = 400e6, KEEP_ITEM = 60e6;
+  let keptBytes = 0;
+  const store = (async () => {
+    try { return AT < Date.now() - 45 * 864e5 && window.caches ? await caches.open("helios-live-v1") : null; } catch (e) { return null; }
+  })();
+  /** The bytes behind `key` (a request URL): this browser's copy when it has a fresh one, else make()'s — kept when
+   *  keep(bytes) says they are an answer and not a server's apology. */
+  async function kept(key, make, keep = (b) => b.length > 0) {
+    const c = await store;
+    if (c) try {
+      const hit = await c.match(key);
+      if (hit && Date.now() - +hit.headers.get("x-kept") < KEEP_MS) { const b = new Uint8Array(await hit.arrayBuffer()); keptBytes += b.length; emit(); return b; }
+    } catch (e) { /* fetched instead */ }
+    const b = await make();
+    if (c && b && b.length <= KEEP_ITEM && keep(b)) c.put(key, new Response(b, { headers: { "x-kept": String(Date.now()), "x-len": String(b.length) } })).catch(() => {});
+    return b;
+  }
+  store.then((c) => {                                       // housekeeping, once the page is idle
+    if (!c) return;
+    (window.requestIdleCallback || setTimeout)(async () => {
+      try {
+        const rows = [];
+        for (const req of await c.keys()) { const r = await c.match(req); if (r) rows.push([req, +r.headers.get("x-kept") || 0, +r.headers.get("x-len") || 0]); }
+        rows.sort((p, q2) => q2[1] - p[1]);                    // newest first
+        let total = 0;
+        for (const [req, at, len] of rows) { total += len; if (Date.now() - at > KEEP_MS || total > KEEP_MAX) await c.delete(req); }
+      } catch (e) { /* next visit */ }
+    }, { timeout: 20000 });
+  });
+  const bodyOf = async (r) => new Uint8Array(await r.arrayBuffer());
+  const textOf = (b) => new TextDecoder().decode(b);
+  /** A gzip stream inflated, refused past `cap` bytes (a decompression bomb from a server must not take the tab). */
+  async function gunzip(buf, cap = 600e6) {
+    const rd = new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip")).getReader(), parts = [];
+    let n = 0;
+    for (;;) { const { done, value } = await rd.read(); if (done) break; n += value.length; if (n > cap) { rd.cancel(); throw new Error("inflates past the limit"); } parts.push(value); }
+    const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+
   // ───────────────────────── HAPI ─────────────────────────
   /** "2015-10-16T11:00:00.024201612Z" → ms; HAPI's times carry up to nine decimals, which Date.parse refuses. */
   function hapiTime(s) {
@@ -142,13 +189,18 @@
   }
   /** One HAPI request as CSV: the rows inside [a, b] (CDAWeb answers an empty interval with the nearest record), their
    *  times in seconds after T0, and each column after Time; fill values (|x| ≥ 1e30) become NaN. */
-  function hapi(id, params, a, b, first, openEnd, P = null) {
-    return slot(async () => {
-      const r = await get(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`, undefined, 45000, P && P.add);
+  const hapiKeep = (u8) => u8.length > 0 && (u8[0] !== 123 || /1201|no data/i.test(textOf(u8.subarray(0, 600))));   // data, or "no data": not an error
+  async function hapi(id, params, a, b, first, openEnd, P = null) {
+    await relay;
+    const url = `${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`;
+    const u8 = await kept(url, () => slot(async () => {
+      const r = await get(url, undefined, 45000, P && P.add);
       if (r.status === 404) return null;
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
-      return r.text();
-    }, first).then(text => parseCSV(id, text, a, openEnd ? b - 1e-3 : b));
+      const body = await bodyOf(r); bytes += body.length; emit();
+      return body;
+    }, first), hapiKeep);
+    return parseCSV(id, u8 ? textOf(u8) : null, a, openEnd ? b - 1e-3 : b);
   }
   function parseCSV(id, text, a, b) {
     if (text === null) return { t: new Float64Array(0), cols: [], n: 0 };
@@ -157,7 +209,6 @@
       if (/1201|no data/i.test(m ? m[1] : "")) return { t: new Float64Array(0), cols: [], n: 0 };
       throw new Error(`${id}: ${m ? m[1] : "HAPI error"}`);
     }
-    bytes += text.length; emit();
     const lines = text.split("\n"), t = [], rows = [];
     for (const ln of lines) {
       if (!ln || ln[0] === "#") continue;
@@ -186,9 +237,11 @@
   }
   /** One parameter's bins (HAPI info), for spectra the server labels itself. */
   async function hapiBins(id, param, first) {
-    const r = await slot(() => get(`${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`), first);   // HAPI is read inside, after the relay
-    if (!r.ok) return null;
-    const p = (await r.json()).parameters.find(x => x.name === param);
+    await relay;
+    const url = `${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`;
+    const u8 = await kept(url, () => slot(async () => { const r = await get(url); return r.ok ? bodyOf(r) : null; }, first), (b2) => b2.length > 20 && b2[0] === 123);
+    if (!u8) return null;
+    const p = (JSON.parse(textOf(u8)).parameters || []).find(x => x.name === param);
     return p && p.bins && p.bins[0].centers;
   }
   const stack = (cols, j, k) => {                          // columns j … j+k−1 as one row-major array
@@ -197,6 +250,7 @@
     return out;
   };
   const f32 = (a) => Float32Array.from(a || []);
+  const f64 = (a) => Float64Array.from(a || []);            // times: float32 holds 1 ms at 4 h, coarser than burst stamps
 
   /** 8-bit log10 flux, 0 = no data (prepare_hso_demo.spec8). */
   function spec8(flux, n, nc, sp, zerosBlank = false) {
@@ -260,9 +314,9 @@
   // file); HAPI does not serve the variable.
   const CDA = "https://cdaweb.gsfc.nasa.gov/pub/data/mms";
   /** A CDF read by byte range: zVariables by name, their records as numbers (TT2000 Epoch as UTC ms). */
-  function cdfFile(url, whole = false, P = null) {
+  function cdfFile(url, whole = false, P = null, preset = null) {
     const CH = 65536, chunks = new Map();
-    let all = null;
+    let all = preset ? Promise.resolve(preset) : null;
     const chunk = (k) => {
       if (whole) {
         all = all || slot(async () => {
@@ -327,8 +381,8 @@
             else if (rt === 7) put(await read(at + 12, (last - first + 1) * recBytes), 0, first, last - first + 1);
             else if (rt === 13) {                            // a gzip-compressed block
               const cs = u64(rh, 16), z = await read(at + 24, cs);
-              const raw = await new Response(new Blob([z.buffer]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
-              put(new DataView(raw), 0, first, last - first + 1);
+              const raw = await gunzip(z.buffer, (last - first + 1) * recBytes + 64);
+              put(new DataView(raw.buffer), 0, first, last - first + 1);
             }
           }
           off = u64(h, 12);
@@ -337,11 +391,13 @@
       await walk(V.vxr);
       return { data: out, elems: V.elems, n };
     }
-    return { variable, names: async () => Object.keys((await head()).vars), rowMajor: async () => (await head()).rowMajor };
+    return { variable, names: async () => Object.keys((await head()).vars), rowMajor: async () => (await head()).rowMajor,
+             /** The TT2000 variable with as many records as `name` has: its DEPEND_0. */
+             epochOf: async (name) => { const { vars } = await head(), V = vars[name]; return V && Object.keys(vars).find(k => vars[k].type === 33 && vars[k].maxRec === V.maxRec && vars[k].elems === 1); } };
   }
   /** TT2000 (ns from J2000 TT) → UTC ms: TT − 32.184 s − the leap seconds then in force. */
   function tt2000(ns) {
-    const ms = Number(ns / 1000000n), utcGuess = Date.UTC(2000, 0, 1, 12) + ms;
+    const ms = Number(ns / 1000000n) + Number(ns % 1000000n) / 1e6, utcGuess = Date.UTC(2000, 0, 1, 12) + ms;   // the microseconds kept
     const leap = [[Date.UTC(2017, 0, 1), 37], [Date.UTC(2015, 6, 1), 36], [Date.UTC(2012, 6, 1), 35], [Date.UTC(2009, 0, 1), 34], [Date.UTC(2006, 0, 1), 33], [0, 32]];
     const dat = leap.find(([t0]) => utcGuess - 69e3 >= t0)[1];
     return utcGuess - 32184 - dat * 1000;
@@ -407,7 +463,7 @@
     const n = r.n, nc = 32, o = withST ? 3 : 0;
     const flux = stack(r.cols, 0, nc);
     return gapFilled(set({
-      t: [f32(r.t), 1], n: [f32(r.cols[32]), 1], v: [stack(r.cols, 33, 3), 3], tpar: [f32(r.cols[36 + o]), 1], tperp: [f32(r.cols[37 + o]), 1],
+      t: [f64(r.t), 1], n: [f32(r.cols[32]), 1], v: [stack(r.cols, 33, 3), 3], tpar: [f32(r.cols[36 + o]), 1], tperp: [f32(r.cols[37 + o]), 1],
       ...(withST ? { vst: [stack(r.cols, 36, 3).map(x => (isFinite(x) ? x : 0)), 3] } : {}),
       spec: [spec8(flux, n, nc, sp), nc], etab: [Float32Array.from(fpiAssumed(sp, AT)), nc], eidx: [new Uint8Array(n), 1],
     }));
@@ -418,7 +474,7 @@
     const n = r.n, o = withST ? 3 : 0, eidx = new Uint8Array(n);
     for (let i = 0; i < n; i++) eidx[i] = r.cols[0][i] === 1 ? 1 : 0;
     return gapFilled(set({
-      t: [f32(r.t), 1], n: [f32(r.cols[33]), 1], v: [stack(r.cols, 34, 3), 3], tpar: [f32(r.cols[37 + o]), 1], tperp: [f32(r.cols[38 + o]), 1],
+      t: [f64(r.t), 1], n: [f32(r.cols[33]), 1], v: [stack(r.cols, 34, 3), 3], tpar: [f32(r.cols[37 + o]), 1], tperp: [f32(r.cols[38 + o]), 1],
       ...(withST ? { vst: [stack(r.cols, 37, 3).map(x => (isFinite(x) ? x : 0)), 3] } : {}),
       spec: [spec8(stack(r.cols, 1, 32), n, 32, sp), 32], etab: [Float32Array.from(AT < Date.UTC(2016, 8, 26) ? FPI_EB[sp].flat() : fpiAssumed(sp, AT).concat(fpiAssumed(sp, AT))), 32], eidx: [eidx, 1],
     }));
@@ -430,31 +486,55 @@
     const ba = AT - BURST_HALF * 1000, bb = AT + BURST_HALF * 1000;
     const bmoms = (sp, st) => [`${sc}_${sp}_steptable_parity_brst`, `${sc}_${sp}_energyspectr_omni_brst`, `${sc}_${sp}_numberdensity_brst`, `${sc}_${sp}_bulkv_gse_brst`,
                                ...(st ? [`${sc}_${sp}_bulkv_spintone_gse_brst`] : []), `${sc}_${sp}_temppara_brst`, `${sc}_${sp}_tempperp_brst`];
+    // CDAWeb's CDF subsets (gzip inside, one request each, the energy table of every record in the same file): a
+    // quarter of the bytes of HAPI's CSV and its full float32 digits. HAPI stays as the way back where a subset fails.
     const burst = Promise.all([
-      track(`MMS${n} burst FGM`, hapiChunked(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, 6)),
-      track(`MMS${n} burst FPI ions`, hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb)),
-      track(`MMS${n} burst FPI electrons`, hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3)),
+      track(`MMS${n} burst FGM`, viaCDF(`MMS${n}_FGM_BRST_L2`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, () => hapiChunked(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, 6))),
+      track(`MMS${n} burst FPI ions`, viaCDF(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, () => hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb), [`${sc}_dis_energy_brst`])),
+      track(`MMS${n} burst FPI electrons`, viaCDF(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, () => hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3), [`${sc}_des_energy_brst`])),
     ]).catch((e) => { console.warn(e); return null; });
     const [fg, di, de] = await Promise.all([
-      track(`MMS${n} FGM`, hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8, true)),   // ahead of any burst loading
-      track(`MMS${n} FPI ions`, hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, true)),
-      track(`MMS${n} FPI electrons`, hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, true)),
+      track(`MMS${n} FGM`, viaCDF(`MMS${n}_FGM_SRVY_L2`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, () => hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8, true))),
+      track(`MMS${n} FPI ions`, viaCDF(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, () => hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, true), [`${sc}_dis_energy_fast`])),
+      track(`MMS${n} FPI electrons`, viaCDF(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, () => hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, true), [`${sc}_des_energy_fast`])),
     ]);
-    const B = boxcar(fg.t, fg.cols.slice(0, 4), 1.0);
+    // the survey field as served (8 or 16 S/s): the window's resolution tier averages it (hso.js tierView), as Helios
     const sv = {
-      fgm: set({ t: [f32(B.t), 1], b: [stack(B.cols.map(f32), 0, 4), 4] }),
+      fgm: set({ t: [f64(fg.t), 1], b: [stack(fg.cols, 0, 4), 4] }),
       dis: fpiSet(di, "dis", false),
       des: fpiSet(de, "des", true),
     };
-    const [tbI, tbE] = await Promise.all([track(`MMS${n} FPI energy tables (L2 files)`, Promise.all([fpiTables(n, "dis", a, b), fpiTables(n, "des", a, b)]))]).then(x => x[0]);
+    // each record's energy table: from its own file's energy variable; the L2 files by byte range only on the HAPI path
+    const inFile = (r, name) => {
+      const E = r.extra && r.extra[name];
+      if (!E || E.length !== r.n * 32) return null;
+      const tables = [], keys = new Map(), T = [], idx = [];
+      for (let i = 0; i < r.n; i++) {
+        const row = Array.from(E.subarray(i * 32, i * 32 + 32), x => +x.toFixed(2));
+        if (!row.every(x => x > 0)) continue;
+        const k = row.join(",");
+        if (!keys.has(k)) { keys.set(k, tables.length); tables.push(row); }
+        T.push(r.t[i]); idx.push(keys.get(k));
+      }
+      return T.length && tables.length < 250 ? { t: T, idx, tables } : null;
+    };
+    let tbI = inFile(di, `${sc}_dis_energy_fast`), tbE = inFile(de, `${sc}_des_energy_fast`);
+    if (!tbI || !tbE) {
+      const [fi, fe] = await track(`MMS${n} FPI energy tables (L2 files)`, Promise.all([tbI || fpiTables(n, "dis", a, b), tbE || fpiTables(n, "des", a, b)]));
+      tbI = fi; tbE = fe;
+    }
     sv.dis.sp = "dis"; sv.des.sp = "des";
     applyTables(sv.dis, tbI); applyTables(sv.des, tbE);
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
     const bu = burst.then((B3) => {                          // the burst data follow the survey, drawn when they arrive
       if (!B3 || !(B3[0].n || B3[1].n || B3[2].n)) return null;
-      const out = { fgm: set({ t: [f32(B3[0].t), 1], b: [stack(B3[0].cols, 0, 4), 4] }), dis: fpiBurstSet(B3[1], "dis", false), des: fpiBurstSet(B3[2], "des", true) };
+      const out = { fgm: set({ t: [f64(B3[0].t), 1], b: [stack(B3[0].cols, 0, 4), 4] }), dis: fpiBurstSet(B3[1], "dis", false), des: fpiBurstSet(B3[2], "des", true) };
       out.dis.sp = "dis"; out.des.sp = "des";
-      if (AT >= P1_END) { applyTables(out.dis, tbI, true); applyTables(out.des, tbE, true); }   // P2 on: both parities fly the fast table
+      // a burst record's table: its own file's where the subset brought it; else P1's two parity tables, and from P2 on
+      // the fast table of its moment
+      const bI = inFile(B3[1], `${sc}_dis_energy_brst`), bE = inFile(B3[2], `${sc}_des_energy_brst`);
+      if (bI) applyTables(out.dis, bI); else if (AT >= P1_END) applyTables(out.dis, tbI, true);
+      if (bE) applyTables(out.des, bE); else if (AT >= P1_END) applyTables(out.des, tbE, true);
       out.des.j = current(out.dis.t, out.dis.v, out.des.t, out.des.n, out.des.v); out.des.cols.j = 3;
       return out;
     });
@@ -482,7 +562,7 @@
     const sv = {}, notes = [];
     const bm = stack(fg.cols, 0, 4), b4 = new Float32Array(fg.n * 4);
     for (let i = 0; i < fg.n; i++) { b4[i * 4] = bm[i * 4 + 1]; b4[i * 4 + 1] = bm[i * 4 + 2]; b4[i * 4 + 2] = bm[i * 4 + 3]; b4[i * 4 + 3] = bm[i * 4]; }
-    sv.fgm = set({ t: [f32(fg.t), 1], b: [b4, 4] });
+    sv.fgm = set({ t: [f64(fg.t), 1], b: [b4, 4] });
     // the spectra: the sweep chosen per record by how many channels are live (Helios's spectrogram(sweeps:)); a record
     // whose count has no verified table is left blank. Helios's per-probe ESA calibration applies to reduced mode only.
     const CAL = { ion: { B: 0.9753, C: 0.9753, D: 0.9753, E: 0.9727 }, elec: { B: 0.9825, C: 0.9825, D: 0.9825, E: 0.9835 } };
@@ -543,12 +623,12 @@
         if (onMOM) out.t3 = t3;
       } else {
         if (r.n) notes.push(`CDAWeb's MOM had no usable ${who} moments in this window; they are ESA reduced-mode moments here (Helios reads the THEMIS archive at UC Berkeley instead).`);
-        out = { t: [f32(r.t), 1], n: [f32(r.cols[0]), 1], v: [stack(r.cols, 37, 3), 3] };
+        out = { t: [f64(r.t), 1], n: [f32(r.cols[0]), 1], v: [stack(r.cols, 37, 3), 3] };
         const t3 = Array.from({ length: r.n }, (_, i) => [r.cols[34][i], r.cols[35][i], r.cols[36][i]]);
         if (t3.some(x => x.every(isFinite))) out.t3 = t3;
       }
       const S = set({ t: out.t, n: out.n, v: out.v });
-      const fa = (T, tt) => { const k = T.length, tpar = new Float32Array(k), tperp = new Float32Array(k); T.forEach((x, i) => { tpar[i] = x[2]; tperp[i] = 0.5 * (x[0] + x[1]); }); return { tt: f32(tt), tpar, tperp }; };
+      const fa = (T, tt) => { const k = T.length, tpar = new Float32Array(k), tperp = new Float32Array(k); T.forEach((x, i) => { tpar[i] = x[2]; tperp[i] = 0.5 * (x[0] + x[1]); }); return { tt: f64(tt), tpar, tperp }; };
       let tf = out.t3 ? fa(out.t3, out.t[0]) : null, scalar = null;
       if (!tf) {                                              // ESA full mode: magt3, then the diagonalized t3 as a scalar
         const e = await hapi(`TH${L}_L2_ESA@${ion ? 0 : 1}`, [`th${l}_pe${sp}f_t3`, `th${l}_pe${sp}f_magt3`], a, b, true).catch(() => none);
@@ -566,13 +646,13 @@
     // moments and spectra keep their own clocks: the moments as dis/des, the spectra as isp/esp
     const [[is, isrc], [es, esrc]] = await Promise.all([fallbackSpec("dis"), fallbackSpec("des")]);
     sv.dis = await moments(mi, ir, true); sv.des = await moments(me, er, false);
-    const withN = (o) => { const { etabN, t, ...rest } = o; const S = set({ t: [f32(t), 1], ...rest }); S.etabN = etabN; S.fillGaps = true; return S; };
+    const withN = (o) => { const { etabN, t, ...rest } = o; const S = set({ t: [f64(t), 1], ...rest }); S.etabN = etabN; S.fillGaps = true; return S; };
     if (is) sv.isp = withN(is);
     if (es) sv.esp = withN(es);
     if (isrc && isrc !== "ESA reduced mode") notes.push(`Ion spectrogram from ${isrc}: ESA reduced mode has none here.`);
     if (esrc && esrc !== "ESA reduced mode") notes.push(`Electron spectrogram from ${esrc}: ESA reduced mode has none here.`);
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
-    if (efi && efi.n) sv.efi = set({ t: [f32(efi.t), 1], e: [stack(efi.cols, 0, 3), 3] });
+    if (efi && efi.n) sv.efi = set({ t: [f64(efi.t), 1], e: [stack(efi.cols, 0, 3), 3] });
     // temperatures on a clock of their own, or a scalar, read from their own sets
     const relabel = { ionSpec: { spec: "isp" }, elecSpec: { spec: "esp" } };
     const tKind = (sp, name, sub) => (sv[`t${sp}`] && sv[`t${sp}`].tsc
@@ -643,7 +723,7 @@
       specId ? hapi(specId[0], [specId[1]], a, b, true).catch(() => none) : none,
       specId ? hapiBins(specId[0], specId[1], true).catch(() => null) : null,
     ]);
-    const sv = { fgm: set({ t: [f32(fg.t), 1], b: [stack(fg.cols, 0, 4), 4] }) };
+    const sv = { fgm: set({ t: [f64(fg.t), 1], b: [stack(fg.cols, 0, 4), 4] }) };
     const col = (r, k) => Float32Array.from(r.cols[k] || [], unfill);
     /** Moments from columns [n, v, T∥, T⊥] (T in MK), with the bounds and the dropout screen applied. */
     const moments = (r, [cn, cv, ca, ce], vmax) => {
@@ -654,7 +734,7 @@
         v[i * 3] = vx[i]; v[i * 3 + 1] = vy[i]; v[i * 3 + 2] = vz[i];
       }
       if (![n, vx, ta, te].some(c => c.some(isFinite))) return null;
-      return set({ t: [f32(r.t), 1], n: [n, 1], v: [v, 3], tpar: [ta.map(x => x * MK_EV), 1], tperp: [te.map(x => x * MK_EV), 1] });
+      return set({ t: [f64(r.t), 1], n: [n, 1], v: [v, 3], tpar: [ta.map(x => x * MK_EV), 1], tperp: [te.map(x => x * MK_EV), 1] });
     };
     // the sensor is the spacecraft's (C1/C3 HIA, C4 CODIF), the other only when it alone has data
     let sensor = null;
@@ -691,13 +771,14 @@
       const nc = bins.length, flux = new Float32Array(sp.n * nc);
       for (let i = 0; i < sp.n; i++) for (let c = 0; c < nc; c++) flux[i * nc + c] = sp.cols[nc - 1 - c] ? unfill(sp.cols[nc - 1 - c][i]) : NaN;
       cleanCIS(flux, sp.n, nc);
-      if (flux.some(isFinite)) sv.isp = set({ t: [f32(sp.t), 1], spec: [spec8(flux, sp.n, nc, "dis", true), nc], etab: [Float32Array.from(bins.slice().reverse()), nc], eidx: [new Uint8Array(sp.n), 1] });
+      if (flux.some(isFinite)) sv.isp = set({ t: [f64(sp.t), 1], spec: [spec8(flux, sp.n, nc, "dis", true), nc], etab: [Float32Array.from(bins.slice().reverse()), nc], eidx: [new Uint8Array(sp.n), 1] });
     }
-    const esp = await peace;
-    if (esp) sv.esp = esp;
+    // PEACE's spectrogram comes from ESA's archive, which can take ten seconds and more: the window opens without it
+    // and the row joins the figure when it lands (hso.js loadMission)
+    const later = peace.then(esp => (esp ? { esp } : {}));
     if (sv.dis && sv.des) { sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3; }
     const relabel = { ionSpec: { spec: "isp", label: N === 4 ? "CODIF H^{+}" : "HIA ions", title: N === 4 ? "CODIF H⁺ spectrogram" : "HIA ion spectrogram" } };
-    return { sv, bu: null, kind: "c4", label: `Cluster-${N}`, relabel, empty: !fg.n,
+    return { sv, bu: null, kind: "c4", label: `Cluster-${N}`, relabel, later, empty: !fg.n,
              banner: N === 2 ? "Cluster-2 carries no working CIS instrument: there are no ion density, velocity, temperature or ion-spectrogram panels for this spacecraft, at any epoch. The field and PEACE electron panels are unaffected." : null,
              notes: `Cluster via CDAWeb HAPI, live, as Helios reads it: FGM spin; CIS prime-parameter moments from ${sensor || "no CIS sensor"}` +
                     `${N === 2 ? " (Cluster-2 has no working CIS)" : ""} and CIS composition; PEACE prime-parameter moments; the ${N === 4 ? "CODIF H⁺" : "HIA"} ion spectrogram; ` +
@@ -750,7 +831,7 @@
     const [ix, mach, k2] = await track("Geomagnetic indices (OMNI)", Promise.all([
       omni(["AE_INDEX", "AL_INDEX", "AU_INDEX", "SYM_H"]), omni(["IMF", "PLS", "Mach_num", "Mgs_mach_num"]),
       hapi("OMNI2_H0_MRG1HR", ["KP1800", "DST1800"], a, b, true).catch(() => nil)]));
-    const keep = (r, j, ok) => { const t = [], v = []; for (let i = 0; i < r.n; i++) { const x = r.cols[j][i]; if (ok(x)) { t.push(r.t[i]); v.push(x); } } return set({ t: [f32(t), 1], v: [f32(v), 1] }); };
+    const keep = (r, j, ok) => { const t = [], v = []; for (let i = 0; i < r.n; i++) { const x = r.cols[j][i]; if (ok(x)) { t.push(r.t[i]); v.push(x); } } return set({ t: [f64(t), 1], v: [f32(v), 1] }); };
     const nT = (x) => isFinite(x) && Math.abs(x) < 30000, sv = {};
     if (ix.n) { sv.giAe = keep(ix, 0, nT); sv.giAl = keep(ix, 1, nT); sv.giAu = keep(ix, 2, nT); sv.giSymh = keep(ix, 3, nT); }
     if (mach.n) { sv.giMa = keep(mach, 2, x => x > 0 && x < 900); sv.giMms = keep(mach, 3, x => x > 0 && x < 99); }
@@ -781,11 +862,13 @@
   const NCEI = "https://www.ncei.noaa.gov/cloud-access/space-weather-portal/api/v1/hapi/data";
   /** NCEI's HAPI (Helios's "spot:" route), parsed as CDAWeb's. */
   function ncei(id, params, a, b) {
-    return slot(async () => {
-      const r = await get(`${NCEI}?id=${id}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`, undefined, 45000);
+    const url = `${NCEI}?id=${id}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`;
+    return kept(url, () => slot(async () => {
+      const r = await get(url, undefined, 45000);
       if (!r.ok) throw new Error(`NCEI ${id}: HTTP ${r.status}`);
-      return r.text();
-    }, true).then(text => parseCSV(id, text, a, b));
+      const body = await bodyOf(r); bytes += body.length; emit();
+      return body;
+    }, true), hapiKeep).then(u8 => parseCSV(id, textOf(u8), a, b));   // (NCEI answers like CDAWeb's HAPI)
   }
   /** One L1 monitor, as Helios's fetchAce / fetchWind / fetchDscovr: science products first, browse products where
    *  they stop. Rows: B (GSE), Nₚ, V (GSE), |V|, Tₚ. */
@@ -837,7 +920,7 @@
     if (B) {
       const n = B.t.length, b4 = new Float32Array(n * 4);
       for (let i = 0; i < n; i++) { b4[i * 4] = B.x[i]; b4[i * 4 + 1] = B.y[i]; b4[i * 4 + 2] = B.z[i]; b4[i * 4 + 3] = Math.hypot(B.x[i], B.y[i], B.z[i]); }
-      sv.fgm = set({ t: [f32(B.t), 1], b: [b4, 4] });
+      sv.fgm = set({ t: [f64(B.t), 1], b: [b4, 4] });
     }
     if (rows.length) {
       const n = rows.length, col = (k) => Float32Array.from(rows, r => (isFinite(r[k]) && Math.abs(r[k]) < 1e30 && r[k] > -1e30 ? r[k] : NaN)), v = new Float32Array(n * 3);
@@ -854,16 +937,20 @@
   /** One LaTiS dataset over [a, b] as rows of numbers (time first, s after T0); fill (≤ −99999) as NaN. */
   function latis(ds, a, b) {
     const t0 = iso(a).slice(0, 19), t1 = iso(b).slice(0, 19);
-    return slot(async () => {
-      const r = await get(`${LATIS}/${ds}.csv?time%3E=${t0}&time%3C=${t1}&format_time(yyyy-MM-dd%27T%27HH:mm:ss%27Z%27)`);
-      if (!r.ok) return [];
-      const text = await r.text();
-      bytes += text.length; emit();
+    const url = `${LATIS}/${ds}.csv?time%3E=${t0}&time%3C=${t1}&format_time(yyyy-MM-dd%27T%27HH:mm:ss%27Z%27)`;
+    return kept(url, () => slot(async () => {
+      const r = await get(url);
+      if (!r.ok) return null;
+      const body = await bodyOf(r); bytes += body.length; emit();
+      return body;
+    }, true), (u8) => u8.length > 40 && u8[0] !== 123 && u8[0] !== 60).then((u8) => {   // rows, not a JSON or HTML error
+      if (!u8) return [];
+      const text = textOf(u8);
       return text.split("\n").slice(1).filter(Boolean).map(ln => {
         const f = ln.split(",");
         return [sec(Date.parse(f[0])), ...f.slice(1).map(x => { const v = parseFloat(x); return isFinite(v) && v > -99999 && Math.abs(v) < 1e30 ? v : NaN; })];
       }).filter(r => isFinite(r[0]));
-    }, true);
+    });
   }
   /** GOES-16 … 19, as Helios's fetchGoes: the named satellite's own NOAA L2 1-min field in GSE where LaTiS has it
    *  (~2018 → ~2025-04), else SWPC's primary (secondary for GOES-18) feed in the payload Hp/He/Hn frame; integral
@@ -1059,10 +1146,10 @@
   /** The .cef files in a product delivery (a .tgz). */
   async function csaFiles(dataset, a, b) {
     const url = `${CSA}?RETRIEVAL_TYPE=product&DATASET_ID=${dataset}&START_DATE=${iso(a)}&END_DATE=${iso(b)}&DELIVERY_FORMAT=CEF&DELIVERY_INTERVAL=ALL`;
-    const gz = await slot(async () => { const r = await get(url, undefined, 90000); if (!r.ok) throw new Error(`CSA ${r.status}`); return r.arrayBuffer(); }, true);
-    bytes += gz.byteLength; emit();
-    if (new Uint8Array(gz)[0] !== 0x1f) return [];          // not gzip: no data for the interval
-    const tar = new Uint8Array(await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+    const gz = await kept(url, () => slot(async () => { const r = await get(url, undefined, 90000); if (!r.ok) throw new Error(`CSA ${r.status}`); const body = await bodyOf(r); bytes += body.length; emit(); return body; }, true),
+                          (u8) => u8.length > 2 && u8[0] === 0x1f);
+    if (gz[0] !== 0x1f) return [];                           // not gzip: no data for the interval
+    const tar = await gunzip(gz);
     const files = [], dec = new TextDecoder(), str = (x, y) => dec.decode(tar.subarray(x, y)).replace(/\0[\s\S]*$/, "");
     let longName = null;
     for (let o = 0; o + 512 <= tar.length;) {                // ustar: a 512-byte header, the file, padding to 512
@@ -1199,10 +1286,13 @@
   /** Positions (GSE, R_E) of several observatories over [a, b]: { id: { t (s after T0), p } }. */
   async function ssc(ids, a, b) {
     await relay;
-    const r = await get(`${SSC}/locations/${ids.join(",")}/${stamp(a)},${stamp(b)}/gse/`, { headers: { Accept: "application/json" } });
-    if (!r.ok) throw new Error(`SSCWeb: HTTP ${r.status}`);
-    const text = await r.text();
-    bytes += text.length; emit();
+    const url = `${SSC}/locations/${ids.join(",")}/${stamp(a)},${stamp(b)}/gse/`;
+    const text = textOf(await kept(url, async () => {
+      const r = await get(url, { headers: { Accept: "application/json" } });
+      if (!r.ok) throw new Error(`SSCWeb: HTTP ${r.status}`);
+      const body = await bodyOf(r); bytes += body.length; emit();
+      return body;
+    }, (u8) => u8.length > 400 && u8[0] === 91));           // a JSON array with data in it
     const res = JSON.parse(text)[1].Result[1], out = {};
     for (const it of (res.Data && res.Data[1]) || []) {
       const s = it[1], c = s.Coordinates[1][0][1], X = c.X[1], Y = c.Y[1], Z = c.Z[1], T = s.Time[1];
@@ -1461,15 +1551,17 @@
   const DIST = { des: { lo: -35, hi: -23, dt: 0.03, pad: 1 }, dis: { lo: -31, hi: -17, dt: 0.15, pad: 3 } };
   /** HAPI's binary format: each record an ASCII time (its length found from the first 'Z'), then little-endian doubles. */
   async function hapiBinary(id, params, a, b, nd) {
-    const buf = await slot(async () => {
-      const r = await get(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}&format=binary`, undefined, 90000);   // CDAWeb can take a minute to cut a fresh distribution file
+    await relay;
+    const url = `${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}&format=binary`;
+    const u8 = await kept(url, () => slot(async () => {
+      const r = await get(url, undefined, 90000);            // CDAWeb can take a minute to cut a fresh distribution file
       if (r.status === 404) return null;
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
-      return r.arrayBuffer();
-    }, true);
-    if (!buf) return [];
-    const u8 = new Uint8Array(buf);
-    bytes += buf.byteLength; emit();
+      const body = await bodyOf(r); bytes += body.length; emit();
+      return body;
+    }, true), hapiKeep);
+    if (!u8) return [];
+    const buf = u8.buffer.byteLength === u8.length ? u8.buffer : u8.slice().buffer;
     if (!u8.length || u8[0] === 123 || u8[0] === 44) return [];            // "{" or ",": a status, no records
     let tl = 0; while (tl < 40 && u8[tl] !== 90) tl++; tl++;                // through the "Z"
     const rec = tl + 8 * nd, out = [], dec = new TextDecoder();
@@ -1553,12 +1645,41 @@
   /** One CDAS subset as a CDF (its variables gzip-compressed), read whole: the survey ION product is full resolution
    *  ([16 anodes × 63 energies] per 0.625-s sweep), 64 MB per species-hour as HAPI CSV, a few MB this way. */
   async function cdas(id, vars, a, b, P = null) {
-    const r = await slot(() => get(`${CDAS}/${id}/data/${cdasStamp(a)},${cdasStamp(b)}/${vars.join(",")}?format=cdf`, { headers: { Accept: "application/json" } }, 120000), true);
-    if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
-    const j = await r.json(), f = j.FileDescription && j.FileDescription[0];
-    if (f && P) P.expect(f.Length || 0);                    // CDAWeb says each subset's size: the bar knows its end
-    return f ? cdfFile(f.Name, true, P) : null;
+    const url = `${CDAS}/${id}/data/${cdasStamp(a)},${cdasStamp(b)}/${vars.join(",")}?format=cdf`;
+    const u8 = await kept(url, () => slot(async () => {
+      // no-store: the answer names a temporary file, so a copy of it in the browser's HTTP cache would point at nothing later
+      const r = await get(url, { headers: { Accept: "application/json" }, cache: "no-store" }, 120000);
+      if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
+      const j = await r.json(), f = j.FileDescription && j.FileDescription[0];
+      if (!f) return new Uint8Array(0);                      // no data in the interval
+      if (!/^https:\/\/cdaweb\.gsfc\.nasa\.gov\//.test(f.Name)) throw new Error(`${id}: a file outside CDAWeb`);
+      if (P) P.expect(f.Length || 0);                         // CDAWeb says each subset's size: the bar knows its end
+      const fr = await get(f.Name, undefined, 120000, P && P.add);
+      if (!fr.ok) throw new Error(`CDF ${fr.status}`);
+      const body = await bodyOf(fr); bytes += body.length; emit();
+      return body;
+    }, true), (b2) => b2.length > 8);
+    return u8 && u8.length > 8 ? cdfFile(null, true, P, u8) : null;
   }
+  /** A CDAS subset in hapi()'s shape — { t (s after T0), cols, n }: the variables' elements as columns in the order
+   *  asked, fill as NaN, the rows inside [a, b] — with `extra` support variables (FPI's energy table per record, which
+   *  come in the same file) as { name: Float64Array[n × elems] }. Full float32 values, where HAPI's CSV prints six digits. */
+  async function cdasRows(id, vars, a, b, extra = []) {
+    const cdf = await cdas(id, vars, a, b), none = { t: new Float64Array(0), cols: [], n: 0, extra: {} };
+    if (!cdf) return none;
+    const epName = await cdf.epochOf(vars[0]);
+    if (!epName) throw new Error(`${id}: no epoch`);
+    const [ep, ...V] = await Promise.all([cdf.variable(epName), ...vars.map(v => cdf.variable(v))]);
+    if (V.some(v => v.n !== ep.n)) throw new Error(`${id}: ragged variables`);
+    const keepI = []; for (let i = 0; i < ep.n; i++) if (ep.data[i] >= a && ep.data[i] <= b) keepI.push(i);
+    const n = keepI.length, cols = [];
+    for (const v of V) for (let e = 0; e < v.elems; e++) cols.push(Float64Array.from(keepI, i => { const x = v.data[i * v.elems + e]; return Math.abs(x) >= 1e30 || !isFinite(x) ? NaN : x; }));
+    const ex = {};
+    for (const name of extra) { const v = await cdf.variable(name).catch(() => null); if (v && v.n === ep.n) { const o = new Float64Array(n * v.elems); keepI.forEach((i, k) => o.set(v.data.subarray(i * v.elems, (i + 1) * v.elems), k * v.elems)); ex[name] = o; } }
+    return { t: Float64Array.from(keepI, i => sec(ep.data[i])), cols, n, extra: ex };
+  }
+  /** The CDF subset where CDAWeb cuts one, HAPI's CSV where it does not (or answers nothing). */
+  const viaCDF = (id, vars, a, b, viaHAPI, extra) => cdasRows(id, vars, a, b, extra).then(r => (r.n ? r : viaHAPI()), (e) => { console.warn("CDAS", id, e.message || e); return viaHAPI(); });
   /** The sky-mean differential energy flux per half-spin, eV/(cm² s sr eV): per sweep the mean over the anodes with a
    *  value (negatives as 0), × E; the mean of those over the sweeps of a half-spin, which closes where start_azimuth = 0.
    *  A column is stamped with its half-spin's first sweep; only half-spins starting in [a, b) are kept (chunks never
@@ -1622,7 +1743,7 @@
     }
     const dts = []; for (let i = 1; i < r.n; i++) dts.push(r.t[i] - r.t[i - 1]); dts.sort((p, q) => p - q);
     const half = dts.length ? dts[dts.length >> 1] / 2 : 5;
-    const pick = (j) => fillNaN(r.cols[j], 1e30), N = new Float32Array(r.n * 4), T = new Float32Array(r.n * 4), out = { t: [f32(Array.from(r.t, x => x + half)), 1] };
+    const pick = (j) => fillNaN(r.cols[j], 1e30), N = new Float32Array(r.n * 4), T = new Float32Array(r.n * 4), out = { t: [f64(Array.from(r.t, x => x + half)), 1] };
     HPCA_SP.forEach(([key, v], k) => {
       const j = order.indexOf(v) * 5, nn = pick(j), tt = pick(j + 4);          // n, V[3], T per species, in HAPI's order
       for (let i = 0; i < r.n; i++) { N[i * 4 + k] = nn[i] >= 0 ? nn[i] : NaN; T[i * 4 + k] = tt[i] >= 0 ? tt[i] : NaN; }
@@ -1751,11 +1872,11 @@
     const sets = {};
     if (fast) {                                              // Helios's tiers: native 32 Hz, 0.15 s and 4.5 s box means
       const [ep, e] = fast, t = secs(ep), C3 = [0, 1, 2].map(c => comp(e, c));
-      sets.efiN = set({ t: [f32(t), 1], e: [stack(C3.map(f32), 0, 3), 3] });
-      for (const [k, w] of [["efi15", 0.15], ["efi45", 4.5]]) { const F = boxcar(t, C3, w); sets[k] = set({ t: [f32(F.t), 1], e: [stack(F.cols.map(f32), 0, 3), 3] }); }
+      sets.efiN = set({ t: [f64(t), 1], e: [stack(C3.map(f32), 0, 3), 3] });
+      for (const [k, w] of [["efi15", 0.15], ["efi45", 4.5]]) { const F = boxcar(t, C3, w); sets[k] = set({ t: [f64(F.t), 1], e: [stack(F.cols.map(f32), 0, 3), 3] }); }
       sets.efi = sets.efi15;
     }
-    if (pot) { const [ep, v] = pot; sets.pot = set({ t: [f32(secs(ep)), 1], v: [f32(comp(v, 0)), 1] }); }
+    if (pot) { const [ep, v] = pot; sets.pot = set({ t: [f64(secs(ep)), 1], v: [f32(comp(v, 0)), 1] }); }
     return { sets, burst: null, empty: !fast };
   }
   /** DSP's fast-survey E-field power spectral density (omni) over frequency. */
@@ -1764,7 +1885,7 @@
     const [r, f] = await Promise.all([hapi(`MMS${n}_DSP_FAST_L2_EPSD`, [`${sc}_dsp_epsd_omni`], a, b, true, false, P), hapiBins(`MMS${n}_DSP_FAST_L2_EPSD`, `${sc}_dsp_epsd_omni`, true)]);
     const nf = r.cols.length, flux = stack(r.cols, 0, nf).map(x => (x > 0 ? x : NaN));
     const freq = (f || []).slice(0, nf).map(x => Math.max(x, 1));
-    return { sets: { epsd: set({ t: [f32(r.t), 1], spec: [spec8(flux, r.n, nf, "epsd"), nf], etab: [Float32Array.from(freq), nf], eidx: [new Uint8Array(r.n), 1] }) }, empty: !r.n };
+    return { sets: { epsd: set({ t: [f64(r.t), 1], spec: [spec8(flux, r.n, nf, "epsd"), nf], etab: [Float32Array.from(freq), nf], eidx: [new Uint8Array(r.n), 1] }) }, empty: !r.n };
   }
   const LAZY = { hpH: ["HPCA H⁺ spectra (±1 h)", (n, P) => hpcaSpectra(n, P, "hpH")], hpHepp: ["HPCA He⁺⁺ spectra (±1 h)", (n, P) => hpcaSpectra(n, P, "hpHepp")],
                  hpHep: ["HPCA He⁺ spectra (±1 h)", (n, P) => hpcaSpectra(n, P, "hpHep")], hpO: ["HPCA O⁺ spectra (±1 h)", (n, P) => hpcaSpectra(n, P, "hpO")], hpcaMom: ["HPCA moments", hpcaMoments], edp: ["EDP electric field", edp], dsp: ["DSP E-field spectra", dsp] };
