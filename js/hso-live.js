@@ -489,18 +489,23 @@
     const ba = AT - BURST_HALF * 1000, bb = AT + BURST_HALF * 1000;
     const bmoms = (sp, st) => [`${sc}_${sp}_steptable_parity_brst`, `${sc}_${sp}_energyspectr_omni_brst`, `${sc}_${sp}_numberdensity_brst`, `${sc}_${sp}_bulkv_gse_brst`,
                                ...(st ? [`${sc}_${sp}_bulkv_spintone_gse_brst`] : []), `${sc}_${sp}_temppara_brst`, `${sc}_${sp}_tempperp_brst`];
+    // a moment MEC has not reached (positions from SSCWeb): MMS's L2 files are very likely not out either, so HAPI is
+    // asked directly — it says so at once, where the subset service takes seconds to
+    const recent = !!(await mec().then(g => g[0].computed, () => false));
     // CDAWeb's CDF subsets (gzip inside, one request each, the energy table of every record in the same file): a
     // quarter of the bytes of HAPI's CSV and its full float32 digits. HAPI stays as the way back where a subset fails.
-    const burst = Promise.all([
-      track(`MMS${n} burst FGM`, viaCDF(`MMS${n}_FGM_BRST_L2`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, (P) => hapiChunked(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, 6, false, P), [], `MMS${n}_FGM_BRST_L2@0`)),
-      track(`MMS${n} burst FPI ions`, viaCDF(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, (P) => hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, false, false, P), [`${sc}_dis_energy_brst`])),
-      track(`MMS${n} burst FPI electrons`, viaCDF(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, (P) => hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3, false, P), [`${sc}_des_energy_brst`])),
-    ]).catch((e) => { console.warn(e); return null; });
-    const [fg, di, de] = await Promise.all([
-      track(`MMS${n} FGM`, viaCDF(`MMS${n}_FGM_SRVY_L2`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, (P) => hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8, true, P), [], `MMS${n}_FGM_SRVY_L2@0`)),
-      track(`MMS${n} FPI ions`, viaCDF(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, (P) => hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, true, false, P), [`${sc}_dis_energy_fast`])),
-      track(`MMS${n} FPI electrons`, viaCDF(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, (P) => hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, true, false, P), [`${sc}_des_energy_fast`])),
+    // the survey products first in line: the window opens on them, and the subset service takes requests one by one
+    const survey = Promise.all([
+      track(`MMS${n} FGM`, viaCDF(`MMS${n}_FGM_SRVY_L2`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, (P) => hapiChunked(`MMS${n}_FGM_SRVY_L2@0`, [`${sc}_fgm_b_gse_srvy_l2`], a, b, 8, true, P), [], recent)),
+      track(`MMS${n} FPI ions`, viaCDF(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, (P) => hapi(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, moms("dis", false), a, b, true, false, P), [`${sc}_dis_energy_fast`], recent)),
+      track(`MMS${n} FPI electrons`, viaCDF(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, (P) => hapi(`MMS${n}_FPI_FAST_L2_DES-MOMS`, moms("des", true), a, b, true, false, P), [`${sc}_des_energy_fast`], recent)),
     ]);
+    const burst = Promise.all([
+      track(`MMS${n} burst FGM`, viaCDF(`MMS${n}_FGM_BRST_L2`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, (P) => hapiChunked(`MMS${n}_FGM_BRST_L2@0`, [`${sc}_fgm_b_gse_brst_l2`], ba, bb, 6, false, P), [], recent)),
+      track(`MMS${n} burst FPI ions`, viaCDF(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, (P) => hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, false, false, P), [`${sc}_dis_energy_brst`], recent)),
+      track(`MMS${n} burst FPI electrons`, viaCDF(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, (P) => hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3, false, P), [`${sc}_des_energy_brst`], recent)),
+    ]).catch((e) => { console.warn(e); return null; });
+    const [fg, di, de] = await survey;
     // the survey field as served (8 or 16 S/s): the window's resolution tier averages it (hso.js tierView), as Helios
     const sv = {
       fgm: set({ t: [f64(fg.t), 1], b: [stack(fg.cols, 0, 4), 4] }),
@@ -1711,11 +1716,20 @@
   const cdasStamp = (ms) => iso(ms).replace(/[-:]/g, "").replace(/\.\d+/, "");
   /** One CDAS subset as a CDF (its variables gzip-compressed), read whole: the survey ION product is full resolution
    *  ([16 anodes × 63 energies] per 0.625-s sweep), 64 MB per species-hour as HAPI CSV, a few MB this way. */
-  async function cdas(id, vars, a, b, P = null, signal = undefined) {
+  // the subset service answers 429 to a sixth request at once: four at a time, the rest in line
+  const cdasGate = { n: 0, q: [] };
+  async function gated(fn) {
+    if (cdasGate.n >= 4) await new Promise(r => cdasGate.q.push(r));
+    cdasGate.n++;
+    try { return await fn(); } finally { cdasGate.n--; const next = cdasGate.q.shift(); if (next) next(); }
+  }
+  /** (on: { start, answer } — told when the request leaves and when the service has answered it, for viaCDF's hedge) */
+  async function cdas(id, vars, a, b, P = null, signal = undefined, on = null) {
     const url = `${CDAS}/${id}/data/${cdasStamp(a)},${cdasStamp(b)}/${vars.join(",")}?format=cdf`;
     const u8 = await kept(url, () => slot(async () => {
       // no-store: the answer names a temporary file, so a copy of it in the browser's HTTP cache would point at nothing later
-      const r = await get(url, { headers: { Accept: "application/json" }, cache: "no-store", signal }, 120000);
+      const r = await gated(() => { if (on) on.start(); return get(url, { headers: { Accept: "application/json" }, cache: "no-store", signal }, 120000); });
+      if (on) on.answer();
       if (r.status === 404) return new Uint8Array(0);        // CDAS's "no data in the interval"
       if (!r.ok) throw new Error(`${id}: HTTP ${r.status}`);
       const j = await r.json(), f = j.FileDescription && j.FileDescription[0];
@@ -1732,8 +1746,8 @@
   /** A CDAS subset in hapi()'s shape — { t (s after T0), cols, n }: the variables' elements as columns in the order
    *  asked, fill as NaN, the rows inside [a, b] — with `extra` support variables (FPI's energy table per record, which
    *  come in the same file) as { name: Float64Array[n × elems] }. Full float32 values, where HAPI's CSV prints six digits. */
-  async function cdasRows(id, vars, a, b, extra = [], signal = undefined) {
-    const cdf = await cdas(id, vars, a, b, null, signal), none = { t: new Float64Array(0), cols: [], n: 0, extra: {} };
+  async function cdasRows(id, vars, a, b, extra = [], signal = undefined, on = null) {
+    const cdf = await cdas(id, vars, a, b, null, signal, on), none = { t: new Float64Array(0), cols: [], n: 0, extra: {} };
     if (!cdf) return none;
     const epName = await cdf.epochOf(vars[0]);
     if (!epName) throw new Error(`${id}: no epoch`);
@@ -1746,56 +1760,30 @@
     for (const name of extra) { const v = await cdf.variable(name).catch(() => null); if (v && v.n === ep.n) { const o = new Float64Array(n * v.elems); keepI.forEach((i, k) => o.set(v.data.subarray(i * v.elems, (i + 1) * v.elems), k * v.elems)); ex[name] = o; } }
     return { t: Float64Array.from(keepI, i => sec(ep.data[i])), cols, n, extra: ex };
   }
-  /** Whether HAPI has any record of `param` in [a, b]: the first bytes of its answer, then the request dropped. true,
-   *  false, or null where it could not say. HAPI tells "no data" in a tenth of a second; the subset service takes
-   *  seconds to (and a busy one, twenty). */
-  async function hapiHas(id, param, a, b) {
-    await relay;
-    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 8000);
-    try {
-      const r = await fetch(`${HAPI}/data?id=${encodeURIComponent(id)}&parameters=${param}&time.min=${iso(a)}&time.max=${iso(b)}`, { signal: ac.signal, cache: "no-store" });
-      if (r.status === 404) return false;
-      if (!r.ok || !r.body) return null;
-      // CDAWeb's answer opens with the nearest record BEFORE the interval, and an empty interval is that record alone:
-      // so the rows are read until one falls inside (data) or the answer ends without one (none)
-      const rd = r.body.getReader();
-      let text = "";
-      for (let k = 0; k < 4; k++) {
-        const { done, value } = await rd.read();
-        if (value) text += textOf(value);
-        if (k === 0 && /^\s*[{,]/.test(text)) return /1201|no data/i.test(text) ? false : null;
-        const lines = text.split("\n");
-        for (let i = 0; i < lines.length - (done ? 0 : 1); i++) {   // whole lines only
-          const ms = lines[i].length > 19 ? hapiTime(lines[i].split(",")[0]) : NaN;
-          if (ms >= a && ms <= b) return true;
-        }
-        if (done) return false;
-      }
-      return null;
-    } catch (e) { return null; } finally { clearTimeout(timer); ac.abort(); }
-  }
-  /** The CDF subset where CDAWeb cuts one, HAPI's CSV where it does not; nothing at all where HAPI says there is nothing
-   *  (`hid`: the HAPI name of the same data, for the probe). */
-  async function viaCDF(id, vars, a, b, viaHAPI, extra, hid = id) {
-    const ac = new AbortController();
-    const cd = cdasRows(id, vars, a, b, extra, ac.signal).then(r => (r.n ? r : null), (e) => { if (!ac.signal.aborted) console.warn("CDAS", id, e.message || e); return null; });
-    const has = await Promise.race([hapiHas(hid, vars[0], a, b), cd.then(r => (r ? true : null))]);
-    if (has === false) { ac.abort(); return { t: new Float64Array(0), cols: [], n: 0, extra: {} }; }
-    // The subset service is quick for most years and slow for some (2024's burst products took it 15 s): where it has
-    // not answered within HEDGE, HAPI is asked as well and the first with data is used. HAPI's values are its CSV's
-    // (FPI to three digits), so the route is noted on the rows.
-    let timer;
-    const first = await Promise.race([cd.then(r => ({ r })), new Promise(res => { timer = setTimeout(res, HEDGE, null); })]);
+  /** The CDF subset where CDAWeb cuts one, HAPI's CSV where it does not. The subset service is quick for most years and
+   *  slow for some (2024's burst products took it 15 s, and it can take many seconds to say "no data"): where it has
+   *  not ANSWERED within HEDGE of the request leaving (the download and the reading after that are not its slowness),
+   *  HAPI is asked as well and the first to settle the matter is used, the other cancelled. HAPI's values are its
+   *  CSV's (FPI to three digits). `hapiFirst`: a moment the archive has barely reached — HAPI alone, which says "no
+   *  data" in a tenth of a second. */
+  async function viaCDF(id, vars, a, b, viaHAPI, extra, hapiFirst = false) {
+    if (hapiFirst) return viaHAPI();
+    const EMPTY = { t: new Float64Array(0), cols: [], n: 0, extra: {} };
+    const ac = new AbortController(), hc = new AbortController();
+    let timer, begun, heard;
+    const started = new Promise(res => { begun = res; }), answered = new Promise(res => { heard = res; });
+    // { r } when the subset came (r.n = 0: its "no data"), null when it failed
+    const cd = cdasRows(id, vars, a, b, extra, ac.signal, { start: begun, answer: heard }).then(r => ({ r }), (e) => { if (!ac.signal.aborted) console.warn("CDAS", id, e.message || e); return null; });
+    const inTime = await Promise.race([answered.then(() => true), cd.then(() => true), started.then(() => new Promise(res => { timer = setTimeout(res, HEDGE, false); }))]);
     clearTimeout(timer);
-    if (first) return first.r || viaHAPI();
-    const hc = new AbortController();
-    const hp = Promise.resolve().then(() => viaHAPI({ signal: hc.signal })).then(r => (r && r.n ? r : null), () => null);
-    const win = await Promise.race([cd.then(r => r && { r, cdf: true }), hp.then(r => r && { r })]) || await Promise.all([cd, hp]).then(([x, y]) => (x ? { r: x, cdf: true } : y ? { r: y } : null));
-    if (!win) return { t: new Float64Array(0), cols: [], n: 0, extra: {} };
-    if (win.cdf) hc.abort(); else { ac.abort(); console.info(`${id}: from HAPI (the CDF subset was slow)`); }   // the loser is dropped
+    if (inTime) { const x = await cd; return x ? x.r : viaHAPI(); }
+    const hp = Promise.resolve().then(() => viaHAPI({ signal: hc.signal })).then(r => ({ r }), () => null);
+    const win = await Promise.race([cd.then(x => x && { r: x.r, cdf: true }), hp]) || await Promise.all([cd, hp]).then(([x, y]) => (x ? { r: x.r, cdf: true } : y));
+    if (!win) return EMPTY;
+    if (win.cdf) hc.abort(); else { ac.abort(); if (win.r.n) console.info(`${id}: from HAPI (the CDF subset was slow)`); }   // the loser is dropped
     return win.r;
   }
-  const HEDGE = 3500;
+  const HEDGE = 3000;
   /** The sky-mean differential energy flux per half-spin, eV/(cm² s sr eV): per sweep the mean over the anodes with a
    *  value (negatives as 0), × E; the mean of those over the sweeps of a half-spin, which closes where start_azimuth = 0.
    *  A column is stamped with its half-spin's first sweep; only half-spins starting in [a, b) are kept (chunks never
