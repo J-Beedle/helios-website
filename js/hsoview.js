@@ -220,6 +220,10 @@
     const card = root.querySelector(".hso-card"), toast = root.querySelector(".hso-toast"), swBox = root.querySelector(".hso-sw");
     const winds = Winds(o.omni);
     const show = { topo: false, mp: true, bs: true, lines: true, ref: false };
+    // the field the lines are traced through (Helios's FieldLineOverlay.ModelChoice, without T01): "off", "igrf" (IGRF-14
+    // alone) or "t89" (with Tsyganenko 1989 at the moment's Kp). Every cache is keyed by it.
+    let fieldModel = "t89";
+    const kpField = () => (fieldModel === "igrf" ? -1 : S.kp ?? 2);
     const view = { az: 0, tilt: 0 };
     let time = S.epoch, hover = null, rings = [], formDots = [], P = null, anim = null;
 
@@ -870,7 +874,7 @@
           break;
         }
       }
-      if (o.feet && window.FieldLines) drawFeet(ctx, taken);
+      if (o.feet && window.FieldLines && fieldModel !== "off") drawFeet(ctx, taken);
       // the way to the Sun, at the limb
       const sq = P.pt([1, 0, 0]), dx = sq[0] - e[0], dy = sq[1] - e[1], ln = Math.hypot(dx, dy);
       if (ln > r * 0.6) {
@@ -893,7 +897,8 @@
         text(ctx, "daylight", x + 121, y + 30, `9.5px ${MONO}`, rgba(DS.textBright), "left");
         let lx = x + 10;
         for (const k of ["themis", "rego"]) { circle(ctx, lx + 4, y + 46, 3.5, rgba(NET[k])); text(ctx, NET_NAME[k], lx + 11, y + 46, `9px ${MONO}`, rgba(DS.textSecondary), "left"); lx += 70; }
-        text(ctx, o.feet ? (S.al != null ? `oval AL ${S.al} nT · T89 Kp ${(S.kp ?? 2).toFixed(1)}` : `Kp ${(S.kp ?? 2).toFixed(1)}: oval Starkov, feet IGRF+T89`) : `Kp ${(S.kp ?? 2).toFixed(1)} oval (Starkov 1994) · drag to turn`, x + 10, y + 62, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
+        const feetBy = fieldModel === "t89" ? `T89 Kp ${(S.kp ?? 2).toFixed(1)}` : fieldModel === "igrf" ? "feet IGRF alone" : "no feet traced";
+        text(ctx, o.feet ? (S.al != null ? `oval AL ${S.al} nT · ${feetBy}` : `Kp ${(S.kp ?? 2).toFixed(1)}: oval Starkov · ${feetBy}`) : `Kp ${(S.kp ?? 2).toFixed(1)} oval (Starkov 1994) · drag to turn`, x + 10, y + 62, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
         if (o.sky) {
           for (let i = 0; i < 40; i++) { ctx.fillStyle = skyColor(i / 39); ctx.fillRect(x + 10 + i * 2, y + 74, 2, 7); }
           text(ctx, `sky: ${skyShown} THEMIS camera${skyShown === 1 ? "" : "s"}, 1 min`, x + 96, y + 78, `8.5px ${MONO}`, rgba(DS.textMuted), "left");
@@ -940,13 +945,13 @@
     /** The feet at the minute on screen, traced here (~1 ms a line). */
     function feetAt(t) {
       const key = Math.round(t / 60);
-      if (feetNow && feetNow.key === key) return feetNow;
-      const ms = o.feet.epoch(key * 60), F = FieldLines.makeField(ms, frameAt("geo", key * 60), S.kp ?? 2), craft = [];
+      if (feetNow && feetNow.key === key && feetNow.fm === fieldModel) return feetNow;
+      const ms = o.feet.epoch(key * 60), F = FieldLines.makeField(ms, frameAt("geo", key * 60), kpField()), craft = [];
       for (const c of feetSeeds(key * 60)) {
         if (!c.p || !(len3(c.p) > 1.05) || !inside(c.p)) continue;
         craft.push(Object.assign({}, c, { line: FieldLines.trace(F, c.p, true) }));
       }
-      return (feetNow = { key, craft, model: F.model });
+      return (feetNow = { key, fm: fieldModel, craft, model: F.model });
     }
     /** The ±1 h tracks: grid samples not yet traced go to the worker in one batch; the layer redraws when they land. */
     function requestTracks(t) {
@@ -955,13 +960,13 @@
         const tk = k * TRACK_STEP, seeds = [];
         if (S.frames.t.length && (tk < S.frames.t[0] - 300 || tk > S.frames.t[S.frames.t.length - 1] + 300)) continue;
         for (const c of feetSeeds(tk)) {
-          const ck = `${c.id}|${tk}`;
+          const ck = `${fieldModel}|${c.id}|${tk}`;
           if (trackCache.has(ck)) continue;
           trackCache.set(ck, "pending");
           if (!c.p || !(len3(c.p) > 1.05) || !inside(c.p)) { trackCache.set(ck, null); continue; }
           seeds.push({ id: c.id, gse: c.p });
         }
-        if (seeds.length) jobs.push({ key: tk, ms: o.feet.epoch(tk), geo: frameAt("geo", tk), kp: S.kp ?? 2, seeds });
+        if (seeds.length) jobs.push({ key: `${fieldModel}:${tk}`, ms: o.feet.epoch(tk), geo: frameAt("geo", tk), kp: kpField(), seeds });
       }
       if (jobs.length) post(jobs);
     }
@@ -970,9 +975,10 @@
         try {
           feetWorker = new Worker(o.feet.worker);
           feetWorker.onmessage = (ev) => {
-            for (const [tk, r] of Object.entries(ev.data.results)) {
-              if (r.ref) { refCache.set(tk, r); continue; }
-              for (const [id, line] of Object.entries(r.lines)) trackCache.set(`${id}|${tk}`, line);
+            for (const [key, r] of Object.entries(ev.data.results)) {      // a key names its model: "t89:3600", "igrf:r12"
+              if (r.ref) { refCache.set(key, r); continue; }
+              const [fm, tk] = key.split(":");
+              for (const [id, line] of Object.entries(r.lines)) trackCache.set(`${fm}|${id}|${tk}`, line);
             }
             request();
           };
@@ -997,7 +1003,7 @@
       for (const c of now.craft) {
         for (const hemi of ["north", "south"]) {
           const a = Math.ceil((time - TRACK_HALF) / TRACK_STEP), b = Math.floor((time + TRACK_HALF) / TRACK_STEP), smp = [];
-          for (let k = a; k <= b; k++) { const l = trackCache.get(`${c.id}|${k * TRACK_STEP}`); smp.push([k * TRACK_STEP, l && l !== "pending" ? l[hemi] : null]); }
+          for (let k = a; k <= b; k++) { const l = trackCache.get(`${fieldModel}|${c.id}|${k * TRACK_STEP}`); smp.push([k * TRACK_STEP, l && l !== "pending" ? l[hemi] : null]); }
           smp.push([time, c.line[hemi]]);
           smp.sort((x, y) => x[0] - y[0]);
           const runs = [];
@@ -1138,14 +1144,14 @@
     const REF_BUCKET = 120, WIND_DASH = [7, 3, 1.5, 3];
     const refCache = new Map();                            // `r${bucket}` → { ref, model }, or "pending"
     function refFamily() {
-      const b = Math.floor(time / REF_BUCKET), k = `r${b}`;
+      const b = Math.floor(time / REF_BUCKET), k = `${fieldModel}:r${b}`;
       if (!refCache.has(k)) {
         refCache.set(k, "pending");
         if (refCache.size > 48) refCache.delete(refCache.keys().next().value);
         const tb = (b + 0.5) * REF_BUCKET;
-        post([{ key: k, ms: o.feet.epoch(tb), geo: frameAt("geo", tb), kp: S.kp ?? 2, ref: true }]);
+        post([{ key: k, ms: o.feet.epoch(tb), geo: frameAt("geo", tb), kp: kpField(), ref: true }]);
       }
-      for (const d of [0, -1, 1, -2, 2]) { const c = refCache.get(`r${b + d}`); if (c && c !== "pending") return c; }
+      for (const d of [0, -1, 1, -2, 2]) { const c = refCache.get(`${fieldModel}:r${b + d}`); if (c && c !== "pending") return c; }
       return null;                                         // the nearest bucket traced stands in until this one lands
     }
     /** Whether each point is inside the magnetopause drawn now, kept on the line until the boundary changes. */
@@ -1197,13 +1203,13 @@
     function lineKey() {
       const el = root.querySelector("#scene-key");
       if (!el || !o.feet) return;
-      const on = rung === "mag" && (show.lines || show.ref) && !!window.FieldLines;
+      const on = rung === "mag" && (show.lines || show.ref) && fieldModel !== "off" && !!window.FieldLines;
       el.hidden = !on;
       if (!on) return;
-      const t = `Kp ${(S.kp ?? 2).toFixed(1)}`;
+      const t = fieldModel === "igrf" ? "IGRF-14 alone" : `IGRF-14 + T89, Kp ${(S.kp ?? 2).toFixed(1)}`;
       if (el.dataset.kp !== t) {
         el.dataset.kp = t;
-        el.innerHTML = `<i class="k ln"></i>closed<i class="k ln dash"></i>open<i class="k ln dot"></i>past the magnetopause · IGRF-14 + T89, ${t}`;
+        el.innerHTML = `<i class="k ln"></i>closed<i class="k ln dash"></i>open<i class="k ln dot"></i>past the magnetopause · ${t}`;
       }
     }
 
@@ -1534,7 +1540,7 @@
       }
       for (const th of S.themis) { path(ctx, th.track); stroke(ctx, "rgba(255,255,255,0.22)", 0.9, [3, 3]); }
       drawEarth(ctx, dpr);
-      if (o.feet && window.FieldLines) drawLines(ctx);
+      if (o.feet && window.FieldLines && fieldModel !== "off") drawLines(ctx);
 
       const fl = fleetNow(), thNow = S.themis.map(x => P.pt(posAt(x, time)));
       const mmsMarks = drawMMS(ctx, fl.map(x => x.q).concat(thNow));
@@ -1695,13 +1701,13 @@
       const rows = [[`L (dipole)`, isFinite(L) ? L.toFixed(2) : "—"], ["MLT", `${m.mlt.toFixed(2)} h  (${hm(m.mlt)})`], ["MLAT (SM)", `${m.mlat >= 0 ? "+" : ""}${m.mlat.toFixed(1)}°`],
                     ["Invariant lat.", isFinite(inv) ? `${inv.toFixed(1)}°` : "—"], ["r", `${m.r.toFixed(2)} Rₑ`], ["GSE", c.p.map(v => (v >= 0 ? "+" : "") + v.toFixed(2)).join("  ")]];
       let traced = "";
-      const now = window.FieldLines && feetAt(time), hit = now && now.craft.find(k => k.id === c.seed);
+      const now = window.FieldLines && fieldModel !== "off" && feetAt(time), hit = now && now.craft.find(k => k.id === c.seed);
       if (hit) {
         const l = hit.line, apex = l.topology === "closed" && l.line ? Math.max(...l.line.map(len3)) : null;
         const foot = (f, hemi) => { if (!f) return `${hemi}  —`; const mg = magOf(geoToGSE(f.geo)); return `${hemi}  ${Math.abs(f.lat).toFixed(1)}°${f.lat >= 0 ? "N" : "S"} ${Math.abs(f.lon).toFixed(1)}°${f.lon >= 0 ? "E" : "W"} · MLAT ${mg.mlat >= 0 ? "+" : ""}${mg.mlat.toFixed(1)}° · MLT ${mg.mlt.toFixed(1)} h`; };
         const topo = { closed: "closed", openNorth: "open — north foot only", openSouth: "open — south foot only", unknownOuter: "past 60 Rₑ both ways", incomplete: "trace stopped at its length limit" }[l.topology] || l.topology;
         traced = `<p class="cc-t">FIELD LINE · ${esc(now.model)}</p><p>${topo}${apex ? ` · apex L ${apex.toFixed(1)}` : ""}${l.winds ? " · winds; one loop shown" : ""}</p><p class="cc-m">${foot(l.north, "N")}</p><p class="cc-m">${foot(l.south, "S")}</p>`;
-      } else traced = `<p class="cc-n">${reg === "Solar wind" || reg === "Magnetosheath" || reg === "Bow shock" ? "Outside the drawn magnetopause: no line traced (T89 means nothing there)." : "Field lines follow MMS, THEMIS, Cluster, GOES, the Van Allen Probes and Geotail."}</p>`;
+      } else traced = `<p class="cc-n">${fieldModel === "off" ? "Field lines are off: choose IGRF or T89 under View to trace this spacecraft's line." : reg === "Solar wind" || reg === "Magnetosheath" || reg === "Bow shock" ? "Outside the drawn magnetopause: no line traced (T89 means nothing there)." : "Field lines follow MMS, THEMIS, Cluster, GOES, the Van Allen Probes and Geotail."}</p>`;
       craftCard.innerHTML = `<div class="cc-h"><b>${esc(c.label)}</b><span>${o.clock(time)} UTC</span><button class="cc-copy" title="Copy as text">Copy</button><button class="cc-x" aria-label="Close">×</button></div>
         <p class="cc-r" style="--c:${rgba(regCol)}"><i></i>${reg}</p>
         <p class="cc-t">L-SHELL · MLT <span>IGRF-14 centered dipole, SM</span></p>${rows.map(([k, v]) => `<p class="cc-k"><span>${k}</span><b>${v}</b></p>`).join("")}${traced}`;
@@ -1794,6 +1800,11 @@
       get time() { return time; },
       setTime(t) { time = t; request(); },
       setView(key, on) { show[key] = on; request(); },
+      get views() { return Object.assign({}, show); },
+      /** "off", "igrf" or "t89": what the spacecraft lines, the reference family and the footpoints are traced through. */
+      setFieldModel(m) { if (!["off", "igrf", "t89"].includes(m) || m === fieldModel) return; fieldModel = m; feetNow = null; request(); },
+      get fieldModel() { return fieldModel; },
+      get kp() { return S.kp ?? 2; },
       setTopology(d) { topo = d; clipTopology(); request(); },
       setRung,
       say,

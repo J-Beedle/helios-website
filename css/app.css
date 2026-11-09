@@ -80,3 +80,32 @@ body.helios-app .rail .ri:hover { background: rgba(240, 240, 250, 0.14); color: 
 /* narrower windows: the bar keeps the picker and drops the rest */
 @media (max-width: 1080px) { .la-ref { display: none; } .la-pick select { max-width: 170px; } }
 @media (max-width: 860px) { .la-tag, .la-utc { display: none; } .la-btn#la-about-btn { display: none; } .la-pick select { max-width: 120px; } }
+
+/* ── View options (hso.js viewOptions): a button at the figure's top right, its panel under it ── */
+.hso-view { position: absolute; right: 48px; top: 6px; z-index: 6; display: grid; justify-items: end; gap: 6px; }
+.hv-btn { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: rgba(240, 240, 250, 0.08); color: #e3e3eb; font: 600 11.5px/1 inherit; cursor: pointer; }
+.hv-btn:hover, .hv-btn[aria-expanded="true"] { background: rgba(240, 240, 250, 0.16); }
+.hv-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+.hv-badge { color: #8fd3ff; font: 500 10.5px/1 ui-monospace, "SF Mono", Menlo, monospace; }
+.hv-panel { width: 300px; padding: 11px 13px 12px; border: 1px solid rgba(240, 240, 250, 0.14); border-radius: 10px; background: rgba(18, 18, 22, 0.96); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55); color: #d6d6de; font-size: 12px; }
+.hv-panel[hidden] { display: none; }
+.hv-h { margin: 0 0 7px; color: #aeaeb6; font: 700 9.5px/1.3 inherit; letter-spacing: 0.08em; text-transform: uppercase; }
+.hv-h:not(:first-child) { margin-top: 12px; padding-top: 11px; border-top: 1px solid rgba(240, 240, 250, 0.1); }
+.hv-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 2px; border-radius: 8px; background: rgba(240, 240, 250, 0.08); }
+.hv-seg button { height: 24px; border: 0; border-radius: 6px; background: transparent; color: #cdcdd5; font: 600 11.5px/1 inherit; cursor: pointer; }
+.hv-seg button[aria-pressed="true"] { background: rgba(240, 240, 250, 0.2); color: #fff; }
+.hv-cap { margin: 7px 0 8px; color: #aeaeb6; font: 400 10.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
+.hv-row { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; cursor: pointer; }
+.hv-row input { margin: 2px 0 0; accent-color: #ffc44d; }
+.hv-row input:disabled + span { opacity: 0.45; }
+.hv-row span { display: grid; gap: 1px; }
+.hv-row small { color: #919199; font-size: 10.5px; line-height: 1.35; }
+.hv-key { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 6px 0 0; color: #919199; font-size: 10.5px; }
+.hv-key[hidden] { display: none; }
+.hv-key .k.ln { display: inline-block; width: 18px; height: 0; margin: 0 1px 0 6px; border-top: 1.5px solid #cdcdd5; }
+.hv-key .k.ln:first-child { margin-left: 0; }
+.hv-key .k.ln.dash { border-top-style: dashed; }
+.hv-key .k.ln.dot { border-top-style: dotted; }
+.hv-note { margin: 11px 0 0; color: #919199; font-size: 10.5px; }
+.hv-btn:focus-visible, .hv-seg button:focus-visible { outline: 2px solid #ffc44d; outline-offset: 1px; }
+

@@ -993,3 +993,21 @@ body.solo-hso #stage { position: fixed; inset: 0; height: auto; min-height: 0; m
 
 .fw-banner { flex: none; margin: 0; padding: 6px 12px; background: #2b2d32; color: #f2c14e; font: 500 12px/1.35 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.06); }
 .fw-banner[hidden] { display: none; }
+
+/* the info badges on a data window (hso.js placeBadges): beside the coverage bar's "Burst" where burst is hatched, and
+   beside the E subplot; the card says what the figure draws there */
+.fw-info { position: absolute; z-index: 3; width: 12px; height: 12px; padding: 0; border: 0; border-radius: 50%; background: #008000; color: #fff; font: italic 700 9px/12px Georgia, "Times New Roman", serif; text-align: center; cursor: pointer; }
+.fw-info[hidden], .fw-info-card[hidden] { display: none; }
+.fw-info:hover, .fw-info:focus-visible { background: #006a00; outline: 2px solid rgba(0, 128, 0, 0.3); }
+.fw-info-card { position: absolute; z-index: 4; width: 268px; padding: 10px 11px; border: 1px solid rgba(29, 29, 34, 0.18); border-radius: 7px; background: #fff; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  color: #1d1d22; font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; text-transform: none; text-align: left; }
+.fw-info-card p { margin: 0 0 5px; }
+.fw-info-card .fi-t { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11.5px; }
+.fw-info-card .fi-hatch { flex: none; width: 18px; height: 5px; background: repeating-linear-gradient(135deg, #008000 0 0.9px, rgba(0, 128, 0, 0.22) 0.9px 2.6px); }
+.fw-info-card .fi-l { padding-left: 9px; text-indent: -9px; }
+.fw-info-card .fi-l::before { content: "• "; color: rgba(29, 29, 34, 0.5); }
+.fw-info-card .fi-h { color: rgba(29, 29, 34, 0.62); }
+.fw-info-card .fi-go { margin: 3px 0 5px; padding: 5px 10px; border: 0; border-radius: 6px; background: #008000; color: #fff; font: 600 11px/1.2 inherit; cursor: pointer; }
+.fw-info-card .fi-go:hover { background: #006a00; }
+.fw-info-card p:last-child { margin-bottom: 0; }
+

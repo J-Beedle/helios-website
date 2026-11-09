@@ -4,13 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Helios Live</title>
-  <meta name="robots" content="noindex">
   <!-- This page runs its own scripts only and talks to the archives it names, nothing else (a relay named in
        assets/data/live/config.json has to be added to connect-src here too). -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://data.phys.ucalgary.ca; connect-src 'self' https://cdaweb.gsfc.nasa.gov https://sscweb.gsfc.nasa.gov https://csa.esac.esa.int https://lasp.colorado.edu https://www.ncei.noaa.gov https://api.phys.ucalgary.ca https://data.phys.ucalgary.ca; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="description" content="Helios Live: the Heliophysics System Observatory at any moment since 2015, in your browser. Spacecraft orbits, the magnetopause and bow shock, and each mission's data, fetched live from NASA's and ESA's public archives.">
   <meta name="theme-color" content="#000000">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Helios Live">
+  <meta property="og:description" content="The Heliophysics System Observatory at any moment since 2015, in your browser: spacecraft orbits, the magnetopause and bow shock, and each mission's data from the public archives.">
+  <meta property="og:image" content="https://j-beedle.github.io/helios-website/assets/img/og-home.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:url" content="https://j-beedle.github.io/helios-website/app.html">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
   <link rel="icon" type="image/png" sizes="64x64" href="assets/img/favicon-64.png">
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
@@ -19,8 +25,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
-  <link rel="stylesheet" href="css/site.css?v=62">
-  <link rel="stylesheet" href="css/app.css?v=1">
+  <link rel="stylesheet" href="css/site.css?v=63">
+  <link rel="stylesheet" href="css/app.css?v=2">
 </head>
 <body class="helios-app" data-default-t="2015-10-16T13:07:02Z">
   <header class="la-bar" id="la-bar">
@@ -103,15 +109,15 @@
       <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
       <h1 id="la-gate-h"></h1>
       <p id="la-gate-p"></p>
-      <p class="la-gate-a"><a class="btn" href="hso.html">See the demo instead</a><button class="la-btn" id="la-gate-go" hidden>Open it anyway</button></p>
+      <p class="la-gate-a"><a class="btn" href="index.html">Back to the Helios site</a><button class="la-btn" id="la-gate-go" hidden>Open it anyway</button></p>
     </div>
   </div>
 
-  <script src="js/app-page.js?v=1"></script>
+  <script src="js/app-page.js?v=2"></script>
   <script src="js/igrf14.js?v=38"></script>
   <script src="js/fieldlines.js?v=39"></script>
-  <script src="js/hsoview.js?v=56"></script>
-  <script src="js/hso-live.js?v=74"></script>
-  <script src="js/hso.js?v=70"></script>
+  <script src="js/hsoview.js?v=57"></script>
+  <script src="js/hso-live.js?v=75"></script>
+  <script src="js/hso.js?v=71"></script>
 </body>
 </html>

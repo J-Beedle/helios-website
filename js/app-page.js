@@ -19,7 +19,7 @@
     $("#la-gate-h").textContent = missing ? "This browser cannot run Helios Live" : "Helios Live is built for a larger screen";
     $("#la-gate-p").textContent = missing
       ? "It needs a current version of Chrome, Edge, Firefox or Safari (16.4 or later) to read the archives' files in the page."
-      : "The spacecraft view and its data windows need about a laptop's worth of room: at least 900 by 540 points. On this screen the demo is the better look.";
+      : "The spacecraft view and its data windows need about a laptop's worth of room: at least 900 by 540 points.";
     const go = $("#la-gate-go");
     if (!missing) {
       go.hidden = false;

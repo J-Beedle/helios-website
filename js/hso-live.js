@@ -484,6 +484,35 @@
       spec: [spec8(stack(r.cols, 1, 32), n, 32, sp), 32], etab: [Float32Array.from(AT < Date.UTC(2016, 8, 26) ? FPI_EB[sp].flat() : fpiAssumed(sp, AT).concat(fpiAssumed(sp, AT))), 32], eidx: [eidx, 1],
     }));
   }
+  /** Where a probe was in BURST and in FAST survey over the four hours, from the files CDAWeb holds (Helios's
+   *  modeCoverage): FGM burst files are one per burst segment, FPI-DIS fast files carry the fast-survey stretches.
+   *  { burst, fast }: [[a, b] s after T0], or null where the list could not be read (not "none"). */
+  async function modeCoverage(n) {
+    const [a, b] = window_;
+    const runs = async (ds, join) => {
+      const url = `${CDAS}/${ds}/orig_data/${cdasStamp(a)},${cdasStamp(b)}`;
+      try {
+        const u8 = await kept(url, () => slot(async () => {
+          const r = await gated(() => get(url, { headers: { Accept: "application/json" } }, 30000));
+          if (r.status === 404) return new TextEncoder().encode("{}");   // no files in the interval
+          if (!r.ok) throw new Error(`${ds} files: HTTP ${r.status}`);
+          return bodyOf(r);
+        }, true), (x) => x.length > 1 && x[0] === 123);
+        const out = [];
+        const files = (JSON.parse(textOf(u8)).FileDescription || []).map(f => [Date.parse(f.StartTime), Date.parse(f.EndTime)]).filter(f => isFinite(f[0]) && isFinite(f[1])).sort((p, q) => p[0] - q[0]);
+        for (const [f0, f1] of files) {
+          const s0 = Math.max(f0, a), s1 = Math.min(f1, b);
+          if (!(s1 > s0)) continue;
+          const last = out[out.length - 1];
+          if (last && sec(s0) - last[1] <= join) last[1] = Math.max(last[1], sec(s1)); else out.push([sec(s0), sec(s1)]);
+        }
+        return out;
+      } catch (e) { console.warn(e.message || e); return null; }
+    };
+    // burst files abut at segment boundaries; fast files leave ~4 s between the two-hour files
+    const [burst, fast] = await Promise.all([runs(`MMS${n}_FGM_BRST_L2`, 2), runs(`MMS${n}_FPI_FAST_L2_DIS-MOMS`, 15)]);
+    return { burst, fast };
+  }
   async function mms(n) {
     const sc = `mms${n}`, [a, b] = window_;
     const moms = (sp, st) => [`${sc}_${sp}_energyspectr_omni_fast`, `${sc}_${sp}_numberdensity_fast`, `${sc}_${sp}_bulkv_gse_fast`,
@@ -507,6 +536,7 @@
       track(`MMS${n} burst FPI ions`, viaCDF(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, (P) => hapi(`MMS${n}_FPI_BRST_L2_DIS-MOMS`, bmoms("dis", false), ba, bb, false, false, P), [`${sc}_dis_energy_brst`], recent)),
       track(`MMS${n} burst FPI electrons`, viaCDF(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, (P) => hapiChunked(`MMS${n}_FPI_BRST_L2_DES-MOMS`, bmoms("des", true), ba, bb, 3, false, P), [`${sc}_des_energy_brst`], recent)),
     ]).catch((e) => { console.warn(e); return null; });
+    const cover = modeCoverage(n);                          // two small lists, after the data in line
     const [fg, di, de] = await survey;
     // the survey field as served (8 or 16 S/s): the window's resolution tier averages it (hso.js tierView), as Helios
     const sv = {
@@ -548,7 +578,7 @@
       out.des.j = current(out.dis.t, out.dis.v, out.des.t, out.des.n, out.des.v); out.des.cols.j = 3;
       return out;
     });
-    return { sv, bu: null, burst: bu, kind: "mms", empty: !fg.n && !di.n };
+    return { sv, bu: null, burst: bu, cover, kind: "mms", empty: !fg.n && !di.n };
   }
 
   // ───────────────────────── THEMIS ─────────────────────────

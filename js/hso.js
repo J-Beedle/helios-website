@@ -170,6 +170,8 @@
       const C = Object.assign({ segs: { fgm: [], dis: [], des: [] }, erange: {} }, await SRC.craft(n));
       for (const ds of Object.keys(C.sv)) cadence(C.sv[ds]);
       C.erange.dis = edges([C.sv.dis]); C.erange.des = edges([C.sv.des]);
+      // where the probe was in burst and fast survey, from CDAWeb's file lists: the coverage bar's rows
+      if (C.cover) C.cover.then((c) => { C.coverage = c; window.dispatchEvent(new CustomEvent("hso-burst", { detail: n })); }, () => {});
       if (C.burst) C.burst.then((bu) => {                      // the burst data, when they arrive: segments, ranges, a redraw
         if (!bu) return;
         C.bu = Object.assign(bu, C.extraBu || {});
@@ -375,6 +377,30 @@
         flush();
       }
     }
+    ctx.stroke(); ctx.restore();
+  }
+  /** Sorted, disjoint [a, b] lists: the parts of A inside B, and the parts of A outside it. */
+  function ivIntersect(A, B) {
+    const out = [];
+    for (const [a0, a1] of A) for (const [b0, b1] of B) { const s = Math.max(a0, b0), e = Math.min(a1, b1); if (e > s) out.push([s, e]); }
+    return out;
+  }
+  function ivSubtract(A, B) {
+    const out = [];
+    for (const [a0, a1] of A) {
+      let cur = a0;
+      for (const [b0, b1] of B) { if (b1 <= cur || b0 >= a1) continue; if (b0 > cur) out.push([cur, b0]); cur = Math.max(cur, b1); }
+      if (cur < a1) out.push([cur, a1]);
+    }
+    return out;
+  }
+  /** Helios's BurstHatch: burst the window holds or knows of but does not draw at burst resolution. */
+  function burstHatch(ctx, x, y, w, h) {
+    if (!(w > 0)) return;
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    ctx.fillStyle = "rgba(0,128,0,0.22)"; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#008000"; ctx.lineWidth = 0.9; ctx.beginPath();
+    for (let X = x - h; X < x + w; X += 2.6) { ctx.moveTo(X, y + h); ctx.lineTo(X + h, y); }
     ctx.stroke(); ctx.restore();
   }
   const scratch = document.createElement("canvas");
@@ -1057,8 +1083,9 @@
     const LMN = ["L", "M", "N"];
     /** A line's legend: under LMN a turned vector names its axis (E_L, or the line's own name where the row says it). */
     const legendOf = (line, R) => (R && (line.vec || line.rot) ? (line.lmnLabel ? line.lmnLabel(LMN[line.c]) : LMN[line.c]) : line.label);
+    let barOn = false, info = { burst: null, e: null };    // the coverage bar this draw, and where its info badges go
     function layout(w, h, rows) {
-      const narrow = w < 500, left = narrow ? 62 : 100, right = narrow ? 44 : 64, top = cfg.coverage && D.bu ? 24 : 12, bottom = 40;
+      const narrow = w < 500, left = narrow ? 62 : 100, right = narrow ? 44 : 64, top = barOn ? 24 : 12, bottom = 40;
       const H = h - top - bottom;
       let y = top;
       const rr = rows.map((r, k) => { const hh = H / rows.length, R = { x: left, y, w: w - left - right, h: hh, row: r, k }; y += hh; return R; });
@@ -1102,17 +1129,35 @@
         return out;
       });
       const R = cfg.lmn ? cfg.lmn.R : null;
+      const cvr = LIVE && mission === "mms" && D0.craft && D0.craft[D0.n] ? D0.craft[D0.n].coverage || null : null, tier = D.tier || "native";
+      barOn = !!(cfg.coverage && mission === "mms" && (D0.bu || (cvr && ((cvr.burst && cvr.burst.length) || (cvr.fast && cvr.fast.length)))));
       L = layout(w, h, rows);
       L.yOf = []; L.acc = []; L.yOf2 = [];
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
       const Pl = L.plot, xOf = (t) => Pl.x + (t - a) / (b - a) * Pl.w;
-      if (cfg.coverage && D.bu) {                          // the data-rate bars across the top: fast survey throughout, burst where taken
+      info = { burst: null, e: null };
+      if (barOn) {
+        // The data-rate bars across the top (MMSStackPlot.drawRateBar): red where the probe was in fast survey, green
+        // where it took burst — solid where this figure draws burst at burst resolution, hatched where it holds burst
+        // averaged, or knows of burst it has not fetched (BurstBarState). Live, both rows are CDAWeb's file lists.
+        const X0 = Pl.x, X1 = Pl.x + Pl.w, cx = (t) => Math.min(X1, Math.max(X0, xOf(t)));
+        const fast = cvr && cvr.fast ? cvr.fast : fastSegs(D0.sv.des);
         ctx.fillStyle = "#d90d0d";
-        for (const [s0, e0] of fastSegs(D.sv.des)) if (e0 > a && s0 < b) ctx.fillRect(Math.max(Pl.x, xOf(s0)), 7, Math.min(Pl.x + Pl.w, xOf(e0)) - Math.max(Pl.x, xOf(s0)), 2);
+        for (const [s0, e0] of fast) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 7, cx(e0) - cx(s0), 2);
+        const loaded = D0.bu ? D0.segs.des || [] : [], all = cvr && cvr.burst ? cvr.burst : loaded;
+        // (a file's span and its samples' differ by a few seconds at each end: the loaded stretches reach 5 s further,
+        // and a hatched sliver under 3 s is not one)
+        const shown = tier === "native" ? loaded.map(([s0, e0]) => [s0 - 5, e0 + 5]) : [], solid = ivIntersect(all, shown), hatched = ivSubtract(all, shown).filter(([s0, e0]) => e0 - s0 >= 3);
         ctx.fillStyle = "#008000";
-        for (const [s, e] of D.segs.des) if (e > a && s < b) ctx.fillRect(Math.max(Pl.x, xOf(s)), 13, Math.min(Pl.x + Pl.w, xOf(e)) - Math.max(Pl.x, xOf(s)), 4);
-        rich(ctx, "Fast", Pl.x + Pl.w + 6, 8, { size: 9, color: "#d90d0d" });
-        rich(ctx, "Burst", Pl.x + Pl.w + 6, 16, { size: 9, color: "#008000" });
+        for (const [s0, e0] of solid) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 13, cx(e0) - cx(s0), 4);
+        for (const [s0, e0] of hatched) if (e0 > a && s0 < b) burstHatch(ctx, cx(s0), 13, cx(e0) - cx(s0), 4);
+        rich(ctx, "Fast", X1 + 6, 8, { size: 9, color: "#d90d0d" });
+        const bw = rich(ctx, "Burst", X1 + 6, 16, { size: 9, color: "#008000" });
+        const pending = ivIntersect(hatched, [[a, b]]);
+        if (LIVE && pending.length) {
+          const fetched = SRC.burstHalf ? [D.m.event.crossing - SRC.burstHalf, D.m.event.crossing + SRC.burstHalf] : null;
+          info.burst = { x: X1 + 6 + bw + 8, y: 15, tier, pending, fetched, beyond: fetched ? ivSubtract(pending, [fetched]) : [], keys: rows.map(r => r.key) };
+        }
       }
       for (const Rw of L.rows) {
         const r = Rw.row;
@@ -1215,6 +1260,7 @@
         // the row's frame, name and letter
         ctx.strokeStyle = "rgba(29,29,34,0.45)"; ctx.lineWidth = 1;
         ctx.strokeRect(Math.round(Rw.x) + 0.5, Math.round(Rw.y) + 0.5, Math.round(Rw.w) - 1, Math.round(Rw.h));
+        if (LIVE && mission === "mms" && r.key === "e" && D.sv.efiN && D.sv.efiN.t.length) info.e = { x: Rw.x + Rw.w + 12, y: Rw.y + 9, span: b - a };
         const cy = Rw.y + Rw.h / 2, rowLabel = R && r.comp != null ? r.label.replace(/\{[xyz]\}/, `{${LMN[r.comp]}}`) : r.label;
         if (L.narrow) {
           rich(ctx, r.short || rowLabel, 6, cy - 6, { size: 10.5, weight: 600 });
@@ -1415,7 +1461,7 @@
     over.addEventListener("dblclick", () => app.setFocus(...app.home));
     /** The subplot under a y on the figure (for the editor), with its letter. */
     const rowAt = (y) => { const R = L && L.rows.find(R => y >= R.y && y <= R.y + R.h); return R ? Object.assign({ letter: "abcdefghijklmnopqrst"[R.k] }, R.row) : null; };
-    return { draw, overlay, cfg, rowAt };
+    return { draw, overlay, cfg, rowAt, get info() { return info; } };
   }
 
   // ───────────────────────── the VDF cuts, as Helios draws them ─────────────────────────
@@ -1973,6 +2019,7 @@
     return /^THEMIS/.test(name) ? "tha" : /^Cluster/.test(name) ? "c4" : null;
   };
   const WINDOW_CHOICES = [5, 10, 30, 90, 180];             // ±minutes, as HSOScreen.windowChoices
+  const NO_ANALYSIS = new Set(["l1", "omni", "idx"]);
   const IDX_CHOICES = [720, 1440, 2880, 4320];             // the indices window: ±12 h … ±3 d (GeoIndicesPanelView.halfWidths)
   const rangeLabel = (m) => (m >= 1440 && m % 1440 === 0 ? `±${m / 1440}d` : m >= 60 && m % 60 === 0 ? `±${m / 60}h` : `±${m}m`);
   // VDFPresets: a preset sets every electron option it covers. "App default" is Helios's own; the crescent preset is this
@@ -2198,7 +2245,91 @@
       queued = true;
       requestAnimationFrame(() => { queued = false; W.drawNow(); });
     };
-    W.drawNow = () => { if (W.n && !el.hidden) { ensureLazy(); sync(); W.panel.draw(); } };
+    W.drawNow = () => { if (W.n && !el.hidden) { ensureLazy(); sync(); W.panel.draw(); placeBadges(); } };
+    // ── the info badges (Helios's BurstIndicatorLayer): beside the bar's "Burst" label where burst is hatched, and beside
+    //    the E subplot. A card opens on hover, focus or a click and says what the figure draws there. ──
+    const fwBody = $(".fw-body", el), badges = {};
+    const ELECTRON_ROWS = /^(n|te|tanis|p|ve|jfpi|jpar|jperp|jdotE|epE|exb[XYZ]|fzE[xyz])$/;
+    const hms = (t) => clock(t);
+    function infoContent(kind) {
+      const I = W.panel.info[kind];
+      if (!I) return null;
+      if (kind === "e") return {
+        title: I.span <= 240 ? "E is the fast-survey field as sampled (32 S/s)" : I.span <= 7200 ? "E is 0.15 s averages of the fast-survey field" : "E is 4.5 s averages of the fast-survey field",
+        lines: ["As sampled within ±2 min of range, 0.15 s averages to ±1 h, 4.5 s averages beyond.", "The 8 kHz burst field is not fetched in the browser; it is in the Helios app."],
+      };
+      const half = A.home ? (A.home[1] - A.home[0]) / 120 : (A.b - A.a) / 120, range = WINDOW_CHOICES.includes(Math.round(half)) ? rangeLabel(Math.round(half)) : `±${span(half * 60)}`;
+      const f = I.fetched, lines = [];
+      if (I.tier === "survey") {
+        lines.push("Every subplot is fast survey: B as 4.5 s averages, the FPI moments and spectrograms at 4.5 s.", "Burst has B at 128 Hz, ion moments at 150 ms and electron moments at 30 ms.");
+      } else if (I.tier === "reduced") {
+        if (I.keys.includes("b")) lines.push("B: 0.15 s averages of the 128 Hz burst field.");
+        if (I.keys.some(k => ELECTRON_ROWS.test(k))) lines.push("Electron moments, and what comes from them (J, J·E′, E′): 0.15 s averages of the 30 ms burst.");
+        lines.push("At full burst: the ion moments (150 ms) and the energy spectrograms.");
+      }
+      if (f && I.beyond.length && I.tier !== "survey") lines.push(`This page fetches burst for ${hms(f[0])}–${hms(f[1])} UTC, ten minutes either side of the moment. Hatched stretches outside it are drawn from fast survey.`);
+      const out = {
+        hatch: true,
+        title: I.tier === "survey" ? `Burst isn't loaded at ${range}` : I.tier === "reduced" ? `Burst is averaged at ${range}` : f ? `Burst outside ${hms(f[0]).slice(0, 5)}–${hms(f[1]).slice(0, 5)} isn't loaded` : "Some burst isn't loaded",
+        lines, hint: I.tier !== "native" ? "For burst resolution, choose ±10 min or less." : null,
+      };
+      if (I.beyond.length) {                               // burst this page has not fetched: the moment that would bring it
+        const c = (A.a + A.b) / 2, seg = I.beyond.slice().sort((p, q) => Math.abs(clamp(c, p[0], p[1]) - c) - Math.abs(clamp(c, q[0], q[1]) - c))[0];
+        const bh = SRC.burstHalf || 600;                       // the middle of a short stretch; in a long one, the reach nearest the view
+        const tc = Math.round(seg[1] - seg[0] <= 2 * bh ? (seg[0] + seg[1]) / 2 : clamp(c, seg[0] + bh, seg[1] - bh));
+        out.action = { label: `Load ${hms(tc)} UTC as the moment`, note: "The page reloads on that moment, with burst ten minutes either side of it.",
+                       go: () => { const u = new URL(location.href); u.searchParams.set("t", new Date(T0 + tc * 1000).toISOString().replace(/\.\d+Z$/, "Z")); location.assign(u); } };
+      }
+      return out;
+    }
+    function fillCard(kind, card) {
+      const c = infoContent(kind);
+      card.textContent = "";
+      if (!c) return false;
+      const add = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; card.appendChild(x); return x; };
+      const h = add("p", "fi-t");
+      if (c.hatch) h.appendChild(Object.assign(document.createElement("i"), { className: "fi-hatch" }));
+      h.appendChild(document.createTextNode(c.title));
+      for (const ln of c.lines) add("p", "fi-l", ln);
+      if (c.hint) add("p", "fi-h", c.hint);
+      if (c.action) { add("button", "fi-go", c.action.label).addEventListener("click", c.action.go); add("p", "fi-h", c.action.note); }
+      return true;
+    }
+    function badgeFor(kind) {
+      if (badges[kind]) return badges[kind];
+      const b = Object.assign(document.createElement("button"), { className: "fw-info", type: "button", textContent: "i" });
+      b.setAttribute("aria-label", kind === "burst" ? "About the burst data in this figure" : "About the electric field in this figure");
+      const card = Object.assign(document.createElement("div"), { className: "fw-info-card", hidden: true });
+      card.setAttribute("role", "note");
+      fwBody.append(b, card);
+      let inside = 0, timer = null;
+      const open = () => {
+        clearTimeout(timer);
+        if (!fillCard(kind, card)) return;
+        card.hidden = false;
+        const bw = fwBody.clientWidth, bh = fwBody.clientHeight, x = b.offsetLeft + 6, y = b.offsetTop + 6, cw = card.offsetWidth, ch = card.offsetHeight;
+        card.style.left = `${Math.min(Math.max(4, x + 8 - cw), Math.max(4, bw - cw - 4))}px`;
+        card.style.top = `${ch > bh - y - 8 && y - 8 > bh - y - 8 ? Math.max(4, y - 8 - ch) : y + 8}px`;   // under the badge, or over it low in the figure
+      };
+      const close = (now) => { clearTimeout(timer); timer = setTimeout(() => { if (!inside) card.hidden = true; }, now ? 0 : 300); };
+      for (const x of [b, card]) {
+        x.addEventListener("pointerenter", () => { inside++; open(); });
+        x.addEventListener("pointerleave", () => { inside = Math.max(0, inside - 1); close(); });
+        x.addEventListener("pointerdown", (e) => e.stopPropagation());
+      }
+      b.addEventListener("click", (e) => { e.stopPropagation(); if (card.hidden) open(); else { inside = 0; close(true); } });
+      b.addEventListener("focus", open);
+      b.addEventListener("blur", () => close());
+      return (badges[kind] = { b, card });
+    }
+    function placeBadges() {
+      const I = W.panel.info;
+      for (const kind of ["burst", "e"]) {
+        if (!I[kind]) { if (badges[kind]) { badges[kind].b.hidden = true; badges[kind].card.hidden = true; } continue; }
+        const { b } = badgeFor(kind);
+        b.hidden = false; b.style.left = `${I[kind].x - 6}px`; b.style.top = `${I[kind].y - 6}px`;
+      }
+    }
     /** Live MMS: the HPCA, EDP and DSP groups are fetched when a row first needs them, merged into the probe's data. */
     function ensureLazy() {
       if (!LIVE || CRAFT[W.n].mission !== "mms") return;
@@ -2283,6 +2414,7 @@
         C.mission = Cr.mission; C.stack = MISSIONS[Cr.mission].stack.slice();
         if (LIVE) { const all = C.stack, kept = all.filter(q => has(W.view, Cr.mission, q)); if (kept.length) C.stack = kept; W.dropped = new Set(all.filter(q => !C.stack.includes(q))); }
         if (Cr.mission !== "mms") W.vdf.on = false;
+        if (NO_ANALYSIS.has(Cr.mission)) { W.lmn.panel = false; W.paint = null; W.bands = []; W.tab = "figure"; }
       }
       // a frame belongs to the craft it was solved on (Helios keys it by craft): a new craft starts in GSE
       Object.assign(W.lmn, { frame: null, draft: false, error: null });
@@ -2352,7 +2484,10 @@
     }
     function sideHTML() {
       const mission = C.mission, mms = mission === "mms", M = MISSIONS[mission];
-      let h = tk.seg("data-tab", [["figure", "Figure"], ["analysis", "Analysis"]], W.tab);
+      // the solar-wind monitors, OMNI and the indices are context: figure tools only, no LMN, cuts or boundary painting
+      const figureOnly = NO_ANALYSIS.has(mission);
+      if (figureOnly) W.tab = "figure";
+      let h = figureOnly ? "" : tk.seg("data-tab", [["figure", "Figure"], ["analysis", "Analysis"]], W.tab);
       if (W.tab === "figure") {
         h += `<section class="tk-sec">${tk.h("Display")}`
           + (mms ? tk.ck('data-fig="coverage"', "Fast/Burst coverage bar", C.coverage, "The fast and burst data coverage, drawn above the stack") : "")
@@ -2781,6 +2916,52 @@
     return W;
   }
 
+  /** The app's View options (Helios's HSOViewOptions): a button at the figure's top right that names what is drawn and
+   *  opens a panel — the field the lines are traced through (off, IGRF-14 alone, or with T89), which lines, and the
+   *  boundaries. It stays open while the view is turned; the choices are kept in this browser. */
+  function viewOptions(host, scene) {
+    const KEY = "helios-live-view";
+    const st = { model: "t89", lines: true, ref: false, mp: true, bs: true };
+    try { const saved = JSON.parse(localStorage.getItem(KEY) || "{}"); for (const k of Object.keys(st)) if (typeof saved[k] === typeof st[k]) st[k] = saved[k]; } catch (e) { /* the defaults */ }
+    if (!["off", "igrf", "t89"].includes(st.model)) st.model = "t89";
+    const box = document.createElement("div");
+    box.className = "hso-view";
+    box.innerHTML = `<button class="hv-btn" aria-expanded="false" title="What the view draws: field lines and boundaries"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14 5.4 8 8.6 2 5.4zM2.6 8.3 8 11.2l5.4-2.9M2.6 11 8 13.9l5.4-2.9"/></svg>View<span class="hv-badge"></span></button>
+      <div class="hv-panel" hidden>
+        <p class="hv-h">Field lines</p>
+        <div class="hv-seg" role="group" aria-label="The field the lines are traced through"><button data-model="off">Off</button><button data-model="igrf">IGRF</button><button data-model="t89">T89</button></div>
+        <p class="hv-cap"></p>
+        <label class="hv-row"><input type="checkbox" data-view="lines"><span>Through each spacecraft<small>Craft inside the magnetopause, on the Magnetosphere view; their footpoints on the LEO globe</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="ref"><span>Noon–midnight reference lines<small>62–82° magnetic latitude</small></span></label>
+        <p class="hv-key"><i class="k ln"></i>closed<i class="k ln dash"></i>open<i class="k ln dot"></i>past the drawn magnetopause</p>
+        <p class="hv-h">Boundaries</p>
+        <label class="hv-row"><input type="checkbox" data-view="mp"><span>Magnetopause<small>Lin et al. 2010, Petrinec &amp; Russell 1996 tail</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="bs"><span>Bow shock<small>Jelínek et al. 2012</small></span></label>
+        <p class="hv-note">T01 and the radiation belts are in the Helios app.</p>
+      </div>`;
+    host.appendChild(box);
+    const btn = box.querySelector(".hv-btn"), panel = box.querySelector(".hv-panel");
+    const each = (sel, fn) => box.querySelectorAll(sel).forEach(fn);
+    const sync = () => {
+      scene.setFieldModel(st.model);
+      for (const k of ["lines", "ref", "mp", "bs"]) scene.setView(k, st[k]);
+      each("[data-model]", b => b.setAttribute("aria-pressed", String(b.dataset.model === st.model)));
+      each("[data-view]", c => { c.checked = st[c.dataset.view]; if (c.dataset.view === "lines" || c.dataset.view === "ref") c.disabled = st.model === "off"; });
+      box.querySelector(".hv-badge").textContent = st.model === "off" ? "no field lines" : `${st.model === "t89" ? "T89" : "IGRF"} lines`;
+      box.querySelector(".hv-cap").textContent = st.model === "off" ? "Nothing is traced."
+        : st.model === "igrf" ? "IGRF-14 alone: the internal field, with no open flux, so every line closes."
+        : `IGRF-14 with T89 (Tsyganenko 1989) at the moment's Kp, ${scene.kp.toFixed(1)}.`;
+      box.querySelector(".hv-key").hidden = st.model === "off";
+      try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* this visit only */ }
+    };
+    btn.addEventListener("click", () => { panel.hidden = !panel.hidden; btn.setAttribute("aria-expanded", String(!panel.hidden)); });
+    box.addEventListener("click", (e) => { const b = e.target.closest("[data-model]"); if (b) { st.model = b.dataset.model; sync(); } });
+    box.addEventListener("change", (e) => { const c = e.target.closest("[data-view]"); if (c) { st[c.dataset.view] = c.checked; sync(); } });
+    box.addEventListener("pointerdown", (e) => e.stopPropagation());
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !panel.hidden) { panel.hidden = true; btn.setAttribute("aria-expanded", "false"); } });
+    sync();
+  }
+
   // ───────────────────────── the full-screen HSO screen ─────────────────────────
   /**
    * Helios's HSO screen at full size: the view and its time machine, with data windows that open over it as the app's
@@ -2807,6 +2988,7 @@
         return true;
       },
     });
+    if (APP) viewOptions(body, scene);
     const tb = $(".hso-time", root), slider = $(".ht-slider", tb), stampEl = $(".ht-stamp", tb), playBtn = $(".ht-play", tb), speedBtn = $(".ht-speed", tb);
     slider.min = ev.span[0]; slider.max = ev.span[1];
     const setTime = (t, scrub) => {
