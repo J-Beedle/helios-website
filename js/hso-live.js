@@ -672,7 +672,21 @@
         if (keep.length) sv[k] = set({ t: [Float32Array.from(keep, i => ct[i]), 1], v: [Float32Array.from(keep, i => v[i]), 1] });
       });
     }
-    if (pea.n) { const m = moments(pea, [0, 1, 4, 5], 10000); if (m) sv.des = m; }
+    // PEACE moments: PP first, then CSA's ground-computed CP_PEA_MOMENTS for whatever lies past PP's last record (PP
+    // ends 2023-12 on every spacecraft), screened together so a dropout is judged against its real neighbors
+    let peaFromCSA = false, peaR = pea;
+    if (b > PP_PEACE_END) {
+      const csa = await track(`Cluster-${N} PEACE moments (ESA CSA)`, peaceMomentsCSA(C, a, b)).catch(() => []);
+      let last = -Infinity;
+      for (let i = 0; i < pea.n; i++) if (isFinite(unfill(pea.cols[0][i])) || isFinite(unfill(pea.cols[1][i]))) last = pea.t[i];
+      const add = csa.filter(r => r[0] > last);
+      if (add.length) {
+        peaFromCSA = true;
+        const t = [...Array.from(pea.t || []), ...add.map(r => r[0])], cols = [0, 1, 2, 3, 4, 5].map(k => Float64Array.from([...Array.from(pea.cols[k] || new Float64Array(pea.n).fill(NaN)), ...add.map(r => r[1 + k])]));
+        peaR = { t: Float64Array.from(t), cols, n: t.length };
+      }
+    }
+    if (peaR.n) { const m = moments(peaR, [0, 1, 4, 5], 10000); if (m) sv.des = m; }
     if (sp.n && bins) {                                      // served high → low; ascending here
       const nc = bins.length, flux = new Float32Array(sp.n * nc);
       for (let i = 0; i < sp.n; i++) for (let c = 0; c < nc; c++) flux[i * nc + c] = sp.cols[nc - 1 - c] ? unfill(sp.cols[nc - 1 - c][i]) : NaN;
@@ -687,7 +701,8 @@
              banner: N === 2 ? "Cluster-2 carries no working CIS instrument: there are no ion density, velocity, temperature or ion-spectrogram panels for this spacecraft, at any epoch. The field and PEACE electron panels are unaffected." : null,
              notes: `Cluster via CDAWeb HAPI, live, as Helios reads it: FGM spin; CIS prime-parameter moments from ${sensor || "no CIS sensor"}` +
                     `${N === 2 ? " (Cluster-2 has no working CIS)" : ""} and CIS composition; PEACE prime-parameter moments; the ${N === 4 ? "CODIF H⁺" : "HIA"} ion spectrogram; ` +
-                    "PEACE's pitch-angle DEFlux from ESA's Cluster Science Archive. Records outside physical bounds, isolated density dropouts and CIS glitch cells are dropped, as in Helios." };
+                    "PEACE's pitch-angle DEFlux from ESA's Cluster Science Archive. Records outside physical bounds, isolated density dropouts and CIS glitch cells are dropped, as in Helios." +
+                    (peaFromCSA ? " PEACE moments from CSA (CP_PEA_MOMENTS); CDAWeb's PP PEACE ends 2023-12." : "") };
   }
 
   // ───────────────────────── OMNI and the L1 monitors (Helios's HSODataClient choices) ─────────────────────────
@@ -763,11 +778,20 @@
              banner: mach.n ? `M_A from OMNI · ${who} · shifted to the bow-shock nose` : null,
              notes: "Geomagnetic indices, as Helios's Earth window: OMNI 1-minute AE, AL, AU and SYM-H and the Alfvén and magnetosonic Mach numbers (HRO2, then HRO), and OMNI2's hourly Kp (one value per 3-hour block) and Dst, via CDAWeb HAPI. OMNI's indices lag real time by weeks to months." };
   }
+  const NCEI = "https://www.ncei.noaa.gov/cloud-access/space-weather-portal/api/v1/hapi/data";
+  /** NCEI's HAPI (Helios's "spot:" route), parsed as CDAWeb's. */
+  function ncei(id, params, a, b) {
+    return slot(async () => {
+      const r = await get(`${NCEI}?id=${id}&parameters=${params.join(",")}&time.min=${iso(a)}&time.max=${iso(b)}`, undefined, 45000);
+      if (!r.ok) throw new Error(`NCEI ${id}: HTTP ${r.status}`);
+      return r.text();
+    }, true).then(text => parseCSV(id, text, a, b));
+  }
   /** One L1 monitor, as Helios's fetchAce / fetchWind / fetchDscovr: science products first, browse products where
    *  they stop. Rows: B (GSE), Nₚ, V (GSE), |V|, Tₚ. */
   async function l1Window(key) {
     const [a, b] = window_, name = { ace: "ACE", wind: "Wind", dscovr: "DSCOVR" }[key];
-    let B = null, rows = [];                                // rows: [t, n, vx, vy, vz, speed, T eV]
+    let B = null, rows = [], spot = false;                  // rows: [t, n, vx, vy, vz, speed, T eV]
     const vec = (r, j = 0) => r.n ? { t: r.t, x: fillNaN(r.cols[j], 1e30), y: fillNaN(r.cols[j + 1], 1e30), z: fillNaN(r.cols[j + 2], 1e30) } : null;
     if (key === "ace") {
       const nil = { t: [], cols: [], n: 0 }, [m, sw] = await Promise.all([hapi("AC_H0_MFI", ["BGSEc"], a, b, true).catch(() => nil), hapi("AC_H0_SWE", ["Np", "Vp", "Tpr", "V_GSE"], a, b, true).catch(() => nil)]);
@@ -791,6 +815,23 @@
         const tK = fc.cols[5][i];
         rows.push([fc.t[i], fc.cols[4][i], fc.cols[0][i], fc.cols[1][i], fc.cols[2][i], Math.hypot(fc.cols[0][i], fc.cols[1][i], fc.cols[2][i]), tK > 0 ? tK * KELVIN_EV : thermalEV(fc.cols[3][i])]);
       }
+      // NCEI's Space Weather Portal (Helios's spot: m1m / f1m_dscovr) where CDAWeb stops: its 1-min MAG runs to within days
+      // of now, its Faraday cup past 2019-06; columns in the dataset's order; quality 2 (error) dropped
+      const ok = (x) => isFinite(x) && Math.abs(x) < 1e20;
+      if (!B || !B.t.length) {
+        const r = await ncei("m1m_dscovr", ["bx_gse", "by_gse", "bz_gse", "overall_quality"], a, b).catch(() => nil), keep = [];
+        for (let i = 0; i < r.n; i++) if (r.cols[3][i] < 2 && [0, 1, 2].every(c => ok(r.cols[c][i]))) keep.push(i);
+        if (keep.length) { B = { t: Float64Array.from(keep, i => r.t[i]), x: f32(keep.map(i => r.cols[0][i])), y: f32(keep.map(i => r.cols[1][i])), z: f32(keep.map(i => r.cols[2][i])) }; spot = true; }
+      }
+      if (!rows.length) {
+        const r = await ncei("f1m_dscovr", ["overall_quality", "proton_density", "proton_speed", "proton_temperature", "proton_vx_gse", "proton_vy_gse", "proton_vz_gse"], a, b).catch(() => nil);
+        for (let i = 0; i < r.n; i++) {
+          if (!(r.cols[0][i] < 2)) continue;
+          const n = r.cols[1][i], v = r.cols[2][i], tK = r.cols[3][i], vv = [4, 5, 6].map(c => r.cols[c][i]);
+          rows.push([r.t[i], ok(n) && n > 0 ? n : NaN, ...(vv.every(ok) ? vv : [NaN, NaN, NaN]), ok(v) && v > 0 ? v : NaN, ok(tK) && tK > 0 ? tK * KELVIN_EV : NaN]);
+        }
+        if (rows.length) spot = true;
+      }
     }
     const sv = {};
     if (B) {
@@ -805,7 +846,7 @@
     }
     track(`${name} (L1)`, Promise.resolve(sv.fgm || sv.dis ? {} : { empty: true }));
     return { sv, bu: null, kind: "l1", label: name, empty: !sv.fgm && !sv.dis,
-             notes: `${name} at L1 via CDAWeb HAPI, live, at the spacecraft's own time (not shifted to Earth). ${key === "dscovr" ? "DSCOVR's Faraday-cup plasma is on CDAWeb for 2016-06 to 2019-06 only." : key === "ace" ? "SWE H0 plasma ends 2024-07-09; the K0 browse products cover 2017-07 onward." : "SWE H1 non-linear proton fits, K0 where they stop."}` };
+             notes: `${name} at L1 via CDAWeb HAPI, live, at the spacecraft's own time (not shifted to Earth). ${key === "dscovr" ? (spot ? "Partly from NOAA/NCEI's Space Weather Portal (1-min MAG / Faraday cup), which runs to within days of now — CDAWeb's 1-s MAG lags about a month and its Faraday-cup plasma stops 2019-06-27. Quality-flagged samples are dropped." : "CDAWeb's 1-s MAG and, for 2016-06 to 2019-06, its Faraday-cup plasma; NCEI's 1-min products where those stop.") : key === "ace" ? "SWE H0 plasma ends 2024-07-09; the K0 browse products cover 2017-07 onward." : "SWE H1 non-linear proton fits, K0 where they stop."}` };
   }
 
   // ───────────────────────── GOES (Helios's GOES adapter: LASP's Space Weather Portal LaTiS) ─────────────────────────
@@ -1054,6 +1095,24 @@
       if (tok.length === off) records.push(tok);
     }
     return { consts, layout, records };
+  }
+  const PP_PEACE_END = Date.UTC(2024, 0, 1);
+  /** CSA's C<n>_CP_PEA_MOMENTS (Helios's clusterPeaceMomentsCSA): rows [t, n, vx, vy, vz, T∥, T⊥] in the PP file's
+   *  units (cm⁻³, km/s GSE, MK); fill (|x| ≥ 1e30 or −1) as NaN. */
+  async function peaceMomentsCSA(C, a, b) {
+    const out = [];
+    for (const f of await csaFiles(`${C}_CP_PEA_MOMENTS`, a, b)) {
+      const { layout, records } = parseCEF(f), at = (name) => layout[name] ? layout[name][0] : -1;
+      const iN = at("Data_Density"), iV = at("Data_Velocity_GSE"), iA = at("Data_Temperature_ComponentParallelToMagField"), iE = at("Data_Temperature_ComponentPerpendicularToMagField");
+      const val = (tok, i) => { if (i < 0) return NaN; const x = +tok[i]; return isFinite(x) && Math.abs(x) < 1e30 && x !== -1 ? x : NaN; };
+      for (const tok of records) {
+        const ms = hapiTime(tok[0]);
+        if (ms < a || ms > b) continue;
+        const v = iV < 0 ? [NaN, NaN, NaN] : [0, 1, 2].map(k => { const x = +tok[iV + k]; return isFinite(x) && Math.abs(x) < 1e30 ? x : NaN; });
+        out.push([sec(ms), val(tok, iN), v[0], v[1], v[2], val(tok, iA), val(tok, iE)]);
+      }
+    }
+    return out.sort((p, q) => p[0] - q[0]);
   }
   /** PEACE's pitch-angle DEFlux, averaged over pitch angle (sin-weighted) into an omni spectrogram on its own clock, as
    *  the demo's prepare_hso_missions.py builds Cluster 4's; energy tables per record, ascending. */
