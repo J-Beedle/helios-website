@@ -1,0 +1,82 @@
+/* app.html — Helios Live as an application: one screen, the size of the window, that never scrolls. The bar across the
+   top picks the moment; the HSO screen (css/site.css's .stage) fills the rest. */
+html:has(body.helios-app) { height: 100%; overflow: hidden; overscroll-behavior: none; scroll-behavior: auto; }
+body.helios-app { position: fixed; inset: 0; margin: 0; overflow: hidden; overscroll-behavior: none; background: #000; color: #e3e3eb;
+  font: 400 13px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; -webkit-user-select: none; user-select: none; }
+body.helios-app input, body.helios-app textarea, body.helios-app .la-about { -webkit-user-select: text; user-select: text; }
+body.helios-app canvas { touch-action: none; }
+
+/* ── the bar ── */
+.la-bar { position: fixed; inset: 0 0 auto 0; z-index: 30; display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px 0 14px;
+  background: #0b0b0e; border-bottom: 1px solid rgba(240, 240, 250, 0.1); white-space: nowrap; }
+.la-bar .wordmark { flex: none; font-size: 15px; }
+.la-tag { flex: none; padding: 2px 7px; border: 1px solid rgba(255, 196, 77, 0.55); border-radius: 5px; color: #ffc44d; font: 600 9.5px/1.3 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+.la-pick { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: 6px; }
+.la-pick select, .la-pick input { height: 28px; padding: 0 8px; border: 1px solid rgba(240, 240, 250, 0.16); border-radius: 7px; background: rgba(240, 240, 250, 0.06);
+  color: #e8e9ed; font: 400 12.5px/1 ui-monospace, "SF Mono", Menlo, monospace; color-scheme: dark; }
+.la-pick select { max-width: 250px; min-width: 0; font-family: inherit; text-overflow: ellipsis; }
+.la-pick select:focus-visible, .la-pick input:focus-visible, .la-bar button:focus-visible, .rail button:focus-visible, .rail a:focus-visible { outline: 2px solid #ffc44d; outline-offset: 1px; }
+.la-utc { color: #919199; font: 500 10.5px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.06em; }
+.la-go { height: 28px; padding: 0 12px; border: 0; border-radius: 7px; background: #ffc44d; color: #17130a; font: 600 12.5px/1 inherit; cursor: pointer; }
+.la-go:hover { background: #ffd273; }
+.la-ref { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; color: #aeaeb6; font-size: 12px; }
+.la-sp { flex: 1; }
+.la-btn { flex: none; height: 28px; padding: 0 11px; border: 1px solid rgba(240, 240, 250, 0.16); border-radius: 7px; background: rgba(240, 240, 250, 0.06); color: #e3e3eb; font: 500 12.5px/1 inherit; cursor: pointer; }
+.la-btn:hover { background: rgba(240, 240, 250, 0.14); }
+
+/* what is loading: a pill that opens the list */
+.la-load { position: relative; flex: none; }
+.la-status { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px; border: 1px solid rgba(240, 240, 250, 0.12); border-radius: 14px; background: transparent; color: #aeaeb6;
+  font: 500 11.5px/1 ui-monospace, "SF Mono", Menlo, monospace; cursor: pointer; }
+.la-status:hover { background: rgba(240, 240, 250, 0.08); }
+.la-status i { width: 8px; height: 8px; border-radius: 50%; background: #5fd08a; }
+.la-status.busy i { width: 11px; height: 11px; border: 2px solid rgba(255, 196, 77, 0.25); border-top-color: #ffc44d; background: none; animation: la-spin 0.8s linear infinite; }
+.la-status.bad i { background: #ff6b5e; }
+@keyframes la-spin { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .la-status.busy i { animation: none; border-color: #ffc44d; } }
+.la-tasks { position: absolute; right: 0; top: 36px; z-index: 40; width: min(400px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto; padding: 12px 14px; border: 1px solid rgba(240, 240, 250, 0.14); border-radius: 10px;
+  background: #121216; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6); white-space: normal; }
+.la-tasks .ls-h { margin: 0 0 8px; color: #919199; font: 500 10.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+.la-tasks ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.la-tasks li { display: flex; justify-content: space-between; gap: 12px; color: #cdcdd5; font-size: 12.5px; }
+.la-tasks li b { flex: none; color: #919199; font: 500 11.5px ui-monospace, "SF Mono", Menlo, monospace; }
+.la-tasks li.ok b { color: #5fd08a; }
+.la-tasks li.loading b { color: #ffc44d; }
+.la-tasks li.error b { color: #ff6b5e; }
+
+/* ── the screen ── */
+body.helios-app #stage { position: fixed; inset: 44px 0 0 0; height: auto; min-height: 0; max-height: none; margin: 0; max-width: none; border: 0; }
+body.helios-app #stage:fullscreen { inset: 0; }
+body.helios-app .hso-save { display: none; }
+body.helios-app .rail { padding-top: 10px; }
+body.helios-app .rail-ev { cursor: pointer; font: inherit; color: inherit; }
+body.helios-app .rail-ev:hover { background: rgba(255, 196, 77, 0.16); }
+body.helios-app .rail .ri { border: 0; cursor: pointer; text-decoration: none; }
+body.helios-app .rail .ri:hover { background: rgba(240, 240, 250, 0.14); color: #f2f2fa; }
+
+/* ── about ── */
+.la-about { width: min(720px, calc(100vw - 32px)); max-height: min(86vh, 820px); padding: 26px 30px 22px; border: 1px solid rgba(240, 240, 250, 0.16); border-radius: 14px; background: #121216; color: #d6d6de;
+  font: 400 14px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; overflow: auto; }
+.la-about::backdrop { background: rgba(0, 0, 0, 0.6); }
+.la-about h2 { margin: 0 0 10px; color: #f2f2fa; font: 600 21px/1.2 inherit; }
+.la-about h3 { margin: 20px 0 6px; color: #ffc44d; font: 600 10.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+.la-about p { margin: 0 0 9px; }
+.la-about b { color: #f2f2fa; font-weight: 600; }
+.la-about .la-lede { color: #e8e9ed; font-size: 15px; }
+.la-about .la-fine { margin-top: 16px; color: #919199; font-size: 12.5px; }
+.la-about form { position: sticky; top: 0; height: 0; text-align: right; }
+.la-x { width: 30px; height: 30px; margin: -8px -12px 0 0; border: 0; border-radius: 8px; background: rgba(240, 240, 250, 0.08); color: #e3e3eb; font: 400 20px/1 inherit; cursor: pointer; }
+.la-x:hover { background: rgba(240, 240, 250, 0.18); }
+
+/* ── held back: a small screen, or a browser missing a piece ── */
+.la-gate { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: #050507; -webkit-user-select: text; user-select: text; }
+.la-gate[hidden] { display: none; }
+.la-gate-in { max-width: 460px; text-align: center; }
+.la-gate-in .wordmark { display: inline-flex; margin-bottom: 26px; font-size: 20px; }
+.la-gate-in h1 { margin: 0 0 12px; color: #f2f2fa; font: 600 24px/1.2 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; text-transform: none; }
+.la-gate-in p { margin: 0 0 12px; color: #aeaeb6; font-size: 15px; line-height: 1.55; }
+.la-gate-a { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; margin-top: 22px !important; }
+
+/* narrower windows: the bar keeps the picker and drops the rest */
+@media (max-width: 1080px) { .la-ref { display: none; } .la-pick select { max-width: 170px; } }
+@media (max-width: 860px) { .la-tag, .la-utc { display: none; } .la-btn#la-about-btn { display: none; } .la-pick select { max-width: 120px; } }

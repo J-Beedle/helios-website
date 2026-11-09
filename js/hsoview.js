@@ -1753,7 +1753,7 @@
       };
       requestAnimationFrame(step);
     }
-    for (const b of presetBtns) b.addEventListener("click", () => goTo(b.dataset.preset));
+    for (const b of presetBtns) b.addEventListener("click", () => { goTo(b.dataset.preset); if (o.onPreset) o.onPreset(b.dataset.preset); });
     const rungBtns = Array.from(root.querySelectorAll("[data-rung]"));
     function setRung(key) {
       if (key === rung) return;
@@ -1775,7 +1775,7 @@
     if (o.leoZoom) {
       const setZoom = (z) => { leoCam.zoom = clamp(z, 1, 8); leoCache = null; request(); };
       cv.addEventListener("wheel", (e) => {
-        if (rung !== "leo" || !(e.ctrlKey || e.metaKey)) return;
+        if (rung !== "leo" || !(o.plainWheel || e.ctrlKey || e.metaKey)) return;   // (the app's page does not scroll: its wheel zooms)
         e.preventDefault();
         setZoom(leoCam.zoom * Math.exp(-e.deltaY * 0.01));
       }, { passive: false });

@@ -9,7 +9,9 @@
   "use strict";
 
   const q = new URLSearchParams(location.search);
-  const raw = (q.get("t") || "").trim();
+  if (window.HSO_GATED) return;                            // app.html held back (a small screen, or a browser missing a piece)
+  // app.html names a default moment on <body>, so the app never opens empty
+  const raw = (q.get("t") || (document.body && document.body.dataset.defaultT) || "").trim();
   const AT = raw ? Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(raw) ? raw : raw + "Z") : NaN;
   if (!isFinite(AT)) return;                               // no moment picked: the page shows its picker only
 

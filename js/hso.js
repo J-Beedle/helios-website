@@ -16,6 +16,11 @@
   const SRC = window.HSO_SOURCE || null, LIVE = !!SRC;
   // live: a window opened in a tab of its own (?solo=mms1 …, the green button), or the HSO screen alone (?solo=hso)
   const SOLO = LIVE ? new URLSearchParams(location.search).get("solo") : null;
+  // app.html: the HSO screen as the whole page (no workspace below it, no page to scroll)
+  const APP = LIVE && document.body.classList.contains("helios-app");
+  /** The app keeps what is on screen in its address (view and scale in the hash, open windows in ?open=), so a link
+   *  gives the same screen back. */
+  const hashSet = (k, v) => { const h = new URLSearchParams(location.hash.slice(1)); h.set(k, v); history.replaceState(null, "", `${location.pathname}${location.search}#${h}`); };
   /** This page at the same moment, showing one window: its craft, subplots, time range and pin. */
   function soloURL(W) {
     const u = new URL(location.href), C = W.cfg, A = W.app;
@@ -2851,10 +2856,18 @@
       const a = clamp(c - h, S0, S1 - 2 * h);
       return [a, a + 2 * h];
     }
+    /** The app's address names the windows open on the moment (not the pinned ones). */
+    function syncURL() {
+      if (!APP) return;
+      const u = new URL(location.href), keys = [...new Set(wins.filter(w => w.pinned == null).map(w => w.want))];
+      if (keys.length) u.searchParams.set("open", keys.join(",")); else u.searchParams.delete("open");
+      history.replaceState(null, "", u);
+    }
     function close(W) {
       W.el.remove(); W.pill?.remove();
       wins.splice(wins.indexOf(W), 1);
       if (LIVE) splitHandle();
+      syncURL();
     }
     const nameOf = (k) => CRAFT[k].name;
     function minimize(W) {
@@ -2940,6 +2953,7 @@
       });
       Object.assign(W, { want: n, pinned, r: {}, max: null, pill: null });
       wins.push(W);
+      syncURL();
       // where it opens: the app's cascade, inside the screen
       const [bw, bh] = bounds(), k = (wins.length - 1) % 6;
       const w = Math.min(540, bw - 16), h = Math.min(752, bh - 16);
@@ -3041,6 +3055,14 @@
       const on = document.fullscreenElement === root;
       fs.classList.toggle("on", on); fs.setAttribute("aria-label", on ? "Leave full screen" : "Full screen");
     });
+    if (APP) {                                             // the screen its address describes: #rung=…, ?open=1,thd
+      const rg = /rung=(leo|mag|moon|l1|sun)/.exec(location.hash);
+      if (rg && rg[1] !== "mag") scene.setRung(rg[1]);
+      for (const k of (new URLSearchParams(location.search).get("open") || "").split(",").filter(Boolean).slice(0, 6)) {
+        const key = /^\d$/.test(k) ? +k : k;
+        if (Object.hasOwn(CRAFT, key)) open(key);
+      }
+    }
     root.classList.add("ready");
   }
 
@@ -3048,7 +3070,8 @@
   /** What the HSO view needs beyond the scene: the live page has no SDO map yet, and its own day. */
   function viewOpts() {
     const d = new Date(T0 + 7200e3);
-    return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true,
+    return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true, plainWheel: APP,
+                   ...(APP ? { onPreset: (k) => hashSet("view", k), onRung: (k) => hashSet("rung", k) } : {}),
                    feet: { epoch: (t) => T0 + t * 1000, worker: "js/fieldlines.js?v=39" } } : {};
   }
   /** Live: a station's daily keogram (UCalgary's summary JPEG, 00–24 UT) over the HSO view, Helios's KeogramPanel in
@@ -3129,7 +3152,7 @@
   const why = (e) => (/^No MMS positions/.test(e && e.message) ? ` ${e.message}` : "");
   async function start() {
     const root = $("#app");
-    if (!root) return;
+    if (!root && !APP) return;
     if (SOLO && SOLO !== "hso") {                          // a data window alone: no scene, no workspace
       let D;
       try { D = await load(); } catch (e) {                  // say why when the reason is known (no MMS ephemeris yet for a recent moment)
@@ -3144,6 +3167,11 @@
     // the HSO view's scene (Helios's ephemeris cache for the event) and its stars, fetched alongside MMS1's data
     const sceneData = LIVE ? SRC.scene() : Promise.all([fetch(BASE + "scene.json").then(r => r.json()), fetchBuf("stars.bin")]);
     let D, S = null, stars = null;
+    if (APP) {                                             // the HSO screen alone: a craft's data are fetched when its window opens
+      try { D = await load(); [S, stars] = await sceneData; Stage(D, S, stars); window.dispatchEvent(new Event("hso-ready")); }
+      catch (e) { console.warn(e); $("#stage-loading").textContent = `The data could not be loaded.${why(e)}`; window.dispatchEvent(new CustomEvent("hso-failed", { detail: why(e) })); }
+      return;
+    }
     try { D = await load(); } catch (e) {
       $("#app-loading").textContent = $("#stage-loading").textContent = LIVE ? `The data could not be loaded.${why(e)}` : "The demo's data could not be loaded.";
       return;

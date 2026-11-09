@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Helios Live</title>
+  <meta name="robots" content="noindex">
+  <!-- This page runs its own scripts only and talks to the archives it names, nothing else (a relay named in
+       assets/data/live/config.json has to be added to connect-src here too). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://data.phys.ucalgary.ca; connect-src 'self' https://cdaweb.gsfc.nasa.gov https://sscweb.gsfc.nasa.gov https://csa.esac.esa.int https://lasp.colorado.edu https://www.ncei.noaa.gov https://api.phys.ucalgary.ca https://data.phys.ucalgary.ca; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="description" content="Helios Live: the Heliophysics System Observatory at any moment since 2015, in your browser. Spacecraft orbits, the magnetopause and bow shock, and each mission's data, fetched live from NASA's and ESA's public archives.">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/img/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://cdaweb.gsfc.nasa.gov" crossorigin>
+  <link rel="preconnect" href="https://sscweb.gsfc.nasa.gov" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="css/site.css?v=62">
+  <link rel="stylesheet" href="css/app.css?v=1">
+</head>
+<body class="helios-app" data-default-t="2015-10-16T13:07:02Z">
+  <header class="la-bar" id="la-bar">
+    <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+    <span class="la-tag">Live</span>
+    <form class="la-pick" id="live-pick">
+      <select id="live-event" aria-label="Open a known event"><option value="">Events…</option></select>
+      <input type="date" id="live-date" min="2015-03-13" required aria-label="Date (UTC)">
+      <input type="time" id="live-time" step="60" required aria-label="Time (UTC)">
+      <span class="la-utc">UTC</span>
+      <button class="la-go" type="submit">Load</button>
+    </form>
+    <p class="la-ref" id="live-ref" hidden></p>
+    <span class="la-sp"></span>
+    <div class="la-load">
+      <button class="la-status" id="la-status" aria-haspopup="true" aria-expanded="false" aria-controls="la-tasks"><i aria-hidden="true"></i><span>Starting…</span></button>
+      <div class="la-tasks" id="la-tasks" role="status" hidden></div>
+    </div>
+    <button class="la-btn" id="la-about-btn">About the data</button>
+  </header>
+
+    <section class="stage" id="stage" aria-label="Helios's HSO screen at the chosen moment">
+      <div class="stage-app">
+        <nav class="rail" aria-label="Helios Live">
+          <button class="rail-ev" id="la-moment" title="The moment on screen (UTC): choose another"><b>LIVE</b><span id="rail-day">—</span><small id="rail-year"></small><em id="rail-hm"></em></button>
+          <button class="ri on" id="la-hso" title="The HSO screen: back to the top view at the magnetosphere's scale" aria-label="HSO screen: reset the view"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><ellipse cx="8" cy="8" rx="2.4" ry="5.6"/><path d="M2.4 8h11.2"/></svg></button>
+          <span class="rail-sp"></span>
+          <button class="ri" id="la-info" title="About the data" aria-label="About the data"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.8"/><path d="M8 7.2v4M8 4.9v.2"/></svg></button>
+          <a class="ri" href="index.html" title="Back to the Helios site" aria-label="Back to the Helios site"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 8 8 3l5.4 5M4.2 6.8v6h7.6v-6"/></svg></a>
+        </nav>
+        <div class="stage-hso scene-body" id="stage-body">
+          <canvas aria-label="Helios's HSO view at the magnetosphere's scale: the magnetopause and bow shock for OMNI's solar wind, and MMS and the other missions' orbits, in GSE"></canvas>
+          <div class="hso-head">
+            <div class="hso-title">
+              <b>HSO</b><span>Click any spacecraft for data</span>
+              <p class="hso-compare"><span class="cmp-l">Compare</span><span class="cmp-fam" title="THEMIS and Cluster are in the app">MMS<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 6.5 8 4l2.5 2.5M5.5 9.5 8 12l2.5-2.5"/></svg></span><button class="cmp-plus" title="Add one MMS window beside the open ones"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="4" width="9" height="8" rx="1.2"/><path d="M13 3v4M11 5h4"/></svg>+1</button><button class="cmp-all" title="Open every MMS spacecraft in side-by-side windows"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.2"/><path d="M8 3v10M2 8h12"/></svg>1–4</button></p>
+              <a class="hso-save" href="#workspace" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="4" width="5" height="8" rx="1"/><rect x="9" y="4" width="5" height="8" rx="1"/></svg>Save as Workspace</a>
+            </div>
+            <div class="hso-chips">
+              <div class="hso-row" role="group" aria-label="Viewpoint"><button data-preset="top" aria-pressed="true">Top · XY</button><button data-preset="side" aria-pressed="false">Side · XZ</button><button data-preset="front" aria-pressed="false">Front · YZ</button><button data-preset="3d" aria-pressed="false">3D</button></div>
+              <div class="hso-row rungs" role="group" aria-label="Scale"><button data-rung="leo" aria-pressed="false">LEO</button><button data-rung="mag" class="on" aria-pressed="true">Magnetosphere</button><button data-rung="moon" aria-pressed="false">Moon</button><button data-rung="l1" aria-pressed="false">L1</button><button data-rung="sun" aria-pressed="false">Sun</button><button disabled title="In the app">Jupiter</button></div>
+            </div>
+          </div>
+          <div class="stage-dock" id="stage-dock" aria-label="Minimized windows"></div>
+          <button class="stage-fs" aria-label="Full screen"><svg viewBox="0 0 16 16" aria-hidden="true"><path class="fs-in" d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/><path class="fs-out" d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg></button>
+          <div class="hso-card" hidden></div>
+          <p class="hso-toast" role="status" hidden></p>
+          <div class="hso-time">
+            <button class="ht-play" aria-label="Play"><svg viewBox="0 0 12 12" aria-hidden="true"><path class="pl" d="M3 1.8v8.4L10 6z"/><path class="pa" d="M2.6 1.8h2.4v8.4H2.6zM7 1.8h2.4v8.4H7z"/></svg></button>
+            <input class="ht-slider" type="range" step="1" aria-label="Time">
+            <button class="ht-speed" aria-label="Playback speed">600×</button>
+            <span class="ht-stamp"></span>
+            <button class="ht-event" title="Back to the chosen moment">EVENT</button>
+          </div>
+          <div class="stage-wins" id="stage-wins"></div>
+          <p class="stage-loading" id="stage-loading">Fetching the orbits and the solar wind…</p>
+        </div>
+      </div>
+    </section>
+
+  <dialog class="la-about" id="la-about" aria-labelledby="la-about-h">
+    <form method="dialog"><button class="la-x" aria-label="Close">×</button></form>
+    <h2 id="la-about-h">About Helios Live</h2>
+    <p class="la-lede">The Heliophysics System Observatory at any moment since March 2015: where each spacecraft was, the boundaries the solar wind set, and every mission's data a click away. Your browser reads it all straight from the public archives when you load a moment; no Helios server is involved.</p>
+    <h3>Using it</h3>
+    <p>Pick an event or a date and time (UTC) in the bar and press Load. Click any spacecraft for its data window, and Earth for the geomagnetic indices. Drag a window's bar to the top or a side of the screen to tile it; the green button opens it in a tab of its own. The time bar under the view moves the whole fleet. The page's address always describes what is on screen, so a copied link opens the same view.</p>
+    <h3>What you are looking at</h3>
+    <p><b>The view.</b> OMNI's 1-minute solar wind sizes the magnetopause and the bow shock; the view names each model it draws. Frames come from MMS's ephemeris, or are computed here for moments it has not reached. Orbits are SSCWeb's. Field lines are traced through IGRF-14 and T89 at the moment's Kp; the auroral oval follows Starkov with the hour's AL.</p>
+    <p><b>MMS.</b> FGM, FPI moments and spectra, HPCA, EDP and DSP: survey for four hours around the moment and burst within ten minutes of it, with electron, ion and HPCA distribution cuts on request.</p>
+    <p><b>Other missions.</b> THEMIS and ARTEMIS, Cluster 1–4, GOES-16 to 19, ACE, Wind and DSCOVR, and OMNI.</p>
+    <p><b>Timing and accuracy.</b> The numbers are the archives' current Level 2 versions, read at full precision where the archive allows and not checked by hand. A moment from the last few weeks opens with positions only until the missions publish their data.</p>
+    <h3>Sources</h3>
+    <p>MMS Science Data Center (LASP) · CDAWeb and SSCWeb (NASA SPDF) · NOAA NCEI · LASP Space Weather Portal · ESA Cluster Science Archive · University of Calgary · IAGA (IGRF-14)</p>
+    <p>Analysis methods adapted from PySPEDAS and SPEDAS. Earth imagery from NASA's Blue Marble. Each model is cited where it appears.</p>
+    <p class="la-fine">Helios is built by Dr. Jason Beedle. It is developed independently and is not supported or endorsed by NASA, NOAA, ESA or any institution. Past moments are kept in this browser for a week so they reopen quickly.</p>
+  </dialog>
+
+  <div class="la-gate" id="la-gate" hidden>
+    <div class="la-gate-in">
+      <a class="wordmark" href="index.html" aria-label="Helios home"><span aria-hidden="true">HELI</span><svg class="sun" viewBox="-14 -14 28 28" aria-hidden="true"><g stroke="#f7c55c" stroke-width="2.4" stroke-linecap="round" fill="none"><circle r="5.6"/><path d="M0-9V-12.6M0 9V12.6M-9 0H-12.6M9 0H12.6M6.4-6.4L8.9-8.9M-6.4 6.4L-8.9 8.9M6.4 6.4L8.9 8.9M-6.4-6.4L-8.9-8.9"/></g></svg><span aria-hidden="true">S</span></a>
+      <h1 id="la-gate-h"></h1>
+      <p id="la-gate-p"></p>
+      <p class="la-gate-a"><a class="btn" href="hso.html">See the demo instead</a><button class="la-btn" id="la-gate-go" hidden>Open it anyway</button></p>
+    </div>
+  </div>
+
+  <script src="js/app-page.js?v=1"></script>
+  <script src="js/igrf14.js?v=38"></script>
+  <script src="js/fieldlines.js?v=39"></script>
+  <script src="js/hsoview.js?v=56"></script>
+  <script src="js/hso-live.js?v=74"></script>
+  <script src="js/hso.js?v=70"></script>
+</body>
+</html>
