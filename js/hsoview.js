@@ -1641,7 +1641,7 @@
       cv.style.cursor = h ? "pointer" : "";
       const fh = !h && rung === "leo" ? feetHits.find(m => Math.hypot(m.q[0] - x, m.q[1] - y) < 6) : null;
       cv.title = fh ? `${fh.c.label} · ${fh.hemi === "north" ? "northern" : "southern"} foot at 110 km: ${Math.abs(fh.f.lat).toFixed(1)}°${fh.f.lat >= 0 ? "N" : "S"} ${Math.abs(fh.f.lon).toFixed(1)}°${fh.f.lon >= 0 ? "E" : "W"} · ${fh.c.line.topology === "closed" ? "closed line" : "open line"} · ${feetNow ? feetNow.model : ""}`
-        : h ? (h.earth ? "Earth · open the OMNI solar wind window" : h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
+        : h ? (h.earth ? "Earth · open the Geomagnetic indices window" : h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
         ? `${h.ring.name} · ${h.ring.m.s.nets.map(k => NET_NAME[k]).join(" + ")} · Sun ${h.ring.m.elev.toFixed(0)}° · ${h.ring.m.imaging ? "imaging" : "daylight"}`
         : `Open ${h.ring.name} data window`) : "";
       const prev = hover;

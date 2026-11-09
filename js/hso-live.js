@@ -57,6 +57,16 @@
   const GMOM_E = [7.3, 9.2, 12.6, 16.0, 20.8, 28.1, 36.8, 48.5, 63.5, 83.9, 110.5, 144.9, 190.5, 251.1, 330.1, 434.8, 571.5,
                   752.8, 991.8, 1304.5, 1717.5, 2260.9, 2976.8, 3917.7, 5157.3, 6788.9, 8936.4, 11763.4, 15484.9, 20383.3, 26831.4];
   const ELEC32 = GMOM_E.slice(0, 31).concat([31766.6]);
+  // Helios's fallback tables: GMOM's combined ESA∪SST sweeps (ascending; ions 40- and 48-live, electrons 46-live) and
+  // ESA full mode (served high → low; ions 32, electrons 15-live — a 32-live electron sweep has no verified table)
+  const GMOM_I40 = [6.5, 11.4, 19.4, 33.9, 58.5, 101.4, 175.3, 303.6, 453.6, 597.5, 787.2, 1035.4, 1363.2, 1794.5, 2362.7, 3109.5,
+    4093.4, 5388.4, 7092.9, 9336.7, 12290.5, 16178.4, 21296.3, 25000, 26000, 28000, 30000, 34000, 41000, 53000, 67400, 95400,
+    142600, 207400, 297000, 421800, 654600, 1134600, 2329800, 4005000];
+  const GMOM_I48 = [5.6137, 7.1108, 9.7305, 12.3503, 16.0928, 21.7065, 28.443, 37.425, 49.0267, 64.7452, 85.329, 111.901, 147.08,
+    193.861, 254.864, 335.702, 441.241, 581.21, 765.716, 1007.11, 1325.97, 1745.5, 2298.27, 3024.69, 3981.65, 5241.37, 6899.3,
+    9081.92, 11955.0, 15736.8, 20715.1].concat(GMOM_I40.slice(23));
+  const GMOM_E46 = GMOM_E.concat([27000, 28000, 29000, 30000, 31000, 41000, 52000, 65500, 93000, 139000, 203500, 293000, 408000, 561500, 719500]);
+  const ESAF_E15 = [10.9, 18.4, 32.5, 56.0, 97.2, 167.7, 290.6, 503.2, 872.3, 1511.0, 2618.9, 4537.5, 7862.6, 13624.1, 23607.3];
 
   const iso = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
   const sec = (ms) => (ms - T0) / 1000;
@@ -456,7 +466,9 @@
     const L = key.slice(2).toUpperCase(), l = L.toLowerCase(), [a, b] = window_, P = { B: "ARTEMIS-P1", C: "ARTEMIS-P2" }[L] || `THEMIS-${L}`;
     // As Helios's fetchThemis: moments from MOM (spin cadence; non-Q values), field-aligned temperatures from its t3_mag,
     // E from FIT@1 (bit-identical to EFI where both exist, better coverage), spectrograms from ESA reduced mode
-    const mom = (s) => [`th${l}_pe${s}m_density`, `th${l}_pe${s}m_velocity_gse`, `th${l}_pe${s}m_t3_mag`];
+    // MOM non-Q, its data_quality first (dataset order); screened by bit as Helios's ThemisMOMFlag: ions drop 8
+    // (low-energy mode) and 64 (maneuver), electrons 1 (no potential), 4 and 64; 16 and 32 are kept and counted
+    const mom = (s) => [`th${l}_pe${s}m_data_quality`, `th${l}_pe${s}m_density`, `th${l}_pe${s}m_velocity_gse`, `th${l}_pe${s}m_t3_mag`];
     const esa = (s) => [`th${l}_pe${s}_density`, `th${l}_pe${s}_avgtemp`, `th${l}_pe${s}_en_eflux`, `th${l}_pe${s}_magt3`, `th${l}_pe${s}_velocity_gse`];
     const none = { t: new Float64Array(0), cols: [], n: 0 };
     const [fg, ir, er, mi, me, efi] = await Promise.all([
@@ -467,54 +479,113 @@
       track(`${P} electron moments (MOM)`, hapi(`TH${L}_L2_MOM@1`, mom("e"), a, b, true).catch(() => none)),
       hapi(`TH${L}_L2_FIT@1`, [`th${l}_efs_dot0_gse`], a, b, true).catch(() => null),
     ]);
-    const sv = {};
+    const sv = {}, notes = [];
     const bm = stack(fg.cols, 0, 4), b4 = new Float32Array(fg.n * 4);
     for (let i = 0; i < fg.n; i++) { b4[i * 4] = bm[i * 4 + 1]; b4[i * 4 + 1] = bm[i * 4 + 2]; b4[i * 4 + 2] = bm[i * 4 + 3]; b4[i * 4 + 3] = bm[i * 4]; }
     sv.fgm = set({ t: [f32(fg.t), 1], b: [b4, 4] });
-    // the spectra: the reduced-mode sweeps, the table chosen by how many channels are live (prepare_hso_missions)
-    // Helios's per-probe ESA calibration of the THEMIS-A tables (HSODataClient: B, C, D and E)
+    // the spectra: the sweep chosen per record by how many channels are live (Helios's spectrogram(sweeps:)); a record
+    // whose count has no verified table is left blank. Helios's per-probe ESA calibration applies to reduced mode only.
     const CAL = { ion: { B: 0.9753, C: 0.9753, D: 0.9753, E: 0.9727 }, elec: { B: 0.9825, C: 0.9825, D: 0.9825, E: 0.9835 } };
-    const spectra = (r, tables, sp) => {
-      const n = r.n, flux = new Float32Array(n * 32).fill(NaN), eidx = new Uint8Array(n), tabs = [], keys = [], top = [];
-      const cal = (CAL[sp === "dis" ? "ion" : "elec"][L] || 1);
+    const spectra = (r, off, tables, sp, o = {}) => {
+      const n = r.n, nc = (o.nc || 32), flux = new Float32Array(n * 32).fill(NaN), eidx = new Uint8Array(n), tabs = [], keys = [], top = [];
+      const cal = o.cal ? (CAL[sp === "dis" ? "ion" : "elec"][L] || 1) : 1;
+      let used = 0;
       for (let i = 0; i < n; i++) {
-        const row = []; for (let c = 0; c < 32; c++) row.push(r.cols[2 + c][i]);
-        let last = -1; for (let c = 0; c < 32; c++) if (isFinite(row[c])) last = c;   // the sweep: its last live column (Helios)
-        const tab = tables[last + 1];
+        const row = []; for (let c = 0; c < nc; c++) row.push(r.cols[off + c] ? r.cols[off + c][i] : NaN);
+        let last = -1; for (let c = 0; c < nc; c++) if (isFinite(row[c])) last = c;   // the sweep: its last live column (Helios)
+        let tab = tables[last + 1];
         if (!tab) continue;
-        let k = keys.indexOf(tab.length);
-        if (k < 0) { keys.push(tab.length); tabs.push(tab); top.push(-1); k = tabs.length - 1; }
-        eidx[i] = k;
-        const asc = row.slice(0, last + 1).reverse();                  // each value in its own channel, gaps kept
-        for (let c = 0; c < Math.min(tab.length, asc.length); c++) { flux[i * 32 + c] = asc[c]; if (asc[c] > 0) top[k] = Math.max(top[k], c); }
+        let vals = row.slice(0, last + 1);
+        if (o.desc) vals.reverse();                                      // each value in its own channel, gaps kept
+        if (o.below) { const k = tab.filter(e => e < o.below).length; tab = tab.slice(0, k); vals = vals.slice(0, k); }   // GMOM cropped to ESA
+        const key = `${tab.length}:${tab[0]}`;
+        let k = keys.indexOf(key);
+        if (k < 0) { keys.push(key); tabs.push(tab); top.push(-1); k = tabs.length - 1; }
+        eidx[i] = k; used++;
+        for (let c = 0; c < Math.min(tab.length, vals.length, 32); c++) { flux[i * 32 + c] = vals[c]; if (vals[c] > 0) top[k] = Math.max(top[k], c); }
       }
-      if (!tabs.length) { tabs.push(tables[32]); top.push(31); }
+      if (!used) return null;
       const etab = new Float32Array(tabs.length * 32);
       tabs.forEach((tb, k) => { for (let c = 0; c < 32; c++) etab[k * 32 + c] = (c < tb.length ? tb[c] : tb[tb.length - 1] * (1 + 1e-3 * (c - tb.length + 1))) * cal; });
       // channels empty at every record (the dead top one) stay off the axis, as Helios drops them
-      return { spec: [spec8(flux, n, 32, sp), 32], etab: [etab, 32], eidx: [eidx, 1], etabN: top.map((t, k) => Math.max(2, t + 1)) };
+      return { spec: [spec8(flux, n, 32, sp), 32], etab: [etab, 32], eidx: [eidx, 1], etabN: top.map((t, k) => Math.max(2, t + 1)), t: r.t };
     };
-    // the moments: MOM where it has data, ESA reduced mode where it does not
-    const moments = (m, r) => {
-      if (m && m.n && m.cols[0] && m.cols[0].some(isFinite)) {
-        const n = m.n, t3 = stack(m.cols, 4, 3), tpar = new Float32Array(n), tperp = new Float32Array(n);
-        for (let i = 0; i < n; i++) { tpar[i] = t3[i * 3 + 2]; tperp[i] = 0.5 * (t3[i * 3] + t3[i * 3 + 1]); }
-        return { t: [f32(m.t), 1], n: [f32(m.cols[0]), 1], v: [stack(m.cols, 1, 3), 3], tpar: [tpar, 1], tperp: [tperp, 1] };
+    // Helios's ionSpec / elecSpec: ESA reduced mode → GMOM cropped to its ESA range → ESA full mode
+    const fallbackSpec = async (sp) => {
+      const ion = sp === "dis", red = spectra(ion ? ir : er, 2, ion ? { 32: ION32, 31: ION32, 24: ION24, 23: ION24 } : { 32: ELEC32, 31: ELEC32 }, sp, { desc: true, cal: true });
+      if (red) return [red, "ESA reduced mode"];
+      const gm = await hapi(`TH${L}_L2_GMOM@${ion ? 2 : 3}`, [`th${l}_pt${ion ? "i" : "e"}rf_en_eflux`], a, b, true).catch(() => none);
+      const g = gm.n ? spectra(gm, 0, ion ? { 40: GMOM_I40, 48: GMOM_I48 } : { 46: GMOM_E46 }, sp, { nc: gm.cols.length, below: ion ? 24000 : 26900 }) : null;
+      if (g) return [g, "GMOM (its ESA range)"];
+      const fu = await hapi(`TH${L}_L2_ESA@${ion ? 0 : 1}`, [`th${l}_pe${ion ? "i" : "e"}f_en_eflux`], a, b, true).catch(() => none);
+      const f = fu.n ? spectra(fu, 0, ion ? { 32: ION32 } : { 15: ESAF_E15 }, sp, { nc: fu.cols.length, desc: true }) : null;
+      return f ? [f, "ESA full mode"] : [null, null];
+    };
+    // the moments: MOM, screened; where CDAWeb's MOM is degenerate (< 5 % of a 3-s cadence — Helios then reads the
+    // Berkeley archive, which a browser cannot), ESA reduced mode. T: MOM t3_mag → ESA full magt3 → ESA full t3 (scalar).
+    const expected = (b - a) / 3000, degenerate = (k) => k < Math.max(3, 0.05 * expected);
+    const moments = async (m, r, ion) => {
+      const drop = ion ? 8 | 64 : 1 | 4 | 64, sp = ion ? "i" : "e", who = ion ? "ion" : "electron";
+      const live = m && m.n ? Array.from({ length: m.n }, (_, i) => i).filter(i => isFinite(m.cols[1][i])) : [];
+      let out, onMOM = false;
+      if (!degenerate(live.length)) {
+        const keep = live.filter(i => { const q = m.cols[0][i]; return !(isFinite(q) && q >= 0 && q < 1e6) || (Math.round(q) & drop) === 0; });
+        const flagged = live.length - keep.length, cold = live.filter(i => Math.round(m.cols[0][i]) & 32).length, photo = live.filter(i => Math.round(m.cols[0][i]) & 16).length;
+        const pct = (k) => { const p = 100 * k / Math.max(1, live.length); return p < 1 ? "<1 %" : `${p.toFixed(0)} %`; };
+        if (flagged) notes.push(`MOM quality flags: dropped ${who} moments ${ion ? "in ESA low-energy mode or a maneuver" : "with no spacecraft potential, in low-energy mode or a maneuver"} (${pct(flagged)} of ${who} records).`);
+        if (ion && cold) notes.push(`Kept but flagged: Nᵢ > 2 Nₑ, possible cold ions (${pct(cold)}).`);
+        if (!ion && photo) notes.push(`Kept but flagged: Nₑ > 2 Nᵢ, possible photoelectrons (${pct(photo)}).`);
+        const pick = (j) => Float32Array.from(keep, i => m.cols[j][i]);
+        const v = new Float32Array(keep.length * 3), t3 = [];
+        keep.forEach((i, k) => { for (let c = 0; c < 3; c++) { v[k * 3 + c] = m.cols[2 + c][i]; } t3.push([m.cols[5][i], m.cols[6][i], m.cols[7][i]]); });
+        out = { t: [Float32Array.from(keep, i => m.t[i]), 1], n: [pick(1), 1], v: [v, 3] };
+        onMOM = t3.some(x => x.every(isFinite));
+        if (onMOM) out.t3 = t3;
+      } else {
+        if (r.n) notes.push(`CDAWeb's MOM had no usable ${who} moments in this window; they are ESA reduced-mode moments here (Helios reads the THEMIS archive at UC Berkeley instead).`);
+        out = { t: [f32(r.t), 1], n: [f32(r.cols[0]), 1], v: [stack(r.cols, 37, 3), 3] };
+        const t3 = Array.from({ length: r.n }, (_, i) => [r.cols[34][i], r.cols[35][i], r.cols[36][i]]);
+        if (t3.some(x => x.every(isFinite))) out.t3 = t3;
       }
-      const n = r.n, magt3 = stack(r.cols, 34, 3), tpar = new Float32Array(n), tperp = new Float32Array(n);
-      for (let i = 0; i < n; i++) { tpar[i] = magt3[i * 3 + 2]; tperp[i] = 0.5 * (magt3[i * 3] + magt3[i * 3 + 1]); }
-      return { t: [f32(r.t), 1], n: [f32(r.cols[0]), 1], v: [stack(r.cols, 37, 3), 3], tpar: [tpar, 1], tperp: [tperp, 1] };
+      const S = set({ t: out.t, n: out.n, v: out.v });
+      const fa = (T, tt) => { const k = T.length, tpar = new Float32Array(k), tperp = new Float32Array(k); T.forEach((x, i) => { tpar[i] = x[2]; tperp[i] = 0.5 * (x[0] + x[1]); }); return { tt: f32(tt), tpar, tperp }; };
+      let tf = out.t3 ? fa(out.t3, out.t[0]) : null, scalar = null;
+      if (!tf) {                                              // ESA full mode: magt3, then the diagonalized t3 as a scalar
+        const e = await hapi(`TH${L}_L2_ESA@${ion ? 0 : 1}`, [`th${l}_pe${sp}f_t3`, `th${l}_pe${sp}f_magt3`], a, b, true).catch(() => none);
+        const mg = [], eg = [];
+        for (let i = 0; i < e.n; i++) { const M = [e.cols[3][i], e.cols[4][i], e.cols[5][i]], G = [e.cols[0][i], e.cols[1][i], e.cols[2][i]]; if (M.every(isFinite)) mg.push([e.t[i], M]); if (G.every(isFinite)) eg.push([e.t[i], G]); }
+        if (mg.length) { tf = fa(mg.map(x => x[1]), mg.map(x => x[0])); notes.push(`T${ion ? "ᵢ" : "ₑ"}: ESA full-mode field-aligned temperatures (MOM has none here).`); }
+        else if (eg.length) { scalar = { t: f32(eg.map(x => x[0])), v: Float32Array.from(eg, x => (x[1][0] + x[1][1] + x[1][2]) / 3) }; notes.push(`T${ion ? "ᵢ" : "ₑ"}: ESA t3's eigenvalues as a scalar (trace/3), not ∥/⊥ — they are not field-aligned.`); }
+      }
+      // T on its own clock when it is not MOM's (the panels read tpar/tperp against S.t)
+      if (tf && tf.tt.length === S.t.length && tf.tt.every((x, i) => x === S.t[i])) { S.tpar = tf.tpar; S.tperp = tf.tperp; S.cols.tpar = S.cols.tperp = 1; }
+      else if (tf) sv[`t${sp}`] = set({ t: [tf.tt, 1], tpar: [tf.tpar, 1], tperp: [tf.tperp, 1] });
+      if (scalar) sv[`t${sp}`] = set({ t: [scalar.t, 1], tsc: [scalar.v, 1] });
+      return S;
     };
     // moments and spectra keep their own clocks: the moments as dis/des, the spectra as isp/esp
-    sv.dis = set(moments(mi, ir)); sv.des = set(moments(me, er));
-    const withN = (o) => { const { etabN, ...rest } = o; const S = set(rest); S.etabN = etabN; S.fillGaps = true; return S; };
-    sv.isp = withN({ t: [f32(ir.t), 1], ...spectra(ir, { 32: ION32, 31: ION32, 24: ION24, 23: ION24 }, "dis") });
-    sv.esp = withN({ t: [f32(er.t), 1], ...spectra(er, { 32: ELEC32, 31: ELEC32 }, "des") });
+    const [[is, isrc], [es, esrc]] = await Promise.all([fallbackSpec("dis"), fallbackSpec("des")]);
+    sv.dis = await moments(mi, ir, true); sv.des = await moments(me, er, false);
+    const withN = (o) => { const { etabN, t, ...rest } = o; const S = set({ t: [f32(t), 1], ...rest }); S.etabN = etabN; S.fillGaps = true; return S; };
+    if (is) sv.isp = withN(is);
+    if (es) sv.esp = withN(es);
+    if (isrc && isrc !== "ESA reduced mode") notes.push(`Ion spectrogram from ${isrc}: ESA reduced mode has none here.`);
+    if (esrc && esrc !== "ESA reduced mode") notes.push(`Electron spectrogram from ${esrc}: ESA reduced mode has none here.`);
     sv.des.j = current(sv.dis.t, sv.dis.v, sv.des.t, sv.des.n, sv.des.v); sv.des.cols.j = 3;
     if (efi && efi.n) sv.efi = set({ t: [f32(efi.t), 1], e: [stack(efi.cols, 0, 3), 3] });
+    // temperatures on a clock of their own, or a scalar, read from their own sets
+    const relabel = { ionSpec: { spec: "isp" }, elecSpec: { spec: "esp" } };
+    const tKind = (sp, name, sub) => (sv[`t${sp}`] && sv[`t${sp}`].tsc
+      ? { title: "T (ESA t3, scalar)", lines: [{ ds: `t${sp}`, name: "tsc", c: 0, color: "#000000", label: `T_{${sub}}` }] }
+      : sv[`t${sp}`] ? { lines: [{ ds: `t${sp}`, name: "tperp", c: 0, color: "#d90d0d", label: `T_{${sub}⊥}` }, { ds: `t${sp}`, name: "tpar", c: 0, color: "#001af2", label: `T_{${sub}∥}` }] } : null);
+    const ti = tKind("i", "ti", "i"), te = tKind("e", "te", "e");
+    if (ti) relabel.ti = ti;
+    if (te) relabel.te = te;
     const label = { B: "ARTEMIS-P1", C: "ARTEMIS-P2" }[L] || `THEMIS-${L}`;
-    return { sv, bu: null, kind: "tha", label, relabel: { ionSpec: { spec: "isp" }, elecSpec: { spec: "esp" } }, empty: !fg.n && !ir.n,
-             notes: "THEMIS L2 (UC Berkeley) via CDAWeb HAPI, live, as Helios reads them: FGM; moments from MOM (spin cadence) with field-aligned temperatures; E from FIT; spectra from ESA reduced mode." };
+    const noPlasma = !sv.isp && !sv.esp && !sv.dis.t.length && !sv.des.t.length;
+    const banner = noPlasma ? `CDAWeb has no ${label} plasma data in this window (no MOM, ESA or GMOM records). Where CDAWeb's copy of a day is broken, Helios reads the THEMIS archive at UC Berkeley instead; that archive does not accept requests from a web page.` : null;
+    return { sv, bu: null, kind: "tha", label, relabel, banner, empty: !fg.n && !ir.n && !sv.isp,
+             notes: "THEMIS L2 (UC Berkeley) via CDAWeb HAPI, live, as Helios reads them: FGM; moments from MOM (spin cadence, non-Q, screened by its quality bits) with field-aligned temperatures; E from FIT; spectra from ESA reduced mode, then GMOM, then ESA full mode." + (notes.length ? " " + notes.join(" ") : "") };
   }
   function interp(t, v, x) {
     const n = t.length;
@@ -650,6 +721,47 @@
                              pdyn: one(c[7]), ey: one(c[8]), beta: one(c[9]), ma: one(c[10]), mms: one(c[11]), ae: one(c[12]), symh: one(c[13]), pcn: one(c[14]), r0: one(r0) }) };
     return { sv, bu: null, kind: "omni", label: "OMNI", empty: !r.n,
              notes: "OMNI 1-minute (NASA SPDF, via CDAWeb HAPI): IMF and plasma from the L1 monitors, time-shifted to the bow shock's nose; R₀ from Shue et al. (1998)." };
+  }
+  /** The Earth click's "Geomagnetic indices" window (Helios's GeoIndicesPanelView over fetchOmniIndices): ±3 days of
+   *  OMNI's 1-min AE, AL, AU and SYM-H and its Mach pair, from the first of HRO2 and HRO with rows in the span, and the
+   *  OMNI2 hourly Kp (one value per UTC 3-h block, stamped at the block's start) and Dst. The window opens at ±2 days. */
+  const IDX_HALF = 3 * 86400, OMNI_SC = { 51: "Wind", 52: "Wind", 71: "ACE", 60: "Geotail", 50: "IMP 8" };
+  async function indicesWindow() {
+    const a = AT - IDX_HALF * 1000, b = AT + IDX_HALF * 1000, nil = { t: new Float64Array(0), cols: [], n: 0 };
+    const omni = async (P) => {                              // HRO2, then HRO where HRO2 has nothing in the span
+      for (const id of ["OMNI_HRO2_1MIN", "OMNI_HRO_1MIN"]) { const r = await hapi(id, P, a, b, true).catch(() => null); if (r && r.n) return r; }
+      return nil;
+    };
+    const [ix, mach, k2] = await track("Geomagnetic indices (OMNI)", Promise.all([
+      omni(["AE_INDEX", "AL_INDEX", "AU_INDEX", "SYM_H"]), omni(["IMF", "PLS", "Mach_num", "Mgs_mach_num"]),
+      hapi("OMNI2_H0_MRG1HR", ["KP1800", "DST1800"], a, b, true).catch(() => nil)]));
+    const keep = (r, j, ok) => { const t = [], v = []; for (let i = 0; i < r.n; i++) { const x = r.cols[j][i]; if (ok(x)) { t.push(r.t[i]); v.push(x); } } return set({ t: [f32(t), 1], v: [f32(v), 1] }); };
+    const nT = (x) => isFinite(x) && Math.abs(x) < 30000, sv = {};
+    if (ix.n) { sv.giAe = keep(ix, 0, nT); sv.giAl = keep(ix, 1, nT); sv.giAu = keep(ix, 2, nT); sv.giSymh = keep(ix, 3, nT); }
+    if (mach.n) { sv.giMa = keep(mach, 2, x => x > 0 && x < 900); sv.giMms = keep(mach, 3, x => x > 0 && x < 99); }
+    if (k2.n) {
+      sv.giDst = keep(k2, 1, x => isFinite(x) && Math.abs(x) < 9999);
+      const seen = new Set(), t = [], v = [];
+      for (let i = 0; i < k2.n; i++) {                       // Kp × 10 in thirds; fill 99; the block's value twice → a staircase
+        const c = k2.cols[0][i];
+        if (!(c >= 0 && c < 99)) continue;
+        const blk = Math.floor((T0 / 1000 + k2.t[i]) / 10800);
+        if (seen.has(blk)) continue;
+        seen.add(blk);
+        const s0 = blk * 10800 - T0 / 1000, kp = Math.floor(Math.round(c) / 10) + Math.floor((Math.round(c) % 10) / 3) / 3;
+        t.push(s0, s0 + 10799); v.push(kp, kp);
+      }
+      const o = t.map((_, i) => i).sort((p, q) => t[p] - t[q]);
+      sv.giKp = set({ t: [Float32Array.from(o, i => t[i]), 1], v: [Float32Array.from(o, i => v[i]), 1] });
+    }
+    // who measured the wind behind M_A (OmniSourceSpan.summary): the distinct IMF and plasma monitors, in order
+    const names = (j) => { const out = []; for (let i = 0; i < mach.n; i++) { const c = Math.round(mach.cols[j][i]), nm = c >= 1 && c !== 99 ? OMNI_SC[c] || `OMNI #${c}` : null; if (nm && !out.includes(nm)) out.push(nm); } return out.join(" → "); };
+    const im = mach.n ? names(0) : "", pl = mach.n ? names(1) : "";
+    const who = im && pl ? (im === pl ? `${im} (IMF & plasma)` : `${im} (IMF) · ${pl} (plasma)`) : im ? `${im} (IMF)` : pl ? `${pl} (plasma)` : "source not reported";
+    return { sv, bu: null, kind: "idx", label: "Geomagnetic indices", empty: !Object.keys(sv).length,
+             span: [HALF - IDX_HALF, HALF + IDX_HALF], wm: 2880,
+             banner: mach.n ? `M_A from OMNI · ${who} · shifted to the bow-shock nose` : null,
+             notes: "Geomagnetic indices, as Helios's Earth window: OMNI 1-minute AE, AL, AU and SYM-H and the Alfvén and magnetosonic Mach numbers (HRO2, then HRO), and OMNI2's hourly Kp (one value per 3-hour block) and Dst, via CDAWeb HAPI. OMNI's indices lag real time by weeks to months." };
   }
   /** One L1 monitor, as Helios's fetchAce / fetchWind / fetchDscovr: science products first, browse products where
    *  they stop. Rows: B (GSE), Nₚ, V (GSE), |V|, Tₚ. */
@@ -1600,7 +1712,7 @@
     get bytes() { return bytes; },
     load: () => context(),
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
-    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
+    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : key === "idx" ? indicesWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
       .catch((e) => { delete craftCache[key]; throw e; })),
     scene,
     vdf: (n, sp) => vdfStore(n, sp),

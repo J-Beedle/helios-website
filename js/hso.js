@@ -84,9 +84,9 @@
     for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-6; v += step) out.push(Math.abs(v) < step * 1e-6 ? 0 : v);
     return out;
   }
-  const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
   function timeTicks(a, b, px) {
-    const step = STEPS.find(s => (b - a) / s <= px / 78) || 3600, out = [], z = T0 / 1000;
+    const step = STEPS.find(s => (b - a) / s <= px / 78) || 86400, out = [], z = T0 / 1000;
     for (let v = Math.ceil((a + z) / step) * step - z; v <= b; v += step) out.push(v);   // on whole UTC multiples
     return { ticks: out, secs: step < 60 };
   }
@@ -283,6 +283,31 @@
     }
     return [lo, hi];
   }
+  /** A value-colored line (MMSStackPlot's banded lines): a polyline whose segments take the band of their higher
+   *  end, bridged over gaps as Helios draws them, 1.7 px wide. */
+  function strokeBands(ctx, R, a, b, rr, acc, yOf, bands) {
+    const kx = R.w / (b - a), col = (v) => { let c = bands[0][1]; for (const [m, h] of bands) if (v >= m) c = h; return c; };
+    ctx.save(); ctx.beginPath(); ctx.rect(R.x, R.y, R.w, R.h); ctx.clip();
+    ctx.lineWidth = 1.7; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    let px = null, cur = null;
+    for (const [L, i0, i1] of rr) {
+      const f = acc(L);
+      if (!f) continue;
+      for (let i = Math.max(0, i0 - 1); i < Math.min(L.t.length, i1 + 1); i++) {
+        const v = f(i), Y = yOf(v);
+        if (!isFinite(Y)) continue;
+        const X = R.x + (L.t[i] - a) * kx;
+        if (px) {
+          const c = col(Math.max(px[2], v));
+          if (c !== cur) { if (cur) ctx.stroke(); ctx.strokeStyle = cur = c; ctx.beginPath(); ctx.moveTo(px[0], px[1]); }
+          ctx.lineTo(X, Y);
+        }
+        px = [X, Y, v];
+      }
+    }
+    if (cur) ctx.stroke();
+    ctx.restore();
+  }
   function stroke(ctx, R, a, b, rr, acc, yOf, color, width, shift) {
     const kx = R.w / (b - a);
     ctx.save(); ctx.beginPath(); ctx.rect(R.x, R.y, R.w, R.h); ctx.clip();
@@ -461,6 +486,10 @@
   // into L, M, N), a scalar, or derived from its record set; `avail: false` lists a subplot the demo has no data for.
   const Vc = (ds, name, c, color, label) => ({ ds, name, c, color, label, vec: true });
   const Sc = (ds, name, c, color, label) => ({ ds, name, c, color, label });
+  /** A line colored by its value (Helios's ExtraChart.ColorBand): each segment the band of its higher end. */
+  const banded = (line, bands) => Object.assign(line, { bands });
+  const KP_BANDS = [[0, "#2e9e4f"], [4, "#d9a400"], [5, "#e8720c"], [7, "#d11a1a"]];
+  const MACH_BANDS = [[0, "#1f4fd8"], [2, "#3e8fe0"], [4, "#6fb6c8"], [6, "#d9a400"], [9, "#e8720c"], [14, "#d11a1a"]];
   const XYZ = (ds, name) => [Vc(ds, name, 0, COL.x, "X"), Vc(ds, name, 1, COL.y, "Y"), Vc(ds, name, 2, COL.z, "Z")];
   const QE = 1.602176634e-4;                              // e × (cm⁻³ → m⁻³) × (km/s → m/s) × (A → µA) over m² … per n·v
   const derive = (ds, color, label, fn) => ({ ds, color, label, derive: fn });
@@ -615,6 +644,17 @@
     omSymh: { title: "SYM-H", label: "SYM-H", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "symh", 0, COL.mag, "SYM-H")] },
     omAe: { title: "AE", label: "AE", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "ae", 0, COL.mag, "AE")] },
     omPcn: { title: "PC index (north)", label: "PCN", unit: "", w: 0.8, zero: true, lines: [Sc("omni", "pcn", 0, COL.mag, "PCN")] },
+    // the Earth click's Geomagnetic indices window (GeoIndicesPanelView.indicesSeries): Mach and Kp value-colored as
+    // Helios bands them, the Mach axis on the 1st–99th percentile in view (M = 1 kept), AE blue and AL red
+    giMach: { title: "Mach  ·  M_A", label: "Mach", unit: "M_{A}", w: 0.8, pct: true, guides: [[1, "#1f4fd8", "sub-Alfvénic (M = 1)"]],
+              lines: [banded(Sc("giMa", "v", 0, INK, "M_{A}"), MACH_BANDS)] },
+    giMach2: { title: "Mach  ·  M_A / M_ms", label: "Mach", unit: "M_{A} / M_{ms}", w: 0.8, pct: true, guides: [[1, "#1f4fd8", "sub-Alfvénic (M = 1)"]],
+               lines: [banded(Sc("giMa", "v", 0, INK, "M_{A}"), MACH_BANDS), banded(Sc("giMms", "v", 0, INK, "M_{ms}"), MACH_BANDS)] },
+    giKp: { title: "Kp", label: "Kp", unit: "", w: 0.8, lines: [banded(Sc("giKp", "v", 0, INK, "Kp"), KP_BANDS)] },
+    giAeal: { title: "AE / AL  ·  nT", label: "AE / AL", unit: "(nT)", w: 0.8, lines: [Sc("giAe", "v", 0, COL.x, "AE"), Sc("giAl", "v", 0, COL.z, "AL")] },
+    giAu: { title: "AU  ·  nT", label: "AU", unit: "(nT)", w: 0.8, lines: [Sc("giAu", "v", 0, COL.x, "AU")] },
+    giSymh: { title: "SYM-H  ·  nT", label: "SYM-H", unit: "(nT)", w: 0.8, lines: [Sc("giSymh", "v", 0, COL.x, "SYM-H")] },
+    giDst: { title: "Dst  ·  nT", label: "Dst", unit: "(nT)", w: 0.8, lines: [Sc("giDst", "v", 0, COL.x, "Dst")] },
     swSpeed: { title: "Flow speed", label: "Flow speed", unit: "(km/s)", w: 0.9, lines: [Sc("dis", "speed", 0, COL.x, "V")] },
     swT: { title: "Proton T", label: "Proton T", unit: "(eV)", w: 0.9, log: true, lines: [Sc("dis", "tp", 0, COL.x, "T")] },
     // GOES (Helios's GOES window): integral particle fluxes and the X-ray flux, each line set by the source (relabel)
@@ -718,7 +758,9 @@
   });
   MISSIONS.goes = { sections: [["MAG", ["b"]], ["X-rays", ["gX"]], ["Particles", ["gP", "gE"]]], stack: ["b", "gX", "gP", "gE"],
                     relabel: { b: { title: "B — magnetic field (GSE)" } } };
-  for (const k of ["tha", "c4", "omni", "l1", "goes"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
+  MISSIONS.idx = { sections: [["Upstream", ["giMach", "giMach2"]], ["Ground", ["giKp", "giAeal", "giAu", "giSymh", "giDst"]]],
+                   stack: ["giMach", "giKp", "giAeal", "giAu", "giSymh"] };          // Dst off: SYM-H is its 1-min counterpart
+  for (const k of ["tha", "c4", "omni", "l1", "goes", "idx"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
   /** The subplot `key` as the given mission draws it. */
   function kindOf(mission, key) {
     const k = KINDS[key], r = MISSIONS[mission].relabel && MISSIONS[mission].relabel[key];
@@ -774,6 +816,11 @@
     }
     return out;
   }
+  /** What "Despike" filters (SpacecraftSeries.despiked): the moments, temperatures, velocities and V⊥, the currents,
+   *  E, E′ and J·E′. Never B, the spectrograms, the pressures, HPCA, the potential or the OMNI, GOES and index rows;
+   *  in the frozen-in and drift rows only E and V⊥, not the −V×B and E×B drawn beside them. */
+  const DESPIKED = /^(n|ti|te|tanis|vi|ve|jfpi|jpar|jperp|e|epE|epI|jdotE|exb[XYZ]|fz[EI][xyz])$/;
+  const spikes = (line, key) => line.ds !== "fgm" && DESPIKED.test(key || "") && !/×B/.test(line.label || "");
   const memo = (S, key, make) => { const m = S.__memo || (S.__memo = new Map()); if (!m.has(key)) m.set(key, make()); return m.get(key); };
 
   // ───────────────────────── MVA-B, as Helios solves it ─────────────────────────
@@ -889,7 +936,7 @@
     }
     /** One line's values over a record set, with the corrections and the LMN frame applied. A vector sample is dropped
      *  when any of its components is an outlier, as Helios drops the whole measurement. */
-    function accessor(line, R) {
+    function accessor(line, R, rowKey) {
       return (S) => {
         let f;
         if (line.derive) f = line.derive(S, P);
@@ -900,7 +947,7 @@
         }
         if (!f) return null;
         const n = S.t.length, id = `${line.ds}.${line.name || line.label}.${line.c ?? ""}|${cfg.spintone}`;
-        if (cfg.outliers && line.ds !== "fgm") {
+        if (cfg.outliers && spikes(line, rowKey)) {
           const bad = memo(S, `bad|${line.vec ? `${line.name}|${cfg.spintone}` : id}`, () => {
             if (!line.vec) return outliers(Float64Array.from({ length: n }, (_, i) => f(i)));
             const out = new Uint8Array(n);
@@ -995,7 +1042,7 @@
           ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
           if (r.lazy && LIVE && mission === "mms" && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
           let lo = Infinity, hi = -Infinity;
-          const accs = r.lines.map(line => accessor(line, R)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
+          const accs = r.lines.map(line => accessor(line, R, r.key)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
           const lg = (acc) => (S) => { const f = acc(S); return f && ((i) => { const v = f(i); return v > 0 ? Math.log10(v) : NaN; }); };
           accs.forEach((acc, i) => { if (!r.lines[i].axis2) [lo, hi] = extent(rrs[i], r.log ? lg(acc) : acc, lo, hi, a, b); });
           if (!isFinite(lo)) { lo = -1; hi = 1; }
@@ -1004,6 +1051,15 @@
           if (r.zero && !r.log) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
           const padY = r.log ? 0 : (hi - lo) * 0.08 || 1;
           lo -= padY; hi += padY;
+          if (r.pct) {                                       // GeoIndicesPanelView.machRange: p1 (≤ 1) … p99 in view, padded 8 %, ≥ 0
+            const v = [];
+            accs.forEach((acc, i) => { for (const [S, i0, i1] of rrs[i]) { const f = acc(S); if (f) for (let j = Math.max(0, i0); j < Math.min(S.t.length, i1); j++) { const x = f(j); if (isFinite(x) && x > 0 && S.t[j] >= a && S.t[j] <= b) v.push(x); } } });
+            v.sort((p, q) => p - q);
+            if (v.length > 4) {
+              const p1 = Math.min(v[Math.floor(v.length * 0.01)], 1), p99 = v[Math.min(Math.floor(v.length * 0.99), v.length - 1)];
+              if (p99 > p1) { const pd = (p99 - p1) * 0.08; lo = Math.max(0, p1 - pd); hi = p99 + pd; }
+            }
+          }
           const E = r.edit;                                 // limits set in the editor (absolute values, also on a log axis)
           if (E && E.yLo != null && (!r.log || E.yLo > 0)) lo = r.log ? Math.log10(E.yLo) : E.yLo;
           if (E && E.yHi != null && (!r.log || E.yHi > 0)) hi = r.log ? Math.log10(E.yHi) : E.yHi;
@@ -1045,13 +1101,21 @@
             ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(29,29,34,0.35)"; ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(Rw.x, Math.round(yOf(0)) + 0.5); ctx.lineTo(Rw.x + Rw.w, Math.round(yOf(0)) + 0.5); ctx.stroke(); ctx.restore();
           }
+          const bandsOf = r.lines[0] && r.lines[0].bands;
+          for (const [v, color] of bandsOf || []) {          // faint band thresholds, so the colors read as tiers
+            if (!(v > 0)) continue;
+            const y = yLin(v);
+            if (y < Rw.y || y > Rw.y + Rw.h) continue;
+            ctx.save(); ctx.globalAlpha = 0.3; ctx.setLineDash([3, 3]); ctx.strokeStyle = color; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(Rw.x, y); ctx.lineTo(Rw.x + Rw.w, y); ctx.stroke(); ctx.restore();
+          }
           for (const [v, color, label] of r.guides || []) {     // fixed guide levels (GOES flare classes), dashed
             const y = yLin(v);
             if (y < Rw.y || y > Rw.y + Rw.h) continue;
             ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(Rw.x, y); ctx.lineTo(Rw.x + Rw.w, y); ctx.stroke(); ctx.restore();
             rich(ctx, label, Rw.x + 4, y - 7, { size: 10, weight: 600, color });
           }
-          r.lines.forEach((line, i) => stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1, line.shift));
+          r.lines.forEach((line, i) => line.bands ? strokeBands(ctx, Rw, a, b, rrs[i], accs[i], yOf, line.bands)
+                                                  : stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1, line.shift));
           const n = r.lines.length;                       // the legend, top to bottom, at the right
           r.lines.forEach((line, i) =>
             rich(ctx, R && line.vec ? LMN[line.c] : line.label, Rw.x + Rw.w + 6, Rw.y + Rw.h / 2 + (i - (n - 1) / 2) * Math.min(13, (Rw.h - 6) / n), { size: 10.5, weight: 600, color: line.color }));
@@ -1076,9 +1140,11 @@
       for (const t of ticks) {
         const x = xOf(t);
         ctx.fillRect(Math.round(x), yb, 1, 4);
-        rich(ctx, secs ? clock(t) : clock(t).slice(0, 5), x, yb + 12, { size: 10.5, align: "center" });
+        const hm = clock(t).slice(0, 5), d = new Date(T0 + t * 1000);   // a multi-day axis names its midnights
+        rich(ctx, secs ? clock(t) : b - a > 86400 && hm === "00:00" ? `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}` : hm, x, yb + 12, { size: 10.5, align: "center" });
       }
-      rich(ctx, `Time: ${new Date(T0 + (a + b) / 2 * 1000).toISOString().slice(0, 10)}${cfg.lmn ? ` · ${cfg.lmn.label}` : ""}`, Pl.x + Pl.w / 2, h - 10, { size: 10.5, align: "center", color: INK2 });
+      const ymd = (t) => new Date(T0 + t * 1000).toISOString().slice(0, 10);
+      rich(ctx, `Time: ${b - a > 86400 ? `${ymd(a)} – ${ymd(b)}` : ymd((a + b) / 2)}${cfg.lmn ? ` · ${cfg.lmn.label}` : ""}`, Pl.x + Pl.w / 2, h - 10, { size: 10.5, align: "center", color: INK2 });
       overlay();
     }
 
@@ -1794,7 +1860,8 @@
     thb: { name: "ARTEMIS-P1", col: "#f2d36b", mission: "tha", family: THM_FAM }, thc: { name: "ARTEMIS-P2", col: "#e8b04a", mission: "tha", family: THM_FAM },
     c1: { name: "Cluster-1", col: "#a8f0c0", mission: "c4", family: CL_FAM }, c2: { name: "Cluster-2", col: "#62d9a0", mission: "c4", family: CL_FAM },
     c3: { name: "Cluster-3", col: "#3fbf86", mission: "c4", family: CL_FAM },
-    omni: { name: "OMNI", col: "#f7c55c", mission: "omni", family: ["omni"] },
+    omni: { name: "OMNI", col: "#f7c55c", mission: "omni", family: ["omni", "idx"] },
+    idx: { name: "Geomagnetic indices", col: "#8fb4ff", mission: "idx", family: ["omni", "idx"] },
     ace: { name: "ACE", col: "#e07b00", mission: "l1", family: ["ace", "wind", "dscovr"] },
     wind: { name: "Wind", col: "#008c8c", mission: "l1", family: ["ace", "wind", "dscovr"] },
     dscovr: { name: "DSCOVR", col: "#7f33b3", mission: "l1", family: ["ace", "wind", "dscovr"] },
@@ -1814,7 +1881,8 @@
     return /^THEMIS/.test(name) ? "tha" : /^Cluster/.test(name) ? "c4" : null;
   };
   const WINDOW_CHOICES = [5, 10, 30, 90, 180];             // ±minutes, as HSOScreen.windowChoices
-  const rangeLabel = (m) => (m >= 60 && m % 60 === 0 ? `±${m / 60}h` : `±${m}m`);
+  const IDX_CHOICES = [720, 1440, 2880, 4320];             // the indices window: ±12 h … ±3 d (GeoIndicesPanelView.halfWidths)
+  const rangeLabel = (m) => (m >= 1440 && m % 1440 === 0 ? `±${m / 1440}d` : m >= 60 && m % 60 === 0 ? `±${m / 60}h` : `±${m}m`);
   // VDFPresets: a preset sets every electron option it covers. "App default" is Helios's own; the crescent preset is this
   // demo's recipe for the perpendicular crescent of Burch et al. (2016), which Helios's list does not carry.
   const VDF_PRESETS = [
@@ -1893,7 +1961,7 @@
     const A = host.app || { hover: null, hoverY: null, sel: null };
     if (!host.app) {
       A.setFocus = (a, b) => {
-        const [S0, S1] = D.m.event.span, s = clamp(b - a, 2, S1 - S0);
+        const [S0, S1] = W.view.span || D.m.event.span, s = clamp(b - a, 2, S1 - S0);   // a window with its own span (indices)
         A.a = clamp(a, S0, S1 - s); A.b = A.a + s;
         W.redraw(); W.rangeText();
       };
@@ -2069,7 +2137,9 @@
       }
     }
     W.rangeText = () => {
-      const s = (A.b - A.a) / 2, m = WINDOW_CHOICES.find(x => Math.abs(x * 60 - s) < 1);
+      const ch = W.view.span ? IDX_CHOICES : WINDOW_CHOICES, menu = $(".fw-range .pick-menu", el);
+      if (menu.dataset.set !== String(ch)) { menu.innerHTML = ch.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join(""); menu.dataset.set = String(ch); }
+      const s = (A.b - A.a) / 2, m = ch.find(x => Math.abs(x * 60 - s) < 1);
       $(".fw-rb span", el).textContent = m ? rangeLabel(m) : `±${span(s)}`;
       $$("[data-m]", el).forEach(o => o.setAttribute("aria-selected", String(+o.dataset.m === m)));
       // Helios's reset: shown only while the window is trimmed inside its ±window
@@ -2104,7 +2174,7 @@
       catch (e) { busy.textContent = `${Cr.name}'s data could not be loaded.`; busy.hidden = false; return; }
       busy.hidden = true;
       const data = D.craft[k], newMission = !W.n || CRAFT[W.n].mission !== Cr.mission;
-      Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind, relabel: data.relabel || null, lazyDone: data.lazyDone || null });
+      Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind, relabel: data.relabel || null, lazyDone: data.lazyDone || null, span: host.app ? null : data.span || null });
       W.n = k;
       if (newMission || LIVE) {                              // live: only the subplots that probe has data for that day
         C.mission = Cr.mission; C.stack = MISSIONS[Cr.mission].stack.slice();
@@ -2121,6 +2191,10 @@
       pb.style.setProperty("--c", Cr.col); $("span", pb).textContent = Cr.name;
       pickerMenu();
       if (W.lmn.panel) defaultInterval();
+      if (!host.app && (data.span || W.spanned) && newMission) {   // into or out of a window with its own span: its default range
+        const c = host.moment(), [a2, b2] = data.span ? [c - data.wm * 60, c + data.wm * 60] : host.span();
+        W.spanned = !!data.span; A.home = [a2, b2]; A.setFocus(a2, b2); A.home = [A.a, A.b];
+      }
       renderSide(); renderLMN(); relayout();
       await loadCuts();
       host.onCraft && host.onCraft(W);
@@ -2674,8 +2748,8 @@
       place(W, { w, l: clamp(W.r.l, 8, Math.max(8, bw - w - 8)) });
       W.redraw();
     }
-    function spanOf(pinned, wm) {                           // a window's span: ±wm around its moment, inside the data
-      const c = pinned ?? ev.crossing, [S0, S1] = ev.span, h = Math.min(wm * 60, (S1 - S0) / 2);
+    function spanOf(pinned, wm, S = ev.span) {              // a window's span: ±wm around its moment, inside the data
+      const c = pinned ?? ev.crossing, [S0, S1] = S || ev.span, h = Math.min(wm * 60, (S1 - S0) / 2);
       const a = clamp(c - h, S0, S1 - 2 * h);
       return [a, a + 2 * h];
     }
@@ -2764,7 +2838,7 @@
       const st = { wm: 30 };
       const W = DataWindow(D, n, {
         el, S, pinned, span: () => spanOf(pinned, st.wm), moment: () => pinned ?? ev.crossing, widen: (w, dw) => widen(w, dw),
-        setRange: (w, m) => { st.wm = m; const [a, b] = spanOf(pinned, m); w.app.home = [a, b]; w.app.setFocus(a, b); },
+        setRange: (w, m) => { if (!w.view.span) st.wm = m; const [a, b] = spanOf(pinned, m, w.view.span); w.app.home = [a, b]; w.app.setFocus(a, b); },
       });
       Object.assign(W, { want: n, pinned, r: {}, max: null, pill: null });
       wins.push(W);
@@ -2919,7 +2993,7 @@
   }
   /** The live view's extra handlers: Earth opens OMNI, an imager its keogram. */
   function liveClicks(openKey, host, getScene) {
-    return LIVE ? { onEarth: () => openKey("omni"), onStation: (site) => keogramPanel(host, getScene(), site) } : {};
+    return LIVE ? { onEarth: () => openKey("idx"), onStation: (site) => keogramPanel(host, getScene(), site) } : {};
   }
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const stamp = (t) => { const d = new Date(T0 + t * 1000); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} · ${clock(t).slice(0, 5)} UTC`; };
@@ -2948,7 +3022,7 @@
     const stack = (q.get("stack") || "").split(",").filter(k => KINDS[k]);
     if (stack.length) { W.cfg.stack = stack; }
     const [a, b] = span();
-    W.app.home = [a, b]; W.app.setFocus(a, b);
+    if (!W.spanned || (q.has("a") && q.has("b"))) { W.app.home = [a, b]; W.app.setFocus(a, b); }
     window.addEventListener("resize", () => W.redraw());
     return true;
   }
