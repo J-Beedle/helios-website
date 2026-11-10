@@ -32,7 +32,9 @@
    *  lines; dx the solar wind's line spacing [R_E]; v0 the outflow speed at the nose (fraction of the wind's). */
   function Meridian(cfg) {
     const E = { cfg };
-    const X_REF = 60;                                           // where τ = 0 upstream
+    const X_REF = cfg.xRef ?? 60;                               // where τ = 0 upstream
+    const U = cfg.unit ?? 1;                                    // the body's size against Earth's magnetosphere, for lengths given in R_E
+    const R_IN = cfg.rIn ?? 1;                                  // where field lines end: the body's surface
     // ── the boundaries by polar angle from the Sun–Earth line ──
     const NT = 1800, TH = (i) => Math.PI * i / NT;
     const rmp = new Float64Array(NT + 1).fill(Infinity), rbs = new Float64Array(NT + 1);
@@ -47,7 +49,7 @@
         const f = clamp((th - a) / Math.max(b - a, 1e-12), 0, 1);
         rmp[i] = Math.hypot(lerp(mp[j][0], mp[j + 1][0], f), lerp(mp[j][1], mp[j + 1][1], f));
       }
-      for (let i = 0; i <= NT; i++) rbs[i] = M.bsRadius(TH(i), cfg.bs);
+      for (let i = 0; i <= NT; i++) rbs[i] = cfg.bsR ? cfg.bsR(TH(i)) : M.bsRadius(TH(i), cfg.bs);
     }
     const tab = (arr, th) => { const f = clamp(th / Math.PI * NT, 0, NT - 1e-9), i = f | 0; return arr[i] + (f - i) * (arr[i + 1] - arr[i]); };
     const rMP = (th) => { const f = clamp(th / Math.PI * NT, 0, NT - 1e-9), i = f | 0; return isFinite(rmp[i + 1]) ? rmp[i] + (f - i) * (rmp[i + 1] - rmp[i]) : rmp[i]; };
@@ -62,7 +64,7 @@
       const th = TH(i), a = Math.max(0, i - 1), b = Math.min(NT, i + 1);
       const tx = rbs[b] * Math.cos(TH(b)) - rbs[a] * Math.cos(TH(a)), tz = rbs[b] * Math.sin(TH(b)) - rbs[a] * Math.sin(TH(a));
       const cn = isFinite(tx) && isFinite(tz) ? Math.abs(tz) / Math.hypot(tx, tz) : 0;   // the shock normal's sunward part
-      const X = M.rh(cfg.bs.mach * cn, GAMMA);
+      const X = M.rh((cfg.mach ?? cfg.bs.mach) * cn, GAMMA);
       vbs[i] = Math.sqrt((1 - cn * cn) + cn * cn / (X * X));
       vmp[i] = vbs[i] * (q0 + (qFlank - q0) * (1 - Math.exp(-Math.pow(th / 1.0, 1.5))));   // never faster than the flow outside it
       rhoBS[i] = rbs[i] * Math.sin(th);
@@ -166,7 +168,7 @@
     const dip0 = (x, z) => {
       const r2 = x * x + z * z, r = Math.sqrt(r2);
       if (r < 1e-6) return 0;
-      const e = 0.3 * r * smooth(2.5, 7, r);
+      const e = 0.3 * r * smooth(2.5 * U, 7 * U, r);
       return -x * Math.sqrt(x * x + e * e) / (r2 * r);
     };
     E.dipole = dip0;
@@ -175,14 +177,15 @@
       const k = j * nx + i, x = xOf(i), z = zOf(j), r = Math.hypot(x, z);
       psi0[k] = dip0(x, z);
       ext[k] = tauAt(x, z) - E.tauX;                             // inside, the magnetopause's value along the ray
-      if (r <= 1) { kind[k] = 4; psi0[k] = dip0(x / Math.max(r, 0.2), z / Math.max(r, 0.2)); }
+      if (r <= R_IN) { kind[k] = 4; psi0[k] = dip0(x * R_IN / Math.max(r, 0.2), z * R_IN / Math.max(r, 0.2)); }
       else if (!E.inside(x, z)) kind[k] = 1;
       else if (j === nzh && x <= P.xIn) kind[k] = 2;
     }
     // Nodes with a neighbour across the magnetopause take its value where the arm meets it (Shortley & Weller 1938),
     // so the boundary is the curve itself and not the grid's staircase.
     const irr = [];                                              // [k, aE, aW, aN, aS, tE, tW, tN, tS, pE, pW, pN, pS]
-    const mpValue = (x, z) => E.tauMP(Math.atan2(Math.abs(z), x)) - E.tauX;
+    // (a closed magnetosphere's boundary is one field line: the same value all along it)
+    const mpValue = (x, z) => (cfg.closed ? 0 : E.tauMP(Math.atan2(Math.abs(z), x)) - E.tauX);
     for (let j = 1; j < nz - 1; j++) for (let i = 1; i < nx - 1; i++) {
       const k = j * nx + i;
       if (kind[k] !== 0 && kind[k] !== 2) continue;
@@ -212,7 +215,7 @@
     /** n sweeps of successive over-relaxation on φ; the sheet's nodes are drawn to the profile over a ramp. */
     E.relax = (n, omega = 1.9) => {
       const A = P.psiXd, e0 = P.e0;
-      for (let k = 0; k < N; k++) if (kind[k] === 1) phi[k] = A + e0 * ext[k] - psi0[k]; else if (kind[k] === 4) phi[k] = 0;
+      for (let k = 0; k < N; k++) if (kind[k] === 1) phi[k] = A + (cfg.closed ? 0 : e0 * ext[k]) - psi0[k]; else if (kind[k] === 4) phi[k] = 0;
       for (let s = 0; s < n; s++) {
         for (let j = 1; j < nz - 1; j++) {
           const base = j * nx;
@@ -220,7 +223,7 @@
             const k = base + i, kd = kind[k];
             if (kd === 0) { phi[k] += omega * (0.25 * (phi[k - 1] + phi[k + 1] + phi[k - nx] + phi[k + nx]) - phi[k]); continue; }
             if (kd !== 2) continue;
-            const x = xOf(i), w = smooth(P.xIn, P.xIn - 3, x), v = 0.25 * (phi[k - 1] + phi[k + 1] + phi[k - nx] + phi[k + nx]);
+            const x = xOf(i), w = smooth(P.xIn, P.xIn - 3 * U, x), v = 0.25 * (phi[k - 1] + phi[k + 1] + phi[k - nx] + phi[k + nx]);
             phi[k] = (1 - w) * (phi[k] + omega * (v - phi[k])) + w * (E.ridge(x) - psi0[k]);
           }
           if (kind[base] !== 1) phi[base] = phi[base + 1];                                  // the tail end: lines leave level
@@ -271,8 +274,8 @@
       const tmp = cTmp, wts = cW;
       for (let i = 0; i < nx; i++) {
         const x = xOf(i);
-        if (x > P.xIn - 0.5) continue;
-        const sg = P.sheet(x) / h * smooth(P.xIn - 0.5, P.xIn - 4, x), reach = Math.min(nzh - 2, Math.ceil(3 * sg), 40);
+        if (x > P.xIn - 0.5 * U) continue;
+        const sg = P.sheet(x) / h * smooth(P.xIn - 0.5 * U, P.xIn - 4 * U, x), reach = Math.min(nzh - 2, Math.ceil(3 * sg), 40);
         if (sg < 0.35) continue;
         const span = Math.min(nzh - reach - 1, Math.ceil(4 * sg) + reach);
         for (let d = 0; d <= reach; d++) wts[d] = Math.exp(-0.5 * (d / sg) * (d / sg));
@@ -308,7 +311,7 @@
     };
 
     // ── contours ──
-    const R_CUT = 2.4;                                          // inside this the lines are the dipole's own, drawn exactly
+    const R_CUT = cfg.rCut ?? 2.4;                              // inside this the lines are the dipole's own, drawn exactly
     const cellIn = new Uint8Array(N), cellOut = new Uint8Array(N);
     for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {
       const k = j * nx + i, ks = [k, k + 1, k + nx, k + nx + 1];
@@ -404,7 +407,7 @@
     /** Carries an end at the inner cut down the dipole's field line to the ground. */
     function foot(x, z) {
       const r = Math.hypot(x, z), lam = Math.atan2(z, Math.abs(x)), c = Math.cos(lam), L = r / Math.max(c * c, 1e-6), sx = Math.sign(x) || 1;
-      const lf = Math.sign(lam || 1) * Math.acos(Math.sqrt(Math.min(1, 1 / L))), out = [];
+      const lf = Math.sign(lam || 1) * Math.acos(Math.sqrt(Math.min(1, R_IN / L))), out = [];
       for (let k = 1; k <= 14; k++) { const la = lam + (lf - lam) * k / 14, rr = L * Math.cos(la) ** 2; out.push(sx * rr * Math.cos(la), rr * Math.sin(la)); }
       return out;
     }
@@ -425,6 +428,13 @@
     E.contoursAt = (list) => {
       const far = list.filter(v => 1 / Math.abs(v) > R_CUT + 0.7).sort((p, q) => p - q);
       return E.contours(0, 1, 0, 0, false, far).concat(list.filter(v => 1 / Math.abs(v) <= R_CUT + 0.7).map(v => dipoleLine(1 / Math.abs(v), v < 0 ? 1 : -1)));
+    };
+    /** The solar wind's field lines alone: the flow's isochrones τ − τ_X = c + n·step between lo and hi, outside
+     *  the obstacle. For a body the field does not connect to: a closed magnetosphere, or an induced one. */
+    E.isochrones = (c, step, lo, hi) => {
+      const out = [];
+      for (const l of march(ext, cellOut, c, step, lo, hi)) for (const q of clip(l, false)) out.push({ pts: q.pts, a: q.a, b: q.b, type: "imf", level: c + l.n * step });
+      return out;
     };
     E.contours = (c0, step, lo, hi, outside = true, list = null) => {
       const inner = [];

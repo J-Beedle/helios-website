@@ -91,11 +91,13 @@
               <button data-mode="radii" aria-pressed="true">Each to fit</button><button data-mode="km" aria-pressed="false">True size</button>
             </div>
           </div>
-          <p class="cite reveal d2">Subsolar distances as Helios draws them: Mercury, Winslow et al. 2013 · Venus, Martinecz et al. 2008 · Earth, Shue et al. 1998 and Jelínek et al. 2012 at 2&nbsp;nPa · Mars, Vignes et al. 2000. The shapes are schematic.</p>
+          <p class="cite reveal d2" data-gfx="classic">Subsolar distances as Helios draws them: Mercury, Winslow et al. 2013 · Venus, Martinecz et al. 2008 · Earth, Shue et al. 1998 and Jelínek et al. 2012 at 2&nbsp;nPa · Mars, Vignes et al. 2000. The shapes are schematic.</p>
+          <p class="cite reveal d2" data-gfx="new">Mercury: Winslow et al. 2013, <a href="https://doi.org/10.1002/jgra.50237">doi:10.1002/jgra.50237</a> · Venus: Martinecz et al. 2008, <a href="https://doi.org/10.1016/j.pss.2007.07.007">doi:10.1016/j.pss.2007.07.007</a> · Earth: Shue et al. 1998 and Jelínek et al. 2012 at 2&nbsp;nPa · Mars: Vignes et al. 2000, <a href="https://doi.org/10.1029/1999GL010703">doi:10.1029/1999GL010703</a>. The solar wind's field is drawn across the flow at every planet.</p>
         </div>
         <figure class="figure reveal d1">
-          <div class="frame wide"><canvas id="fig-scale" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth and Mars compared"></canvas></div>
-          <figcaption>Dashed: bow shock. Solid blue: magnetopause. Solid orange: Mars's magnetic pileup boundary.<span class="credit">Distances from Helios's research build</span></figcaption>
+          <div class="frame wide"><canvas data-gfx="classic" id="fig-scale" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth and Mars compared"></canvas><canvas data-gfx="new" id="fig-worlds" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth and Mars compared, with the solar wind flowing round each and its magnetic field draping over them"></canvas></div>
+          <figcaption data-gfx="classic">Dashed: bow shock. Solid blue: magnetopause. Solid orange: Mars's magnetic pileup boundary.<span class="credit">Distances from Helios's research build</span></figcaption>
+          <figcaption data-gfx="new">Dashed: bow shock. Solid blue: magnetopause. Solid orange: the obstacle at Venus (the ion composition boundary) and Mars (the magnetic pileup boundary), where the solar wind's own field piles up. The distances are from each planet's center to the obstacle's nose and the shock's. Gold: the solar wind's magnetic field, carried with the flow and draped over each obstacle; at Venus and Mars the draped field is the tail. Mercury's dipole sits 480&nbsp;km north of the planet's center.<span class="credit">Each boundary from its published fit · flow and field from this site's kinematic model</span></figcaption>
         </figure>
       </div>
     </section>
@@ -195,7 +197,6 @@
   </footer>  <!-- /chrome:foot -->
 
   <script src="js/site.js?v=36"></script>
-  <script src="js/figkit.js?v=36"></script>
-  <script src="js/worlds.js?v=36"></script>
+  <script src="js/gfx/switch.js?v=37" data-new="js/figkit.js js/gfx/core.js js/gfx/meridian.js js/gfx/worlds.js" data-classic="js/figkit.js js/worlds.js"></script>
 </body>
 </html>
