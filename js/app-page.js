@@ -45,7 +45,25 @@
   time.value = shown.toISOString().slice(11, 16);
   /** Another moment: the same screen (its view, scale and open windows) at the new time. */
   const go = (t) => { const u = new URL(location.href); u.searchParams.set("t", t); location.assign(u); };
-  form.addEventListener("submit", (e) => { e.preventDefault(); if (date.value && time.value) go(`${date.value}T${time.value}Z`); });
+  // The time is typed on the 24-hour clock. (A type="time" field follows the visitor's locale, and in a 12-hour one
+  // shows "02:41 PM" for 14:41 UTC.) 1441, 14:41 and 9:05 are all taken; the arrow keys step it by a minute.
+  const hhmm = (s) => { const m = /^\s*(\d{1,2})(?::?(\d{2}))?\s*$/.exec(s); if (!m) return null; const h = +m[1], mi = +(m[2] || 0); return h < 24 && mi < 60 ? `${String(h).padStart(2, "0")}:${String(mi).padStart(2, "0")}` : null; };
+  time.addEventListener("input", () => { time.setCustomValidity(""); const d = time.value.replace(/[^0-9]/g, "").slice(0, 4); if (!time.value.includes(":") && d.length === 4) time.value = `${d.slice(0, 2)}:${d.slice(2)}`; });
+  time.addEventListener("blur", () => { const v = hhmm(time.value); if (v) time.value = v; });
+  time.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    const v = hhmm(time.value); if (!v) return;
+    e.preventDefault();
+    const t = ((+v.slice(0, 2) * 60 + +v.slice(3) + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1)) % 1440 + 1440) % 1440;
+    time.value = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+  });
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = hhmm(time.value);
+    if (!v) { time.setCustomValidity("A time in UTC on the 24-hour clock, such as 14:41"); time.reportValidity(); return; }
+    time.value = v;
+    if (date.value) go(`${date.value}T${v}Z`);
+  });
   const stamp = `${shown.getUTCDate()} ${M[shown.getUTCMonth()]} ${shown.getUTCFullYear()} ${shown.toISOString().slice(11, 16)} UTC`;
   document.title = `Helios Live · ${stamp}`;
   $("#rail-day").textContent = `${M[shown.getUTCMonth()]} ${shown.getUTCDate()}`;

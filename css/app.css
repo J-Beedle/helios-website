@@ -15,6 +15,8 @@ body.helios-app canvas { touch-action: none; }
 .la-pick select, .la-pick input { height: 28px; padding: 0 8px; border: 1px solid rgba(240, 240, 250, 0.16); border-radius: 7px; background: rgba(240, 240, 250, 0.06);
   color: #e8e9ed; font: 400 12.5px/1 ui-monospace, "SF Mono", Menlo, monospace; color-scheme: dark; }
 .la-pick select { max-width: 250px; min-width: 0; font-family: inherit; text-overflow: ellipsis; }
+.la-pick #live-time { width: 62px; text-align: center; letter-spacing: 0.02em; }   /* HH:MM, typed on the 24-hour clock */
+.la-pick #live-time:invalid { border-color: rgba(255, 107, 94, 0.7); }
 .la-pick select:focus-visible, .la-pick input:focus-visible, .la-bar button:focus-visible, .rail button:focus-visible, .rail a:focus-visible { outline: 2px solid #ffc44d; outline-offset: 1px; }
 .la-utc { color: #919199; font: 500 10.5px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.06em; }
 .la-go { height: 28px; padding: 0 12px; border: 0; border-radius: 7px; background: #ffc44d; color: #17130a; font: 600 12.5px/1 inherit; cursor: pointer; }
