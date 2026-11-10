@@ -7,7 +7,7 @@
   const me = document.currentScript, q = new URLSearchParams(location.search);
   let mode = q.get("gfx");
   try {
-    if (mode === "classic" || mode === "new") localStorage.setItem("helios-gfx", mode);
+    if (mode === "classic" || mode === "new") { if (q.get("keep") !== "0") localStorage.setItem("helios-gfx", mode); }   // compare.html's frames choose for themselves only
     else mode = localStorage.getItem("helios-gfx");
   } catch (e) { /* this visit only */ }
   if (mode !== "classic") mode = "new";
@@ -24,7 +24,7 @@
     const host = document.querySelector("footer .small, footer") || document.body;
     const a = document.createElement("a");
     const other = mode === "new" ? "classic" : "new";
-    const u = new URL(location.href); u.searchParams.set("gfx", other);
+    const u = new URL(location.href); u.searchParams.set("gfx", other); u.searchParams.delete("keep");
     a.href = u.pathname.split("/").pop() + u.search + u.hash;
     a.className = "gfx-switch";
     a.textContent = mode === "new" ? "Show the original figures" : "Show the new figures";

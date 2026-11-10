@@ -71,8 +71,8 @@
 
   <main id="main">
     <section class="panel subhero" id="top" aria-label="The models">
-      <div class="media"><canvas id="fig-boundaries" role="img" aria-label="The magnetopause and bow shock for the solar wind set with the sliders"></canvas>
-        <p class="caption">Dashed: 2&nbsp;nPa and B<sub>z</sub> = 0, for comparison.</p></div>
+      <div class="media"><canvas data-gfx="classic" id="fig-boundaries" role="img" aria-label="The magnetopause and bow shock for the solar wind set with the sliders"></canvas><canvas data-gfx="new" id="fig-boundaries2" role="img" aria-label="The magnetopause and bow shock for the solar wind set with the sliders, with the solar wind flowing round them and its field draped over the nose"></canvas>
+        <p class="caption" data-gfx="classic">Dashed: 2&nbsp;nPa and B<sub>z</sub> = 0, for comparison.</p><p class="caption" data-gfx="new">Dashed: 2&nbsp;nPa and B<sub>z</sub> = 0, for comparison. Streaks: the solar wind, taking the Rankine–Hugoniot jump at the shock. Gold: its field, carried with the flow.</p></div>
       <div class="copy">
         <h1 class="reveal d1">The physics</h1>
         <p class="lede reveal d2">Helios draws the magnetosphere from published models, written from studies and checked against reference code. Below, move the sliders to change the solar wind: the magnetopause and bow shock respond as Shue et al. (1998) and Jelínek et al. (2012) predict.</p>
@@ -116,8 +116,9 @@
           <p class="cite reveal d2">Beggan et al. 2026 (IGRF-14), <a href="https://doi.org/10.1186/s40623-025-02360-0">doi:10.1186/s40623-025-02360-0</a> · Tsyganenko 1989, <a href="https://doi.org/10.1016/0032-0633(89)90066-4">doi:10.1016/0032-0633(89)90066-4</a> · Tsyganenko 2002, <a href="https://doi.org/10.1029/2001JA000219">doi:10.1029/2001JA000219</a> · Dormand &amp; Prince 1980</p>
         </div>
         <figure class="figure reveal d1">
-          <div class="frame wide"><canvas id="fig-t89" role="img" aria-label="IGRF plus T89 field lines in the noon–midnight plane"></canvas></div>
-          <figcaption>IGRF + T89 in the noon–midnight plane at zero dipole tilt. Pale blue lines are closed; violet lines are open.<span class="credit">Traced by Helios</span></figcaption>
+          <div class="frame wide"><canvas data-gfx="classic" id="fig-t89" role="img" aria-label="IGRF plus T89 field lines in the noon–midnight plane"></canvas><canvas data-gfx="new" id="fig-t89b" role="img" aria-label="IGRF plus T89 field lines in the noon–midnight plane, moving as Kp changes, beside the dipole's lines from the same footpoints"></canvas></div>
+          <figcaption data-gfx="classic">IGRF + T89 in the noon–midnight plane at zero dipole tilt. Pale blue lines are closed; violet lines are open.<span class="credit">Traced by Helios</span></figcaption>
+          <figcaption data-gfx="new">IGRF + T89 in the noon–midnight plane at zero dipole tilt. Pale blue lines are closed; violet lines are open (they pass 60&nbsp;R<sub>E</sub>). Dotted: a dipole's line from the same footpoint. The gold mark follows the last closed line drawn on the night side.<span class="credit">Traced by Helios</span></figcaption>
         </figure>
       </div>
     </section>
@@ -140,8 +141,9 @@
           <p class="cite reveal d2">Vette 1991 (AE-8) · Sawyer &amp; Vette 1976 (AP-8) · Brautigam &amp; Bell 1995 (CRRESELE) · Meffert &amp; Gussenhoven 1994 (CRRESPRO)</p>
         </div>
         <figure class="figure reveal d1">
-          <div class="frame wide"><canvas id="fig-belts" role="img" aria-label="A cut through the radiation belts in a magnetic meridian"></canvas><p class="readout" id="belts-readout"></p></div>
-          <figcaption>Integral flux through a magnetic meridian. The thin lines are dipole field lines at L = 2, 4 and 6.<span class="credit">Computed by Helios's AE-8/AP-8 code</span></figcaption>
+          <div class="frame wide"><canvas data-gfx="classic" id="fig-belts" role="img" aria-label="A cut through the radiation belts in a magnetic meridian"></canvas><canvas data-gfx="new" id="fig-belts2" role="img" aria-label="A cut through the radiation belts in a magnetic meridian, with the orbits that cross them and trapped particles bouncing along the field"></canvas><p class="readout" id="belts-readout"></p></div>
+          <figcaption data-gfx="classic">Integral flux through a magnetic meridian. The thin lines are dipole field lines at L = 2, 4 and 6.<span class="credit">Computed by Helios's AE-8/AP-8 code</span></figcaption>
+          <figcaption data-gfx="new">Integral flux through a magnetic meridian, with the orbits of the Space Station, GPS and geosynchronous satellites to scale. The thin lines are dipole field lines at L = 2, 4 and 6. The moving points are trapped particles bouncing between their mirror points, more of them where the flux is higher and slowed many times over: a 1&nbsp;MeV electron at L&nbsp;=&nbsp;4 bounces about three times a second.<span class="credit">Flux computed by Helios's AE-8/AP-8 code</span></figcaption>
         </figure>
       </div>
     </section>
@@ -159,8 +161,9 @@
           <p class="cite reveal d2">Starkov 1994 · Sigernes et al. 2011, <a href="https://doi.org/10.1051/swsc/2011003">doi:10.1051/swsc/2011003</a></p>
         </div>
         <figure class="figure reveal d1">
-          <div class="frame square"><canvas id="fig-oval" role="img" aria-label="The northern auroral oval"></canvas><p class="readout" id="oval-readout"></p></div>
-          <figcaption>The northern oval seen from above, noon at the top: the discrete oval in green, the diffuse aurora beyond it. AL comes from Kp by Starkov's own relation.<span class="credit">Starkov (1994) with Sigernes et al. (2011)'s coefficients, ported from Helios</span></figcaption>
+          <div class="frame square"><canvas data-gfx="classic" id="fig-oval" role="img" aria-label="The northern auroral oval"></canvas><canvas data-gfx="new" id="fig-oval2" role="img" aria-label="The northern auroral oval over the turning Earth, seen from above the geomagnetic pole"></canvas><p class="readout" id="oval-readout"></p></div>
+          <figcaption data-gfx="classic">The northern oval seen from above, noon at the top: the discrete oval in green, the diffuse aurora beyond it. AL comes from Kp by Starkov's own relation.<span class="credit">Starkov (1994) with Sigernes et al. (2011)'s coefficients, ported from Helios</span></figcaption>
+          <figcaption data-gfx="new">The northern oval from above the geomagnetic pole, the Sun at the top, on an equinox day: the discrete oval in green, the diffuse aurora beyond it. The oval stays fixed to the Sun while the Earth turns under it once in forty seconds; a place is ringed while it is under the oval. Places are put in magnetic coordinates with a centered dipole (pole at 80.8°&nbsp;N, 72.7°&nbsp;W), a few degrees from the corrected coordinates Starkov's model is defined in. AL comes from Kp by Starkov's own relation.<span class="credit">Starkov (1994) with Sigernes et al. (2011)'s coefficients, ported from Helios · Earth: NASA Blue Marble</span></figcaption>
         </figure>
       </div>
     </section>
@@ -238,7 +241,6 @@
   </footer>  <!-- /chrome:foot -->
 
   <script src="js/site.js?v=36"></script>
-  <script src="js/figkit.js?v=36"></script>
-  <script src="js/models.js?v=36"></script>
+  <script src="js/gfx/switch.js?v=37" data-new="js/figkit.js js/gfx/core.js js/gfx/meridian.js js/gfx/models.js" data-classic="js/figkit.js js/models.js"></script>
 </body>
 </html>
