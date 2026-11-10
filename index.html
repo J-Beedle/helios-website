@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
-  <link rel="stylesheet" href="css/site.css?v=38">  <!-- /chrome:meta -->
+  <link rel="stylesheet" href="css/site.css?v=40">  <!-- /chrome:meta -->
   <link rel="preload" href="assets/data/hero-geometry.json" as="fetch" crossorigin>
 </head>
 <body>
@@ -219,16 +219,15 @@
       </div>
       <ul class="tiles">
         <li class="reveal feature">
-          <article class="live-card">
-            <div class="live-copy">
-              <span class="eyebrow"><i class="live-dot" aria-hidden="true"></i>In your browser · nothing to install</span>
+          <article class="tile live">
+            <img src="assets/img/live-feature.jpg" width="1920" height="1080" alt="Helios Live on 16 October 2015: the fleet's orbits around Earth inside the magnetopause and bow shock, with MMS1's data window open on the electron diffusion region of Burch et al. (2016)" loading="lazy">
+            <div class="tile-body">
+              <span class="eyebrow">In your browser</span>
               <h3>Helios Live</h3>
-              <p>Helios's HSO screen at any moment since March 2015. See where each spacecraft was and the magnetopause and bow shock that hour's solar wind set, then click a spacecraft for its data, read straight from the public archives.</p>
-              <p class="live-fleet">MMS · THEMIS · ARTEMIS · Cluster · GOES · ACE · Wind · DSCOVR</p>
-              <a class="btn solid" href="app.html">Launch Helios Live<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h7M5.5 2l3 3-3 3" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></a>
+              <p>Helios's HSO screen at any time since March 2015. View the spacecraft of the HSO, watching the changing bow shock and magnetopause, and select a spacecraft to view its data, read straight from public archives.</p>
+              <a class="link" href="app.html"><span class="ring"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h7M5.5 2l3 3-3 3" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></span>Launch Helios Live</a>
               <p class="live-try">Or start at an event: <a href="app.html?t=2015-10-16T13:07:02Z&amp;open=1">Burch 2016 EDR</a> · <a href="app.html?t=2017-07-11T22:34:03Z&amp;open=1">Torbert 2018 tail EDR</a> · <a href="app.html?t=2024-05-11T14:41:00Z&amp;open=1">Mother's Day storm</a></p>
             </div>
-            <div class="live-side"><a class="live-shot" href="app.html?t=2015-10-16T13:07:02Z&amp;open=1" aria-label="Open Helios Live at the electron diffusion region of Burch et al. (2016)"><img src="assets/img/live-feature.jpg" width="1920" height="1080" alt="Helios Live on 16 October 2015: the orbits of MMS, THEMIS, Cluster, the Van Allen Probes and Geotail around Earth inside the magnetopause and bow shock, with MMS1's data window open on the electron diffusion region of Burch et al. (2016)" loading="lazy"></a><p class="live-cap">Helios Live on 16 Oct 2015, 13:07 UTC: the fleet around Earth, and MMS1 at the electron diffusion region of Burch et al. (2016).</p></div>
           </article>
         </li>
         <li class="reveal"><a class="tile" href="worlds.html"><img src="assets/img/mars-view.jpg" alt="" loading="lazy"><div class="tile-body"><span class="eyebrow">Planets</span><h3>Other worlds</h3><p>New views of Mars, Mercury and the Jupiter system, and the Moon.</p><span class="link"><span class="ring"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h7M5.5 2l3 3-3 3" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></span>Explore</span></div></a></li>
@@ -338,7 +337,7 @@
     </video>
   </dialog>
 
-  <script src="js/gfx/switch.js?v=39" data-new="js/figkit.js js/gfx/core.js js/gfx/meridian.js js/gfx/hero.js js/gfx/dungey.js" data-classic="js/figkit.js js/hero.js"></script>
+  <script src="js/gfx/switch.js?v=40" data-new="js/figkit.js js/gfx/core.js js/gfx/meridian.js js/gfx/hero.js js/gfx/dungey.js" data-classic="js/figkit.js js/hero.js"></script>
   <script src="js/site.js?v=36"></script>
 </body>
 </html>

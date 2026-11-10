@@ -1013,6 +1013,9 @@
     return boxSet(E, g, lo, hi);
   }
   function tierOf(span) { return span <= 1200 ? "native" : span <= 7200 ? "reduced" : "survey"; }
+  /** A view narrower than this draws burst as sampled whatever the window's range is; so does a window told to
+   *  (app.fullBurst, from the burst badge's card, as Helios's "Load burst" does). The burst is already in the page. */
+  const FULL_BELOW = 300;
   function tierView(D0, tier) {
     if (tier === "native") return D0;
     const key = `tier|${tier}|${Object.keys(D0.sv).length}|${D0.bu ? Object.keys(D0.bu).length : 0}`;
@@ -1097,7 +1100,7 @@
       const { ctx, w, h, dpr } = sizeCanvas(cv), a = app.a, b = app.b;
       sizeCanvas(over);
       const mission = cfg.mission, keys = cfg.stack || MISSIONS[mission].stack;
-      D = LIVE && mission === "mms" && app.home ? tierView(D0, tierOf(app.home[1] - app.home[0])) : D0;
+      D = LIVE && mission === "mms" && app.home ? tierView(D0, app.fullBurst || b - a <= FULL_BELOW ? "native" : tierOf(app.home[1] - app.home[0])) : D0;
       if (D.sv.efiN && mission === "mms") D.sv.efi = D0.sv.efi = b - a <= 240 ? D.sv.efiN : b - a <= 7200 ? D.sv.efi15 : D.sv.efi45;
       let rows = keys.map(k => Object.assign({ key: k }, kindOf(mission, k), D.relabel && D.relabel[k])).filter(r => r.title && r.avail !== false);
       // live, other missions: as Helios, which fetches only the window, a subplot with nothing in the window is left out
@@ -2271,8 +2274,10 @@
       const out = {
         hatch: true,
         title: I.tier === "survey" ? `Burst isn't loaded at ${range}` : I.tier === "reduced" ? `Burst is averaged at ${range}` : f ? `Burst outside ${hms(f[0]).slice(0, 5)}–${hms(f[1]).slice(0, 5)} isn't loaded` : "Some burst isn't loaded",
-        lines, hint: I.tier !== "native" ? "For burst resolution, choose ±10 min or less." : null,
+        lines, hint: I.tier !== "native" ? "Burst is drawn as sampled once the view is under 5 minutes (drag across the figure to zoom), or at ±10 min or less." : null,
       };
+      if (I.tier !== "native") out.force = { label: "Draw burst at full resolution now", note: "For this window, until its range is changed.",
+                                             go: () => { A.fullBurst = true; W.redraw(); } };
       if (I.beyond.length) {                               // burst this page has not fetched: the moment that would bring it
         const c = (A.a + A.b) / 2, seg = I.beyond.slice().sort((p, q) => Math.abs(clamp(c, p[0], p[1]) - c) - Math.abs(clamp(c, q[0], q[1]) - c))[0];
         const bh = SRC.burstHalf || 600;                       // the middle of a short stretch; in a long one, the reach nearest the view
@@ -2292,7 +2297,7 @@
       h.appendChild(document.createTextNode(c.title));
       for (const ln of c.lines) add("p", "fi-l", ln);
       if (c.hint) add("p", "fi-h", c.hint);
-      if (c.action) { add("button", "fi-go", c.action.label).addEventListener("click", c.action.go); add("p", "fi-h", c.action.note); }
+      for (const act of [c.force, c.action]) if (act) { add("button", "fi-go", act.label).addEventListener("click", () => { act.go(); card.hidden = true; }); add("p", "fi-h", act.note); }
       return true;
     }
     function badgeFor(kind) {
@@ -3131,7 +3136,7 @@
       const st = { wm: 30 };
       const W = DataWindow(D, n, {
         el, S, pinned, span: () => spanOf(pinned, st.wm), moment: () => pinned ?? ev.crossing, widen: (w, dw) => widen(w, dw),
-        setRange: (w, m) => { if (!w.view.span) st.wm = m; const [a, b] = spanOf(pinned, m, w.view.span); w.app.home = [a, b]; w.app.setFocus(a, b); },
+        setRange: (w, m) => { if (!w.view.span) st.wm = m; const [a, b] = spanOf(pinned, m, w.view.span); w.app.fullBurst = false; w.app.home = [a, b]; w.app.setFocus(a, b); },
       });
       Object.assign(W, { want: n, pinned, r: {}, max: null, pill: null });
       wins.push(W);

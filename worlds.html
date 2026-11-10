@@ -21,7 +21,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
-  <link rel="stylesheet" href="css/site.css?v=38">  <!-- /chrome:meta -->
+  <link rel="stylesheet" href="css/site.css?v=40">  <!-- /chrome:meta -->
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -76,7 +76,7 @@
       <div class="copy">
         <span class="eyebrow reveal">Other worlds</span>
         <h1 class="reveal d1">Beyond Earth's magnetosphere</h1>
-        <p class="lede reveal d2">Every planet meets the solar wind in its own way. Mercury has a small magnetosphere of its own, Venus and Mars have only the ones the solar wind induces, the Moon has none, and Jupiter's is the largest of any planet. Helios now has views of Mars, Mercury and the Jupiter system in development, each with the spacecraft that flew there and their data.</p>
+        <p class="lede reveal d2">Every planet interacts with the solar wind in its own way. Mercury has a magnetic field of its own that produces a magnetosphere. Venus and Mars have small, induced magnetospheres. The Moon has neither, but does pass through Earth's magnetotail. On the other hand, Jupiter has the largest magnetosphere of any planet, with its interactions with the Galilean moons producing unique configurations. Helios now has views of Mars, Mercury and Jupiter in development.</p>
       </div>
     </section>
 
@@ -84,20 +84,20 @@
       <div class="wrap">
         <div class="copy">
           <span class="eyebrow reveal">Side by side</span>
-          <h2 class="reveal d1">Four magnetospheres</h2>
-          <p class="reveal d2">Earth's magnetic field holds the solar wind off about ten Earth radii upstream. Mercury's much weaker field manages less than half a Mercury radius above the surface. Venus and Mars have no global field at all, so the solar wind piles up against their upper atmospheres, barely above the ground.</p>
+          <h2 class="reveal d1">Magnetospheric comparisons</h2>
+          <p class="reveal d2">Earth's magnetic field holds the solar wind off about ten Earth radii upstream. Mercury's much weaker field manages less than half a Mercury radius above the surface. Venus and Mars have no global field at all, so the solar wind piles up against their upper atmospheres, barely above the ground.<span data-gfx="new"> Jupiter's field holds it off about 80 Jupiter radii out, nearly six million kilometers.</span></p>
           <div class="controls reveal d2">
             <div class="seg" id="seg-scale" role="group" aria-label="Scale">
               <button data-mode="radii" aria-pressed="true">Each to fit</button><button data-mode="km" aria-pressed="false">True size</button>
             </div>
           </div>
           <p class="cite reveal d2" data-gfx="classic">Subsolar distances as Helios draws them: Mercury, Winslow et al. 2013 · Venus, Martinecz et al. 2008 · Earth, Shue et al. 1998 and Jelínek et al. 2012 at 2&nbsp;nPa · Mars, Vignes et al. 2000. The shapes are schematic.</p>
-          <p class="cite reveal d2" data-gfx="new">Mercury: Winslow et al. 2013, <a href="https://doi.org/10.1002/jgra.50237">doi:10.1002/jgra.50237</a> · Venus: Martinecz et al. 2008, <a href="https://doi.org/10.1016/j.pss.2007.07.007">doi:10.1016/j.pss.2007.07.007</a> · Earth: Shue et al. 1998 and Jelínek et al. 2012 at 2&nbsp;nPa · Mars: Vignes et al. 2000, <a href="https://doi.org/10.1029/1999GL010703">doi:10.1029/1999GL010703</a>. The solar wind's field is drawn across the flow at every planet.</p>
+          <p class="cite reveal d2" data-gfx="new">Mercury: Winslow et al. 2013, <a href="https://doi.org/10.1002/jgra.50237">doi:10.1002/jgra.50237</a> · Venus: Martinecz et al. 2008, <a href="https://doi.org/10.1016/j.pss.2007.07.007">doi:10.1016/j.pss.2007.07.007</a> · Earth: Shue et al. 1998 and Jelínek et al. 2012 at 2&nbsp;nPa · Mars: Vignes et al. 2000, <a href="https://doi.org/10.1029/1999GL010703">doi:10.1029/1999GL010703</a> · Jupiter: Joy et al. 2002 at 0.071&nbsp;nPa, <a href="https://doi.org/10.1029/2001JA009146">doi:10.1029/2001JA009146</a>. The solar wind's field is drawn across the flow at every planet.</p>
         </div>
         <figure class="figure reveal d1">
-          <div class="frame wide"><canvas data-gfx="classic" id="fig-scale" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth and Mars compared"></canvas><canvas data-gfx="new" id="fig-worlds" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth and Mars compared, with the solar wind flowing round each and its magnetic field draping over them"></canvas></div>
+          <div class="frame wide"><canvas data-gfx="classic" id="fig-scale" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth and Mars compared"></canvas><canvas data-gfx="new" id="fig-worlds" role="img" aria-label="The magnetospheres of Mercury, Venus, Earth, Mars and Jupiter compared, with the solar wind flowing round each and its magnetic field draping over them"></canvas></div>
           <figcaption data-gfx="classic">Dashed: bow shock. Solid blue: magnetopause. Solid orange: Mars's magnetic pileup boundary.<span class="credit">Distances from Helios's research build</span></figcaption>
-          <figcaption data-gfx="new">Dashed: bow shock. Solid blue: magnetopause. Solid orange: the obstacle at Venus (the ion composition boundary) and Mars (the magnetic pileup boundary), where the solar wind's own field piles up. The distances are from each planet's center to the obstacle's nose and the shock's. Gold: the solar wind's magnetic field, carried with the flow and draped over each obstacle; at Venus and Mars the draped field is the tail. Mercury's dipole sits 480&nbsp;km north of the planet's center.<span class="credit">Each boundary from its published fit · flow and field from this site's kinematic model</span></figcaption>
+          <figcaption data-gfx="new">Dashed: bow shock. Solid blue: magnetopause. Solid orange: the obstacle at Venus (the ion composition boundary) and Mars (the magnetic pileup boundary), where the solar wind's own field piles up. The distances are from each planet's center to the obstacle's nose and the shock's. Gold: the solar wind's magnetic field, carried with the flow and draped over each obstacle; at Venus and Mars the draped field is the tail. Mercury's dipole sits 480&nbsp;km north of the planet's center. Jupiter's own field is drawn as a dipole held inside its magnetopause; the real one is stretched into a disc by the plasma from Io. At one scale, Jupiter's boundaries are far off the picture.<span class="credit">Each boundary from its published fit · flow and field from this site's kinematic model · globes: MESSENGER MDIS, Magellan (USGS), Blue Marble, Viking MDIM 2.1 (USGS), Cassini ISS (NASA/JPL/SSI)</span></figcaption>
         </figure>
       </div>
     </section>
@@ -129,8 +129,8 @@
           </div>
         </div>
         <figure class="figure reveal d1">
-          <div class="frame"><img src="assets/img/moon-view.jpg" alt="Helios's Moon view: the magnetosphere, the Moon's orbit and ARTEMIS's two probes" loading="lazy"></div>
-          <figcaption>The Moon view.<span class="credit">Helios · HSO screen export</span></figcaption>
+          <div class="frame"><img src="assets/img/moon-view-2025.jpg" width="1520" height="950" alt="Helios's Moon view on 14 March 2025: the Moon in Earth's magnetotail during a lunar eclipse, with ARTEMIS's two probes beside it, and MMS and THEMIS near Earth inside the magnetopause and bow shock" loading="lazy"></div>
+          <figcaption>The Moon view on 14 March 2025, 06:00 UTC: the Moon deep in Earth's magnetotail and entering the umbra of a lunar eclipse, with ARTEMIS's two probes beside it.<span class="credit">Helios · HSO screen</span></figcaption>
         </figure>
       </div>
     </section>
@@ -146,8 +146,9 @@
           <p class="cite reveal d2">Joy et al. 2002, <a href="https://doi.org/10.1029/2001JA009146">doi:10.1029/2001JA009146</a> · Tao et al. 2005, <a href="https://doi.org/10.1029/2004JA010959">doi:10.1029/2004JA010959</a> · Connerney et al. 2022 (JRM33), <a href="https://doi.org/10.1029/2021JE007055">doi:10.1029/2021JE007055</a> · Connerney et al. 2020 (Con2020), <a href="https://doi.org/10.1029/2020JA028138">doi:10.1029/2020JA028138</a> · Hue et al. 2023, <a href="https://doi.org/10.1029/2023JA031363">doi:10.1029/2023JA031363</a> · Kaweeyanun et al. 2020, <a href="https://doi.org/10.1029/2019GL086228">doi:10.1029/2019GL086228</a></p>
         </div>
         <figure class="figure reveal d1">
-          <div class="frame"><img src="assets/img/jupiter-view.jpg" alt="Helios's Jupiter view: the planets' orbits out to Jupiter, with Juno at Jupiter and the inner fleet" loading="lazy"></div>
-          <figcaption>Helios 1.0's view of the outer solar system, from the Sun out to Juno at Jupiter.<span class="credit">Helios · HSO screen</span></figcaption>
+          <div class="frame"><img src="assets/img/jupiter-system-view.jpg" width="1760" height="1100" alt="Helios's Jupiter system view from afar: Jupiter's magnetopause and bow shock, with the current sheet and the Io plasma torus small at the center" loading="lazy"></div>
+          <div class="frame second"><img src="assets/img/jupiter-io-torus.jpg" width="1280" height="800" alt="Helios's Jupiter system view close in: Jupiter under Cassini's map, ringed by the Io plasma torus, with magnetic field lines rising from its poles" loading="lazy"></div>
+          <figcaption>The Jupiter system view, in development, on 7 June 2021. Above: the magnetopause and bow shock of Joy et al. (2002) for that day's solar wind (0.075&nbsp;nPa), 83 and 107 Jupiter radii out, around the current sheet and the Io plasma torus. Below, closer in: Jupiter under Cassini's map, the torus, and field lines traced through JRM33 and Con2020. The moons and Juno are not drawn in these pictures.<span class="credit">Helios research build · Jupiter globe: Cassini ISS (NASA/JPL/SSI)</span></figcaption>
         </figure>
       </div>
     </section>
@@ -202,6 +203,6 @@
   </footer>  <!-- /chrome:foot -->
 
   <script src="js/site.js?v=36"></script>
-  <script src="js/gfx/switch.js?v=38" data-new="js/figkit.js js/gfx/core.js js/gfx/meridian.js js/gfx/worlds.js" data-classic="js/figkit.js js/worlds.js"></script>
+  <script src="js/gfx/switch.js?v=40" data-new="js/figkit.js js/gfx/core.js js/gfx/meridian.js js/gfx/worlds.js" data-classic="js/figkit.js js/worlds.js"></script>
 </body>
 </html>
