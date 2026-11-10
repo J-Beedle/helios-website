@@ -122,7 +122,7 @@
         const tm = 1.2, rm = (M.shueR(tm, mp.r0, mp.alpha) + M.bsRadius(tm, B)) / 2, sh = P(rm * Math.cos(tm), -rm * Math.sin(tm));
         T(ctx, "Magnetosheath", sh[0], sh[1], { size: 11.5, align: "center", color: rgba(PAL.shock, 0.8) });
         window.FK.scaleBar(ctx, w - 190, h - 88, k, 10, "10 R_E");
-      } else T(ctx, `Magnetopause ${mp.r0.toFixed(1)} R_E · bow shock ${B.R.toFixed(1)} R_E`, 20, cy + 19 * k, { size: 12 });
+      } else T(ctx, `Magnetopause ${mp.r0.toFixed(1)} R_E · bow shock ${B.R.toFixed(1)} R_E`, 20, cy + GEO * k + 30, { size: 12 });
       T(ctx, "← Sun", 22, h - 26, { size: 12, color: PAL.sun });
     } });
     [pd, bz].forEach(i => i.addEventListener("input", st.redraw));
@@ -327,7 +327,7 @@
       }
       ctx.restore();
       ctx.strokeStyle = "rgba(255,255,255,0.18)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, half, 0, TAU); ctx.stroke();
-      T(ctx, "12 MLT · the Sun", cx, cy - half + 12, { size: 10.5, mono: true, color: PAL.sun, align: "center" });
+      T(ctx, "12 MLT · the Sun", cx, cy - half + 36, { size: 10.5, mono: true, color: PAL.sun, align: "center" });   // under the read-out
       T(ctx, "00", cx, cy + half - 10, { size: 10.5, mono: true, color: PAL.muted, align: "center" });
       T(ctx, "18", cx - half + 12, cy, { size: 10.5, mono: true, color: PAL.muted, align: "center" });
       T(ctx, "06", cx + half - 12, cy, { size: 10.5, mono: true, color: PAL.muted, align: "center" });

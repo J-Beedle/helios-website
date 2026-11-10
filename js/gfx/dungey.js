@@ -71,7 +71,7 @@
 
     layout(W, H) {
       const wide = W >= 900, k = wide ? Math.min(W / 90, H / 46) : Math.min(W / 52, H / 62);
-      const earth = wide ? [W * 0.56, H * 0.5] : [W * 0.44, H * 0.3];
+      const earth = wide ? [W * 0.56, H * 0.5] : [W * 0.46, Math.min(H * 0.24, 250)];
       return { W, H, k, earth, wide, P: (x, z) => [earth[0] - x * k, earth[1] - z * k], xLeft: earth[0] / k, xRight: -(W - earth[0]) / k, zTop: earth[1] / k, zBot: (H - earth[1]) / k };
     }
 
@@ -256,6 +256,11 @@
         this.lines = lines; this.c0 = c0;
       }
       this.drawEarth(ctx, t, S, psiXn);
+      if (!L.wide) {                                             // on a phone the words lie over the lower figure: it is dimmed under them
+        const y0 = Math.min(L.H * 0.5, L.earth[1] + 150), veil = ctx.createLinearGradient(0, y0 - 110, 0, y0 + 60);
+        veil.addColorStop(0, "rgba(3,5,11,0)"); veil.addColorStop(1, "rgba(3,5,11,0.62)");
+        ctx.fillStyle = veil; ctx.fillRect(0, y0 - 110, L.W, L.H);
+      }
       this.drawPanel(ctx, t, u, S, psiXn);
       this.cost += 0.06 * (performance.now() - t0 - this.cost);
     }
@@ -306,7 +311,7 @@
       if (L.wide) T2(ctx, `${hh} h ${mm} min`, x1, by + 17, { size: 11, mono: true, align: "right", color: `rgba(244,245,247,${0.5 * a})` });
 
       // the northern polar cap from above, the Sun to the left as in the picture
-      const R = L.wide ? Math.min(92, L.H * 0.12) : 44, cx = L.W - (L.wide ? 40 : 14) - R, cy = L.H - (L.wide ? 64 : 0.34 * L.H) - R, per = R / 34;   // 34° of colatitude to the rim
+      const R = L.wide ? Math.min(92, L.H * 0.12) : 34, cx = L.wide ? L.W - 40 - R : 16 + R, cy = L.wide ? L.H - 64 - R : 24 + R, per = R / 34;   // 34° of colatitude to the rim
       const td = Math.asin(Math.sqrt(-S.psiXd)) / DEG, tn = Math.asin(Math.sqrt(Math.max(psiXn, 1e-4))) / DEG, rc = (td + tn) / 2, off = (tn - td) / 2;
       ctx.save();
       ctx.fillStyle = `rgba(6,10,22,${0.78 * a})`; ctx.beginPath(); ctx.arc(cx, cy, R + 7, 0, TAU); ctx.fill();

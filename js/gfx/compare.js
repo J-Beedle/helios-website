@@ -10,7 +10,6 @@
     ["Field lines", "models.html", "field-lines", "The same lines traced by Helios. New: each line moves to its new shape when Kp changes, beside the dipole's line from the same footpoint."],
     ["Radiation belts", "models.html", "belts", "The same AE-8/AP-8 cuts. New: the orbits that cross them, to scale, and trapped particles bouncing between their mirror points."],
     ["Auroral oval", "models.html", "aurora", "The same model. New: the oval lies on the turning Earth, seen from above the geomagnetic pole, and places light up while they are under it."],
-    ["Artemis II", "artemis.html", "top", "The same trajectory, photographs and player."],
   ];
   const pick = document.getElementById("cmp-pick"), oldF = document.getElementById("cmp-old"), newF = document.getElementById("cmp-new"), note = document.getElementById("cmp-note");
   function show(i) {

@@ -36,7 +36,7 @@
       this.E = null; this.fade = 0; this.pulse = -9; this.lastPhase = 0; this.cost = 4;
       this.belts = null;
       const im = new Image();
-      im.onload = () => { this.belts = this.tintBelts(im); this.drawStatic(); this.stage.redraw(); };
+      im.onload = () => { this.belts = this.tintBelts(im); if (this.L) { this.drawStatic(); this.stage.redraw(); } };
       im.src = "assets/img/belts-electron-max.png";
       this.stage = HX.stage(canvas, { stillAt: 21.3, resize: (st) => this.resize(st), draw: (ctx, w, h, t, dt) => this.frame(ctx, t, dt) });
     }
