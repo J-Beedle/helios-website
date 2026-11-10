@@ -4,7 +4,7 @@
   "use strict";
   const FIGURES = [
     ["Hero", "index.html", "top", "The same conditions and boundaries. New: the solar wind takes the Rankine–Hugoniot jump at the shock, its field (gold) rides with it and drapes over the nose, and every field line is a contour of one flux function, moving with the flow and reconnecting at the nose."],
-    ["Reconnection", "index.html", "reconnection", "Was an 18 s video. Now drawn live from the same model as the hero, driven by the open flux in the polar cap: growth, onset, a plasmoid, expansion and recovery, with the polar cap seen from above and the flux through it."],
+    ["Reconnection", "index.html", "reconnection", "Was an 18 s video. Now drawn live from the same model as the hero, driven by the open flux in the polar cap: growth, onset, a plasmoid, expansion and recovery."],
     ["Four magnetospheres", "worlds.html", "scale", "Was four schematic outlines. Now each boundary is its published fit (Venus's bow shock nose is 1.42 R_V in Martinecz et al.'s fit; the first figure had 1.32), with the flow round each obstacle and the solar wind's field draped over it."],
     ["Boundaries", "models.html", "top", "The same two models and sliders. New: the solar wind flows through the figure and its field drapes over the nose, both answering the sliders."],
     ["Field lines", "models.html", "field-lines", "The same lines traced by Helios. New: each line moves to its new shape when Kp changes, beside the dipole's line from the same footpoint."],

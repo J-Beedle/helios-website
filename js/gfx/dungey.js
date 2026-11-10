@@ -7,15 +7,20 @@
  *   growth     Φ_N = 0. Every line opened at the nose is laid along a lobe. The lobes fill, the plasma sheet thins
  *              and stretches, and the open–closed boundary moves equatorward.
  *   onset      The neutral sheet's field falls to zero about 22 R_E down the tail: a new X-line, first among closed
- *              field lines, which it pinches into a plasmoid (Hones 1979; Baker et al. 1996).
- *   expansion  The X-line reaches the lobes' open lines and closes them nearly three times faster than the day side
- *              opens them. The plasmoid leaves down the tail, the closed lines snap back toward Earth, and plasma
- *              jets both ways from the X-line.
- *   recovery   The X-line retreats down the tail and Φ_N falls away.
+ *              field lines, which it pinches into a plasmoid (Hones 1979; Baker et al. 1996). Φ_N is still 0:
+ *              closed lines are being cut, not open ones.
+ *   expansion  The X-line reaches the lobes' open lines and closes them about three times faster than the day side
+ *              opens them. It stays where it formed. Each line it cuts leaves as two: a closed one that snaps back
+ *              toward Earth and piles up there, and a hairpin carried down the tail behind the plasmoid.
+ *   recovery   The X-line retreats down the tail, closed lines fill in behind it, and Φ_N falls away.
  *
  * Each drawn line carries the same flux, so the count of open lines is F. With Earth's field that makes the cap
- * 0.56 GWb at its smallest and 0.82 GWb at onset (Milan et al. 2007 found 0.2 to 1 GWb), and at a dayside
+ * 0.51 GWb at its smallest and 0.85 GWb at its largest (Milan et al. 2007 found 0.2 to 1 GWb), and at a dayside
  * voltage of 50 kV the half-minute loop is about three hours.
+ *
+ * What is drawn slower than that clock: the solar wind, and the outflow from the tail's X-line (V_OUT). At the
+ * loop's own scale the outflow would cross the picture in half a second; it is slowed enough to follow, and kept
+ * fast enough that the reconnected field near the X-line stays weaker than the lobe field, as it is in the tail.
  */
 (function () {
   "use strict";
@@ -25,36 +30,50 @@
   const PSI_DS = -0.1, PSI_NS = 0.2, X_IN = -4.2, REST = [-1 / 1.6, -1 / 2.3, -1 / 3.3, -1 / 5, PSI_DS, PSI_NS, 1 / 3.3, 1 / 2.3, 1 / 1.6];   // the source and sink shells, and the lines at rest inside them
   const GWB = 3.95;                                             // GWb per unit of Ψ: π R_E² B_eq, the flux of half a cap per sin² of its colatitude
   const KV_D = 50, CLOCK = PHI_D * GWB * 1e9 / (KV_D * 1e3);    // seconds of the magnetosphere to one of the loop
-  const T_ON = 13.5, T_EXP = 15.5, T_REC = 22.5, G_EXP = -19 / 11;   // dF/dt in units of Φ_D through the expansion: the loop's flux balances
+  const T_ON = 13.5, T_EXP = 15.5, T_REC = 22.5, T_END = T - 1.5, T_UP = 0.6;   // T_UP: how long the tail's rate takes to come up
+  // dF/dt over Φ_D while the tail unloads, set so that the loop's flux balances
+  const G_EXP = -(T_EXP + T_UP / 2 + (T_END - T_REC) / 2 + 1.5) / (T_UP / 2 + (T_REC - T_EXP - T_UP) + (T_END - T_REC) / 2);
   const PSI_XD0 = -(Math.sin(11 * DEG) ** 2), PSI_XN0 = Math.sin(19 * DEG) ** 2, X_NEAR = -22;
+  // tailward of the X-line: the outflow's speed (R_E a second of the loop) and the distance over which it gets up to
+  // it, and the plasmoid's length; earthward of it, the width of the dip in the sheet's flux
+  const V_OUT = 7, S_0 = 4, L_P = 15, W_E = 13;
   const AXIS = [0.002, 0.398, 0.917], PRIME = [0.957, -0.266, 0.114];
   const VIEW_GSE = { right: [-1, 0, 0], down: [0, -0.239, -0.971], toward: [0, 0.971, -0.239] };
   const PHASES = [["Growth phase", "Opened flux piles into the lobes. The plasma sheet thins."],
-                  ["Onset", "A new X-line forms in the near tail."],
-                  ["Expansion phase", "The tail unloads: flux closes, a plasmoid leaves, the aurora brightens."],
-                  ["Recovery phase", "The X-line retreats down the tail."]];
+                  ["Onset", "A new X-line forms in the near tail and pinches off a plasmoid."],
+                  ["Expansion phase", "The tail unloads: lobe flux closes, the plasmoid leaves, the aurora brightens."],
+                  ["Recovery phase", "The X-line retreats down the tail and the plasma sheet refills."]];
 
-  /** dF/dt over Φ_D at loop time u. */
-  const gOf = (u) => u < T_ON ? 1 : u < T_EXP ? lerp(1, G_EXP, smooth(T_ON, T_EXP, u)) : u < T_REC ? G_EXP : u < T - 1.5 ? lerp(G_EXP, 1, smooth(T_REC, T - 1.5, u)) : 1;
+  /** dF/dt over Φ_D at loop time u: the tail closes no open flux until its X-line has cut down to the lobes. */
+  const gOf = (u) => u < T_EXP ? 1 : u < T_EXP + T_UP ? lerp(1, G_EXP, smooth(T_EXP, T_EXP + T_UP, u)) : u < T_REC ? G_EXP : u < T_END ? lerp(G_EXP, 1, smooth(T_REC, T_END, u)) : 1;
   const NTAB = 3000, FTAB = new Float64Array(NTAB + 1);
   for (let i = 1; i <= NTAB; i++) FTAB[i] = FTAB[i - 1] + PHI_D * gOf((i - 0.5) * T / NTAB) * T / NTAB;
   for (let i = 0; i <= NTAB; i++) FTAB[i] -= FTAB[NTAB] * i / NTAB;   // close the loop exactly
   const dF = (u) => { const f = clamp(u / T, 0, 1) * NTAB, i = Math.min(NTAB - 1, f | 0); return FTAB[i] + (f - i) * (FTAB[i + 1] - FTAB[i]); };
   const K_FREEZE = PSI_XN0 + dF(T_EXP) / 2;
+  /** The flux the tail's X-line has closed since it reached the lobes, by loop time u. */
+  const closed = (u) => u <= T_EXP ? 0 : PHI_D * (u - T_EXP) - (dF(u) - dF(T_EXP));
+  /** The plasmoid's flux along its length, 0 to 1: nothing at either end, most at its O-point. */
+  const bump = (f) => f <= 0 || f >= 1 ? 0 : 16 * f * f * (1 - f) * (1 - f);
 
   /** Everything the model needs at loop time u (0 ≤ u < T). */
   function stateAt(u) {
-    const d = dF(u), target = PSI_XN0 + d / 2, g = gOf(u);
-    const psiFar = u < T_EXP ? target : lerp(K_FREEZE, target, smooth(T_REC, T - 2, u));
-    const xc = X_NEAR - 62 * Math.pow(smooth(T_REC - 1, T - 1.5, u), 1.3);
-    const grow = smooth(0, T_ON, u), back = smooth(T_EXP, T_EXP + 3.5, u);
+    const d = dF(u), target = PSI_XN0 + d / 2, g = gOf(u), rel = Math.max(0, u - T_EXP), vr = V_OUT * rel;
+    const grow = smooth(0, T_ON, u), back = smooth(T_EXP, T_EXP + 3.5, u), phiN = PHI_D * (1 - g), away = Math.max(0, u - T_REC);
+    const cutv = u < T_EXP ? smooth(T_ON, T_EXP, u) : 1 - smooth(T - 2.2, T - 0.6, u);
     return {
-      d, g, target, psiFar, xc,
-      psiXd: PSI_XD0 - d / 2, phiN: PHI_D * (1 - g),
+      u, d, g, target, rel, phiN,
+      cut: cutv,                                                  // how far the new X-line has cut through the closed lines to the lobes; at the loop's end, how much of it is left
+      psiFar: u < T_EXP ? target : lerp(K_FREEZE, target, smooth(T_REC, T - 2, u)),
+      // the X-line: where it forms through the expansion, then away down the tail
+      xc: X_NEAR - 3 * smooth(T_EXP + 1, T_REC, u) - 4.2 * away * away / (away + 1.2),   // past the picture's edge about 4.5 s into recovery
+      sRel: (vr + Math.sqrt(vr * vr + 4 * vr * S_0)) / 2,         // how far behind the X-line the plasmoid's near end is
+      nn: closed(u),
+      psiXd: PSI_XD0 - d / 2,
       q: 0.95 - 0.45 * grow * (1 - back),                        // how fast the sheet's flux falls with distance: stretching through the growth phase, then dipolarization
-      thin: 1 - 0.55 * grow * (1 - back) + 0.45 * back * (1 - smooth(T_REC, T - 1, u)),
-      well: u < T_ON ? 0 : u < T_EXP ? smooth(T_ON, T_EXP, u) : 1 - smooth(T - 2.6, T - 1.1, u),
-      wt: 6 + 64 * smooth(T_EXP - 0.3, T_EXP + 5.5, u) * (1 - smooth(T - 1.2, T - 0.2, u)),
+      thin: 1 - 0.5 * grow * (1 - back),
+      thick: 0.45 * back * (1 - smooth(T_REC + 1.5, T - 0.8, u)),
+      act: u < T_ON ? 0 : Math.max(u < T_EXP + T_UP ? 0.5 * smooth(0, 0.3, cutv) : 0, clamp(phiN / PHI_D / 2.6, 0, 1) * cutv),
       phase: u < T_ON ? 0 : u < T_EXP ? 1 : u < T_REC ? 2 : 3,
     };
   }
@@ -66,7 +85,7 @@
       this.E = null; this.fade = 0; this.pulseD = -9; this.pulseN = -9; this.lastD = 0; this.lastN = 0; this.cost = 8; this.tick = 0;
       this.jets = []; this.jr = rng(77);
       this.globeCv = document.createElement("canvas");
-      this.stage = HX.stage(canvas, { stillAt: 18.2, resize: (st) => this.resize(st), draw: (ctx, w, h, t, dt) => this.frame(ctx, t, dt) });
+      this.stage = HX.stage(canvas, { stillAt: 16, resize: (st) => this.resize(st), draw: (ctx, w, h, t, dt) => this.frame(ctx, t, dt) });
     }
 
     layout(W, H) {
@@ -95,15 +114,61 @@
       }, 30);
     }
 
-    /** Puts a loop time's state into the model's parameters. */
+    /** Puts a loop time's state into the model's parameters: the flux along the neutral sheet, and its thickness.
+     *
+     *  Earthward of the X-line the flux rises from the X-line's value to the dipole's: few lines near the X-line,
+     *  where they move fast, and many where they pile up nearer Earth. Tailward of it each line the X-line has cut
+     *  loose is carried away at the outflow's speed, so the flux there is the X-line's value at the time that line
+     *  was cut; beyond the first of them is the plasmoid, made at onset of the closed lines that crossed the sheet
+     *  beyond the X-line. */
     apply(S) {
-      const E = this.E, p = E.p, top = E.dipole(X_IN, 0), A = 8, fall = (x) => Math.pow(1 + (X_IN - x) / A, -S.q), fN = fall(-130);
-      const base = (x) => S.psiFar + (top - S.psiFar) * clamp((fall(Math.min(x, X_IN)) - fN) / (1 - fN), 0, 1);
-      const depth = S.phase === 1 ? S.well * Math.max(0, base(S.xc) - S.psiFar) : S.phase >= 2 ? S.well * Math.max(0, base(S.xc) - S.target) : 0;
+      const E = this.E, p = E.p, top = E.dipole(X_IN, 0), A = 8;
+      const fall = (x, q) => Math.pow(1 + (X_IN - x) / A, -q), fN = fall(-130, S.q), fN0 = fall(-130, 0.5);
+      const base = (x) => S.psiFar + (top - S.psiFar) * clamp((fall(Math.min(x, X_IN), S.q) - fN) / (1 - fN), 0, 1);
+      const DO = 1.1 * (top - K_FREEZE) * (fall(X_NEAR, 0.5) - fN0) / (1 - fN0);     // the plasmoid's flux
+      const rX = S.phase >= 2 ? S.target : S.psiFar;
       p.psiXd = S.psiXd;
-      // the neutral sheet's flux: falling slowly down the tail to the far X-line's value, less the near X-line's well
-      p.ridgeFn = (x) => base(x) - (depth ? depth * Math.exp(-(((x - S.xc) / (x < S.xc ? S.wt : 4.5)) ** 2)) : 0);
-      p.sheet = (x) => (0.9 + 0.045 * Math.max(0, -x - 8)) * lerp(1, S.thin, smooth(S.xc - 9, S.xc - 2, x));
+      p.ridgeFn = (x) => {
+        const b = base(x);
+        if (!S.phase) return b;
+        const s = S.xc - x;
+        if (s <= 0) return lerp(b, rX, S.cut * Math.exp(-((s / W_E) ** 2)) * smooth(X_IN - 0.5, X_IN - 5, x));
+        if (S.phase === 1) return lerp(b, rX + DO * bump(s / L_P), S.cut);
+        const tau = s * s / (V_OUT * (s + S_0));                 // how long ago the line now here was cut
+        return lerp(b, tau < S.rel ? rX + S.nn - closed(S.u - tau) : rX + S.nn + DO * bump((s - S.sRel) / L_P), S.cut);
+      };
+      // The sheet's half-thickness, as the field is rounded over it: thin where the X-line is and behind the
+      // plasmoid, thicker earthward once the field has snapped back. It changes slowly along the tail on purpose:
+      // a sharp pinch in it at the X-line would put a low point of its own into the field there.
+      const sig0 = (x) => 0.9 + 0.045 * Math.max(0, -x - 8), mX = Math.min(S.thin, 0.62);
+      p.sheet = (x) => {
+        const s = S.xc - x, m0 = S.thin + (s <= 0 ? S.thick * smooth(0, 9, -s) : 0);
+        return Math.max(0.55, sig0(x) * (S.phase ? lerp(m0, s <= 0 ? lerp(mX, m0, smooth(0, 10, -s)) : mX, S.cut) : m0));
+      };
+      // the plasma sheet as it is drawn: pinched at the X-line, bulging round the plasmoid
+      this.glow = (x) => {
+        const s = S.xc - x, f = S.phase === 1 ? s / L_P : S.phase === 2 ? (s - S.sRel) / L_P : -1;
+        return S.phase ? p.sheet(x) * (1 - 0.5 * S.cut * Math.exp(-((s / 3.5) ** 2))) + 0.75 * sig0(x) * (S.phase === 1 ? S.cut : 1) * bump(f) : p.sheet(x);
+      };
+    }
+
+    /** The near-Earth X-line as the field has it: going down the tail, the first low point of the neutral sheet's
+     *  flux with a rise behind it. Returns [x, Ψ, the rise] or null. */
+    nearX() {
+      const E = this.E, h = E.grid.h, end = E.grid.x0 + 2;
+      let a = E.at(-9, 0), b = E.at(-9 - h, 0), low = null;
+      for (let x = -9 - 2 * h; x > end; x -= h) {
+        const c = E.at(x, 0);
+        if (low) {
+          low[2] = Math.max(low[2], c - low[1]);
+          if (x < low[0] - 10) { if (low[2] > 0.1 * DPSI) return low; low = null; }
+        } else if (b <= a && b < c) {
+          const den = a - 2 * b + c, off = den > 1e-12 ? clamp(0.5 * (c - a) / den, -0.5, 0.5) : 0;   // the low point, between nodes
+          low = [x + h + off * h, b - 0.25 * (c - a) * off, c - b];
+        }
+        a = b; b = c;
+      }
+      return low && low[2] > 0.1 * DPSI ? low : null;
     }
 
     makeStreaks() {
@@ -163,11 +228,10 @@
         const a = this.fade;
         this.apply(S);
         // the field follows the changing boundary values by a few sweeps a frame (every other frame when frames run long)
-        if (this.cost < 13 || (this.tick++ & 1)) { E.relax(this.cost < 13 ? 6 : 11, 1.86); E.compose(); }
-        // the tail's X-point as drawn: the far one, off the picture, until the near one is lower
-        const tx = E.tailX(E.grid.x0 + 2, -9);
-        const near = tx[0] > E.grid.x0 + 3 && tx[1] < S.psiFar - 1e-4;
-        psiXn = near ? tx[1] : S.psiFar; xX = near ? tx[0] : null;
+        if (this.cost < 13 || (this.tick++ & 1)) { E.relax(this.cost < 13 ? 8 : 12, 1.86); E.compose(); }
+        // the near-Earth X-line, where the field has one; the open flux ends there once it has cut down to the lobes
+        const nX = this.nearX(), strong = nX ? clamp(nX[2] / (0.5 * DPSI), 0, 1) : 0;
+        psiXn = nX && nX[1] < S.psiFar ? nX[1] : S.psiFar; xX = nX ? nX[0] : null;
         const Win = PHI_D * t - S.d / 2, c0 = ((Win / DPSI) % 1 + 1) % 1 * DPSI;   // the lattice of drawn values, riding up at the cap's convection rate
         const lines = E.contours(c0, DPSI, PSI_DS, PSI_NS, true), rest = E.contoursAt(REST);
         const stroke = (list, color, width, alpha, glow) => {
@@ -183,13 +247,13 @@
         };
         // the plasma sheet's glow, as thick as the model's sheet
         ctx.save(); ctx.globalCompositeOperation = "lighter";
-        for (const f of [2.4, 1.6, 0.9]) {
+        const gx = [], gh = [];
+        for (let x = -6; x >= L.xRight - 2; x -= 0.5) { gx.push(x); gh.push(this.glow(x) * smooth(-6, -11, x)); }
+        for (const f of [2.5, 2.05, 1.6, 1.15, 0.7]) {
           ctx.beginPath();
-          const xs = []; for (let x = -6; x >= L.xRight - 2; x -= 1) xs.push(x);
-          const hh = (x) => E.p.sheet(x) * smooth(-6, -10, x) * f * (xX !== null ? 0.35 + 0.65 * smooth(1.5, 7, Math.abs(x - xX)) : 1);
-          xs.forEach((x, i) => { const q = P(x, hh(x)); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
-          xs.slice().reverse().forEach(x => { const q = P(x, -hh(x)); ctx.lineTo(q[0], q[1]); });
-          ctx.closePath(); ctx.fillStyle = "rgba(255,140,70,0.075)"; ctx.fill();
+          for (let i = 0; i < gx.length; i++) { const q = P(gx[i], gh[i] * f); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); }
+          for (let i = gx.length - 1; i >= 0; i--) { const q = P(gx[i], -gh[i] * f); ctx.lineTo(q[0], q[1]); }
+          ctx.closePath(); ctx.fillStyle = "rgba(255,140,70,0.046)"; ctx.fill();
         }
         ctx.restore();
         ctx.save(); ctx.lineJoin = "round"; ctx.lineCap = "round";
@@ -210,11 +274,12 @@
         ups.forEach(heads);
         for (const l of imf) { const x = l.pts[0]; if (x > 14.5 && Math.abs(l.pts[0] - l.pts[l.pts.length - 2]) < 0.05) heads(x); }
         ctx.restore();
-        // a flash where each line reconnects: at the nose, and at the tail's X-line while it is closing open flux
-        const kD = Math.floor((S.psiXd - c0) / DPSI), kN = Math.floor((psiXn - c0) / DPSI) + Math.floor(Win / DPSI);
-        if (kD !== this.lastD) { this.pulseD = t; this.lastD = kD; }
-        if (xX !== null && S.phiN > 0.2 * PHI_D && kN !== this.lastN) this.pulseN = t;
-        this.lastN = kN;
+        // a flash where each line reconnects: at the nose, and at the tail's X-line. A drawn line is Win + m·DPSI, so
+        // the count of them under an X-point's value changes as each one reaches it.
+        const mD = Math.floor((S.psiXd - Win) / DPSI), mN = nX ? Math.floor((nX[1] - Win) / DPSI) : this.lastN;
+        if (mD !== this.lastD) { this.pulseD = t; this.lastD = mD; }
+        if (nX && S.act > 0.15 && mN !== this.lastN) this.pulseN = t;
+        this.lastN = mN;
         const flash = (q, age, life, big) => {
           if (age < 0 || age > life || still) return;
           const R = L.k * (0.7 + big * age), g = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], R);
@@ -222,23 +287,30 @@
           ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q[0], q[1], R, 0, TAU); ctx.fill(); ctx.restore();
         };
         flash(P(this.mp[0][0], 0), t - this.pulseD, 0.9, 1.5);
-        if (xX !== null) {
-          const q = P(xX, 0), act = clamp(S.phiN / PHI_D / 2.5, 0, 1) * S.well;
-          flash(q, t - this.pulseN, 0.7, 2.2);
+        if (nX) {
+          const q = P(xX, 0), act = S.act * strong;
+          flash(q, t - this.pulseN, 0.7, 2.0);
           ctx.save(); ctx.globalCompositeOperation = "lighter";
           const g = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], L.k * 1.8);
-          g.addColorStop(0, `rgba(255,205,140,${0.12 + 0.4 * act})`); g.addColorStop(1, "rgba(255,205,140,0)");
+          g.addColorStop(0, `rgba(255,205,140,${(0.1 + 0.4 * act) * smooth(0.15, 1, strong)})`); g.addColorStop(1, "rgba(255,205,140,0)");
           ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q[0], q[1], L.k * 1.8, 0, TAU); ctx.fill(); ctx.restore();
           // plasma jets both ways along the sheet from the X-line
-          if (!still && dt > 0 && this.jr() < dt * (4 + 46 * act)) this.jets.push({ x: xX, z: (this.jr() - 0.5) * 0.5, dir: this.jr() < 0.5 ? 1 : -1, age: 0, v: 9 + 6 * this.jr() });
+          if (!still && dt > 0 && this.jr() < dt * (2 + 20 * act)) this.jets.push({ x: xX, zf: this.jr() - 0.5, dir: this.jr() < 0.5 ? 1 : -1, age: 0, v: V_OUT * (1.1 + 0.5 * this.jr()) });
         }
         ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
-        this.jets = this.jets.filter(j => j.age < 2.6 && j.x > L.xRight - 3 && j.x < -7.5);
+        this.jets = this.jets.filter(j => j.age < 3.4 && j.x > L.xRight - 3 && j.x < -7.5);
         for (const j of this.jets) {
-          const brake = j.dir > 0 ? smooth(-8, -15, j.x) : 1, v = j.v * (0.12 + 0.88 * brake);
+          // out of the X-line at about the pace of the lines they carry; earthward they brake where the field turns
+          // dipolar, and tailward they end at the plasmoid
+          const brake = j.dir > 0 ? smooth(-8.5, -16, j.x) : 1, v = j.v * (0.1 + 0.9 * brake) * Math.min(1, 0.3 + 2.4 * j.age);
           j.age += dt; j.x += j.dir * v * dt;
-          const q = P(j.x, j.z), q2 = P(j.x - j.dir * v * 0.09, j.z), al = Math.min(1, j.age * 5) * (1 - j.age / 2.6) * (j.dir > 0 ? 0.25 + 0.75 * brake : 1);
-          ctx.beginPath(); ctx.moveTo(q2[0], q2[1]); ctx.lineTo(q[0], q[1]); ctx.lineWidth = 1.6 * s; ctx.strokeStyle = `rgba(255,190,120,${0.85 * al * a})`; ctx.stroke();
+          const ahead = j.dir < 0 && (S.phase === 1 || S.phase === 2) ? smooth(0, 2.5, S.xc - S.sRel - 3 - j.x) : 0;
+          const z = j.zf * 0.5 * this.glow(j.x), len = clamp(v * 0.34, 0.5, 2), q = P(j.x, z), q2 = P(j.x - j.dir * len, z);
+          const al = Math.min(1, j.age * 5) * (1 - j.age / 3.4) * (j.dir > 0 ? 0.25 + 0.75 * brake : 1 - ahead) * a;
+          if (al < 0.02) continue;
+          const g = ctx.createLinearGradient(q2[0], q2[1], q[0], q[1]);
+          g.addColorStop(0, "rgba(255,190,120,0)"); g.addColorStop(1, `rgba(255,198,132,${0.8 * al})`);
+          ctx.beginPath(); ctx.moveTo(q2[0], q2[1]); ctx.lineTo(q[0], q[1]); ctx.lineWidth = 1.5 * s; ctx.strokeStyle = g; ctx.stroke();
         }
         for (const st of this.streaks) {
           const tt = (t * V + st.phase * st.span) % st.span, n = st.n, kf = tt / st.span * (n - 1), len = Math.max(2, st.trail * V / st.span * (n - 1));
@@ -248,8 +320,13 @@
           ctx.lineWidth = st.width; ctx.strokeStyle = g; ctx.stroke();
         }
         ctx.restore();
-        if (xX !== null && S.well > 0.5 && L.wide) T2(ctx, "X-line", ...P(xX, -2.4), { size: 11.5, mono: true, align: "center", color: rgba(PAL.loose, 0.85 * a) });
-        this.lines = lines; this.c0 = c0;
+        if (nX && L.wide) {
+          const lab = { size: 11.5, mono: true, align: "center" };
+          if (strong > 0.5) T2(ctx, "X-line", ...P(xX, -2.4), { ...lab, color: rgba(PAL.loose, 0.85 * a * smooth(0.5, 0.9, strong)) });
+          // the plasmoid, named while it is in the picture
+          const xO = S.xc - S.sRel - L_P / 2, show = S.phase === 1 ? smooth(0.6, 1, S.cut) : S.phase === 2 ? smooth(L.xRight + 1.5, L.xRight + 5, xO) : 0;
+          if (show > 0.02) T2(ctx, "Plasmoid", ...P(xO, -4.5), { ...lab, color: rgba(PAL.loose, 0.85 * a * show) });
+        }
       }
       this.drawEarth(ctx, t, S, psiXn);
       if (!L.wide) {                                             // on a phone the words lie over the lower figure: it is dimmed under them
@@ -257,7 +334,7 @@
         veil.addColorStop(0, "rgba(3,5,11,0)"); veil.addColorStop(1, "rgba(3,5,11,0.62)");
         ctx.fillStyle = veil; ctx.fillRect(0, y0 - 110, L.W, L.H);
       }
-      this.drawPanel(ctx, t, u, S, psiXn);
+      this.drawPanel(ctx, u, S);
       this.cost += 0.06 * (performance.now() - t0 - this.cost);
     }
 
@@ -283,8 +360,8 @@
       ctx.restore();
     }
 
-    /** The phase, the clock, the polar cap seen from above and the flux through it. */
-    drawPanel(ctx, t, u, S, psiXn) {
+    /** The phase in words, the loop as a bar and the clock. */
+    drawPanel(ctx, u, S) {
       const L = this.L, T2 = window.FK.text, a = this.E ? this.fade : 0;
       if (!a) return;
       const ph = PHASES[S.phase], x1 = L.W - (L.wide ? 40 : 16), y0 = L.wide ? 104 : 74;
@@ -305,46 +382,6 @@
       ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.beginPath(); ctx.arc(bx + bw * u / T, by + 1.5, 3.2, 0, TAU); ctx.fill();
       const mins = Math.round(u * CLOCK / 60), hh = Math.floor(mins / 60), mm = String(mins % 60).padStart(2, "0");
       if (L.wide) T2(ctx, `${hh} h ${mm} min`, x1, by + 17, { size: 11, mono: true, align: "right", color: `rgba(244,245,247,${0.5 * a})` });
-
-      // the northern polar cap from above, the Sun to the left as in the picture
-      const R = L.wide ? Math.min(92, L.H * 0.12) : 34, cx = L.wide ? L.W - 40 - R : 16 + R, cy = L.wide ? L.H - 64 - R : 24 + R, per = R / 34;   // 34° of colatitude to the rim
-      const td = Math.asin(Math.sqrt(-S.psiXd)) / DEG, tn = Math.asin(Math.sqrt(Math.max(psiXn, 1e-4))) / DEG, rc = (td + tn) / 2, off = (tn - td) / 2;
-      ctx.save();
-      ctx.fillStyle = `rgba(6,10,22,${0.78 * a})`; ctx.beginPath(); ctx.arc(cx, cy, R + 7, 0, TAU); ctx.fill();
-      ctx.lineWidth = 1; ctx.strokeStyle = `rgba(255,255,255,${0.1 * a})`;
-      for (const c of [10, 20, 30]) { ctx.beginPath(); ctx.arc(cx, cy, c * per, 0, TAU); ctx.stroke(); }
-      ctx.beginPath(); ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.stroke();
-      const ox = cx + off * per, night = clamp(S.phiN / PHI_D / 2.7, 0, 1);
-      // the oval: a band outside the open–closed boundary, brighter by night as the tail unloads
-      for (let i = 0; i < 72; i++) {
-        const a0 = i / 72 * TAU, a1 = (i + 1.08) / 72 * TAU, nearNight = 0.5 + 0.5 * Math.cos(a0 + 0.02), w = (3.5 + 3.5 * nearNight + 3 * night * nearNight) * per;
-        ctx.beginPath(); ctx.arc(ox, cy, rc * per + w, a0, a1); ctx.arc(ox, cy, rc * per, a1, a0, true); ctx.closePath();
-        ctx.fillStyle = rgba(PAL.aurora, a * (0.16 + 0.2 * nearNight + 0.5 * night * nearNight ** 2)); ctx.fill();
-      }
-      ctx.beginPath(); ctx.arc(ox, cy, rc * per, 0, TAU); ctx.fillStyle = `rgba(88,60,150,${0.5 * a})`; ctx.fill();
-      ctx.lineWidth = 1.2; ctx.strokeStyle = rgba(PAL.open, 0.9 * a); ctx.stroke();
-      // the gaps where flux crosses the boundary: the day side's (gold), and the night side's while the tail reconnects
-      ctx.lineWidth = 3; ctx.lineCap = "round";
-      ctx.beginPath(); ctx.arc(ox, cy, rc * per, Math.PI - 0.5, Math.PI + 0.5); ctx.strokeStyle = rgba(PAL.imf, 0.95 * a); ctx.stroke();
-      if (S.phiN > 0.05 * PHI_D) { ctx.beginPath(); ctx.arc(ox, cy, rc * per, -0.6, 0.6); ctx.strokeStyle = rgba(PAL.loose, clamp(0.3 + S.phiN / PHI_D / 2, 0, 1) * a); ctx.stroke(); }
-      // the feet of the picture's own field lines, moving from noon to midnight
-      if (this.lines) for (let n = -24; n <= 24; n++) {
-        const v = this.c0 + n * DPSI;
-        if (v < PSI_DS || v > PSI_NS) continue;
-        const col = Math.asin(Math.sqrt(Math.abs(v))) / DEG, x = cx + (v < 0 ? -col : col) * per, open = v > S.psiXd && v < psiXn;
-        ctx.fillStyle = rgba(open ? PAL.open : PAL.closed, a); ctx.beginPath(); ctx.arc(x, cy, 1.7, 0, TAU); ctx.fill();
-      }
-      ctx.restore();
-      if (L.wide) {
-        T2(ctx, "noon", cx - R - 12, cy, { size: 10.5, mono: true, align: "right", color: `rgba(255,206,140,${0.8 * a})` });
-        T2(ctx, "The polar cap from above", cx, cy - R - 20, { size: 11.5, align: "center", color: `rgba(244,245,247,${0.72 * a})` });
-        // the flux through it and the two rates
-        const F = (psiXn - S.psiXd) * GWB, gx = cx - R - 64, kvN = Math.round(S.phiN / PHI_D * KV_D / 5) * 5;
-        T2(ctx, "OPEN FLUX", gx, cy + R - 62, { size: 10.5, mono: true, align: "right", color: `rgba(244,245,247,${0.5 * a})` });
-        T2(ctx, F.toFixed(2) + " GWb", gx, cy + R - 42, { size: 21, weight: 600, align: "right", color: rgba(PAL.open, a) });
-        T2(ctx, `day side opens  ${KV_D} kV`, gx, cy + R - 18, { size: 11, mono: true, align: "right", color: rgba(PAL.imf, 0.9 * a) });
-        T2(ctx, `tail closes  ${String(kvN).padStart(3, " ")} kV`, gx, cy + R - 2, { size: 11, mono: true, align: "right", color: rgba(PAL.loose, (kvN ? 0.95 : 0.45) * a) });
-      }
     }
   }
 
