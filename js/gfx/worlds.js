@@ -130,11 +130,10 @@
           // the solar wind
           ctx.save(); ctx.globalCompositeOperation = "lighter";
           for (const sk of b.streaks) {
-            const tt = (t * vS + sk.phase * sk.span) % sk.span, n = sk.n, kk = Math.floor(tt / sk.span * (n - 1)), len = Math.max(1, Math.round(sk.trail * vS / sk.span * (n - 1)));
-            if (kk <= len) continue;
-            ctx.beginPath(); ctx.moveTo(cx - sk.pts[2 * (kk - len)] * k, cy - sk.pts[2 * (kk - len) + 1] * k);
-            for (let q = kk - len + 1; q <= kk; q++) ctx.lineTo(cx - sk.pts[2 * q] * k, cy - sk.pts[2 * q + 1] * k);
-            ctx.lineWidth = 0.9; ctx.strokeStyle = `rgba(255,240,205,${sk.alpha * sk.wt[kk] * 0.6 * show})`; ctx.stroke();
+            const tt = (t * vS + sk.phase * sk.span) % sk.span, n = sk.n, kf = tt / sk.span * (n - 1), len = Math.max(1, sk.trail * vS / sk.span * (n - 1));
+            if (kf < 0.5) continue;
+            HX.trace(ctx, sk.pts, n, kf - len, kf, cx, cy, -k, -k);
+            ctx.lineWidth = 0.9; ctx.strokeStyle = `rgba(255,240,205,${sk.alpha * sk.wt[Math.round(kf)] * 0.6 * show})`; ctx.stroke();
           }
           ctx.restore();
         }

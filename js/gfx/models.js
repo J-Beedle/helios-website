@@ -93,11 +93,10 @@
         if (Math.abs(b) > 0.25) for (const x of heads) for (const z of [zTop * 0.6, -zTop * 0.62]) HX.arrow(ctx, P(x, z), 0, b < 0 ? 1 : -1, 4.2, rgba(PAL.imf, 0.9 * live));
         ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
         for (const sk of flow.streaks) {
-          const tt = (t * V + sk.phase * sk.span) % sk.span, n = sk.n, kk = Math.floor(tt / sk.span * (n - 1)), len = Math.max(2, Math.round(sk.trail * V / sk.span * (n - 1)));
-          if (kk <= len) continue;
-          ctx.beginPath(); ctx.moveTo(cx - sk.pts[2 * (kk - len)] * k, cy - sk.pts[2 * (kk - len) + 1] * k);
-          for (let q = kk - len + 1; q <= kk; q++) ctx.lineTo(cx - sk.pts[2 * q] * k, cy - sk.pts[2 * q + 1] * k);
-          ctx.lineWidth = 1; ctx.strokeStyle = `rgba(255,240,205,${sk.alpha * sk.wt[kk] * 0.7 * live})`; ctx.stroke();
+          const tt = (t * V + sk.phase * sk.span) % sk.span, n = sk.n, kf = tt / sk.span * (n - 1), len = Math.max(2, sk.trail * V / sk.span * (n - 1));
+          if (kf < 0.5) continue;
+          HX.trace(ctx, sk.pts, n, kf - len, kf, cx, cy, -k, -k);
+          ctx.lineWidth = 1; ctx.strokeStyle = `rgba(255,240,205,${sk.alpha * sk.wt[Math.round(kf)] * 0.7 * live})`; ctx.stroke();
         }
         ctx.restore();
       }

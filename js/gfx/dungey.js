@@ -241,15 +241,11 @@
           ctx.beginPath(); ctx.moveTo(q2[0], q2[1]); ctx.lineTo(q[0], q[1]); ctx.lineWidth = 1.6 * s; ctx.strokeStyle = `rgba(255,190,120,${0.85 * al * a})`; ctx.stroke();
         }
         for (const st of this.streaks) {
-          const tt = (t * V + st.phase * st.span) % st.span, n = st.n, k = Math.floor(tt / st.span * (n - 1)), len = Math.max(2, Math.round(st.trail * V / st.span * (n - 1)));
-          if (k <= len) continue;
-          const lo0 = k - len, half = Math.max(1, len >> 1), w = st.wt[k];
-          for (let part = 0; part < 2; part++) {
-            const lo2 = lo0 + part * half, hi = part ? k : lo0 + half;
-            ctx.beginPath(); ctx.moveTo(st.pts[2 * lo2], st.pts[2 * lo2 + 1]);
-            for (let i = lo2 + 1; i <= hi; i++) ctx.lineTo(st.pts[2 * i], st.pts[2 * i + 1]);
-            ctx.lineWidth = st.width; ctx.strokeStyle = `rgba(255,240,205,${st.alpha * w * a * (part ? 0.7 : 0.25)})`; ctx.stroke();
-          }
+          const tt = (t * V + st.phase * st.span) % st.span, n = st.n, kf = tt / st.span * (n - 1), len = Math.max(2, st.trail * V / st.span * (n - 1));
+          if (kf < 0.5) continue;
+          const [p, q] = HX.trace(ctx, st.pts, n, kf - len, kf), al = st.alpha * st.wt[Math.round(kf)] * a, g = ctx.createLinearGradient(p[0], p[1], q[0], q[1]);
+          g.addColorStop(0, `rgba(255,240,205,${0.1 * al})`); g.addColorStop(1, `rgba(255,240,205,${0.78 * al})`);
+          ctx.lineWidth = st.width; ctx.strokeStyle = g; ctx.stroke();
         }
         ctx.restore();
         if (xX !== null && S.well > 0.5 && L.wide) T2(ctx, "X-line", ...P(xX, -2.4), { size: 11.5, mono: true, align: "center", color: rgba(PAL.loose, 0.85 * a) });

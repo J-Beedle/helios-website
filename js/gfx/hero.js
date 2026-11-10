@@ -214,11 +214,10 @@
       T(ctx, "Earth", L.earth[0], L.earth[1] - 1.6 * L.k, { size: fs, align: "center", color: "rgba(255,255,255,0.88)" });
       if (!L.narrow) {
         T(ctx, "Solar wind", ...P(Math.min(L.xLeft - 3, 27), Math.min(L.zTop - 5.2, 15.5)), { size: fs, color: rgba(PAL.wind, 0.7) });
-        T(ctx, "The Sun's magnetic field", ...P(Math.min(L.xLeft - 3, 27), Math.min(L.zTop - 5.2, 15.5) - 1.15), { size: fs * 0.92, color: rgba(PAL.imf, 0.8) });
       }
       const y1 = L.narrow ? L.H * 0.17 : L.H * 0.3, x1 = L.narrow ? 14 : 26;
       craft([x1, y1], l1, 1.7 * s, 4.4 * s);
-      T(ctx, L.narrow ? "L1" : "to L1: ACE · Wind · DSCOVR · SOLAR-1", x1 + 9 * s, y1, { size: fs * 0.92, color: rgba(l1, 0.85) });
+      T(ctx, L.narrow ? "L1" : "to L1", x1 + 9 * s, y1, { size: fs * 0.92, color: rgba(l1, 0.85) });
     }
 
     frame(ctx, t, dt) {
@@ -271,17 +270,13 @@
         // the solar wind
         ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
         for (const st of this.streaks) {
-          const tt = (t * V + st.phase * st.span) % st.span, n = st.n, k = Math.floor(tt / st.span * (n - 1)), len = Math.max(2, Math.round(st.trail * V / st.span * (n - 1)));
-          if (k <= len) continue;
-          const lo0 = k - len, third = Math.max(1, Math.floor((len + 1) / 3)), w = st.wt[k];
-          for (let part = 0; part < 3; part++) {
-            const lo = lo0 + part * third, hi = part === 2 ? k : Math.min(k, lo0 + (part + 1) * third);
-            if (hi <= lo) continue;
-            ctx.beginPath(); ctx.moveTo(st.pts[2 * lo], st.pts[2 * lo + 1]);
-            for (let i = lo + 1; i <= hi; i++) ctx.lineTo(st.pts[2 * i], st.pts[2 * i + 1]);
-            ctx.lineWidth = st.width; ctx.strokeStyle = `rgba(255,240,205,${st.alpha * w * a * [0.18, 0.4, 0.75][part]})`; ctx.stroke();
-          }
-          if (st.head) { ctx.fillStyle = `rgba(255,255,255,${st.alpha * w * a})`; ctx.beginPath(); ctx.arc(st.pts[2 * k], st.pts[2 * k + 1], 1.1, 0, TAU); ctx.fill(); }
+          // the head's place along the path is a fraction of a sample, so it glides (HX.trace); the tail fades behind it
+          const tt = (t * V + st.phase * st.span) % st.span, n = st.n, kf = tt / st.span * (n - 1), len = Math.max(2, st.trail * V / st.span * (n - 1));
+          if (kf < 0.5) continue;
+          const [p, q] = HX.trace(ctx, st.pts, n, kf - len, kf), al = st.alpha * st.wt[Math.round(kf)] * a, g = ctx.createLinearGradient(p[0], p[1], q[0], q[1]);
+          g.addColorStop(0, `rgba(255,240,205,${0.08 * al})`); g.addColorStop(1, `rgba(255,240,205,${0.8 * al})`);
+          ctx.lineWidth = st.width; ctx.strokeStyle = g; ctx.stroke();
+          if (st.head) { ctx.fillStyle = `rgba(255,255,255,${al})`; ctx.beginPath(); ctx.arc(q[0], q[1], 1.1, 0, TAU); ctx.fill(); }
         }
         ctx.restore();
       }

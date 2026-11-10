@@ -262,5 +262,21 @@
     return cv;
   }
 
-  window.HX = { TAU, DEG, clamp, lerp, smooth, rgba, mixc, PAL, rng, M, stage, ball, arrow, curve, globe };
+  /** A streak's path along a sampled line (pts: x, y pairs), from sample a to sample b, both fractional: its ends are
+   *  placed between samples, so a streak glides and does not step from one sample to the next. On screen a point is
+   *  (ox + sx·x, oy + sy·y). Leaves the path open on ctx for the caller to stroke; returns its two ends. */
+  function trace(ctx, pts, n, a, b, ox = 0, oy = 0, sx = 1, sy = 1) {
+    b = clamp(b, 0, n - 1); a = clamp(a, 0, b);
+    const at = (f) => {
+      const i = Math.min(n - 2, Math.floor(f)), u = f - i;
+      return [ox + sx * (pts[2 * i] + (pts[2 * i + 2] - pts[2 * i]) * u), oy + sy * (pts[2 * i + 1] + (pts[2 * i + 3] - pts[2 * i + 1]) * u)];
+    };
+    const p = at(a), q = at(b);
+    ctx.beginPath(); ctx.moveTo(p[0], p[1]);
+    for (let i = Math.floor(a) + 1; i < b; i++) ctx.lineTo(ox + sx * pts[2 * i], oy + sy * pts[2 * i + 1]);
+    ctx.lineTo(q[0], q[1]);
+    return [p, q];
+  }
+
+  window.HX = { TAU, DEG, clamp, lerp, smooth, rgba, mixc, PAL, rng, M, stage, ball, arrow, curve, globe, trace };
 })();
