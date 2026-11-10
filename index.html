@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
-  <link rel="stylesheet" href="css/site.css?v=36">  <!-- /chrome:meta -->
+  <link rel="stylesheet" href="css/site.css?v=37">  <!-- /chrome:meta -->
   <link rel="preload" href="assets/data/hero-geometry.json" as="fetch" crossorigin>
 </head>
 <body>
@@ -84,7 +84,7 @@
         </div>
       </div>
       <div class="hero-note reveal d2">
-        <div class="note" id="note-hero"><div><p>The noon–midnight plane seen from dusk, for a solar-wind pressure of 2&nbsp;nPa and an IMF B<sub>z</sub> of −3&nbsp;nT. Magnetopause: Lin et al. (2010), with the Petrinec &amp; Russell (1996) tail. Bow shock: Jelínek et al. (2012). Field lines: IGRF and T89. Auroral oval: Starkov, at Kp&nbsp;3. The solar wind slows in the magnetosheath. Spacecraft are placed to show where each mission works.</p></div></div>
+        <div class="note" id="note-hero"><div><p data-gfx="classic">The noon–midnight plane seen from dusk, for a solar-wind pressure of 2&nbsp;nPa and an IMF B<sub>z</sub> of −3&nbsp;nT. Magnetopause: Lin et al. (2010), with the Petrinec &amp; Russell (1996) tail. Bow shock: Jelínek et al. (2012). Field lines: IGRF and T89. Auroral oval: Starkov, at Kp&nbsp;3. The solar wind slows in the magnetosheath. Spacecraft are placed to show where each mission works.</p><p data-gfx="new">The noon–midnight plane seen from dusk, for a solar-wind pressure of 2&nbsp;nPa, an IMF B<sub>z</sub> of −3&nbsp;nT and Kp&nbsp;3. Magnetopause: Lin et al. (2010), with the Petrinec &amp; Russell (1996) tail. Bow shock: Jelínek et al. (2012). The solar wind takes the Rankine–Hugoniot jump at the shock and flows round the magnetopause; its field lines (gold) ride with it, since each is drawn as the set of parcels that left together. Every field line is a contour of one flux function, so none can cross: they reconnect at the nose, are carried over the poles as open lines (violet) and return as closed ones (blue). Faint closed lines near Earth take no part. The violet glow is AE-8's outer radiation belt; the oval is Starkov's, and its poleward edge is where the open field ends. A kinematic model, not a simulation: in three dimensions about one line in eight reconnects and the rest slide round the flanks. Spacecraft are placed to show where each mission works.</p></div></div>
         <button class="link" aria-expanded="false" aria-controls="note-hero"><span class="ring"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v8M1 5h8" stroke="currentColor" stroke-width="1.4"/></svg></span>About this figure</button>
       </div>
     </section>
@@ -134,7 +134,7 @@
     </section>
 
     <section class="panel" id="reconnection">
-      <div class="media"><video muted loop playsinline preload="none" poster="assets/video/dungey-poster.jpg" data-src="assets/video/dungey.mp4"></video></div>
+      <div class="media"><video data-gfx="classic" muted loop playsinline preload="none" poster="assets/video/dungey-poster.jpg" data-src="assets/video/dungey.mp4"></video><canvas data-gfx="new" id="fig-dungey" role="img" aria-label="The Dungey cycle with a substorm: the solar wind's field reconnects with Earth's at the nose, the opened field loads the tail, and a new X-line in the tail closes it again"></canvas></div>
       <div class="copy">
         <span class="eyebrow reveal">Magnetic reconnection</span>
         <h2 class="reveal d1">Energizing the <span class="nowrap">near-Earth</span> environment</h2>
@@ -144,7 +144,7 @@
           <button class="btn" data-play="overview"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor"/></svg>Watch the overview</button>
           <button class="link" aria-expanded="false" aria-controls="note-dungey"><span class="ring"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v8M1 5h8" stroke="currentColor" stroke-width="1.4"/></svg></span>About this animation</button>
         </div>
-        <div class="note" id="note-dungey"><div><p>The Dungey cycle (Dungey 1961) with a substorm, in the noon–midnight plane, the Sun to the left. Gold lines are the Sun's southward field, pale blue lines Earth's closed field, and violet lines open field. Reconnection at the nose opens field lines, and the solar wind lays them along the tail lobes. As the lobes fill they squeeze the plasma sheet (orange) and the current sheet at its center. Then a near-Earth X-line forms. The oldest open lines reconnect there: the closed parts snap back toward Earth, the cut-loose parts fly off down the tail, and plasma jets earthward along the field into the auroral oval. A schematic; no field line crosses another.</p></div></div>
+        <div class="note" id="note-dungey"><div><p data-gfx="classic">The Dungey cycle (Dungey 1961) with a substorm, in the noon–midnight plane, the Sun to the left. Gold lines are the Sun's southward field, pale blue lines Earth's closed field, and violet lines open field. Reconnection at the nose opens field lines, and the solar wind lays them along the tail lobes. As the lobes fill they squeeze the plasma sheet (orange) and the current sheet at its center. Then a near-Earth X-line forms. The oldest open lines reconnect there: the closed parts snap back toward Earth, the cut-loose parts fly off down the tail, and plasma jets earthward along the field into the auroral oval. A schematic; no field line crosses another.</p><p data-gfx="new">The Dungey cycle (Dungey 1961) with a substorm, in the noon–midnight plane, the Sun to the left, drawn as you watch. Gold lines are the Sun's southward field, pale blue lines Earth's closed field, violet lines open field, and orange lines field cut loose from both. Every line is a contour of one flux function and each carries the same flux, so none can cross and the number of violet lines is the open flux. Dayside reconnection adds to it and tail reconnection takes from it (Cowley &amp; Lockwood 1992): through the growth phase the lobes fill and the plasma sheet thins, then an X-line forms about 22&nbsp;R<sub>E</sub> down the tail, pinches off a plasmoid (Hones 1979) and closes open flux nearly three times faster than the day side opens it. The inset is the northern polar cap from above, with the feet of the same field lines crossing it. The loop is about three hours at a dayside voltage of 50&nbsp;kV; the solar wind is drawn slower than that scale, and in three dimensions only about one of its field lines in eight reconnects. A kinematic model, not a simulation.</p></div></div>
       </div>
     </section>
 
@@ -326,8 +326,7 @@
     </video>
   </dialog>
 
-  <script src="js/figkit.js?v=36"></script>
-  <script src="js/hero.js?v=36"></script>
+  <script src="js/gfx/switch.js?v=37" data-new="js/figkit.js js/gfx/core.js js/gfx/meridian.js js/gfx/hero.js js/gfx/dungey.js" data-classic="js/figkit.js js/hero.js"></script>
   <script src="js/site.js?v=36"></script>
 </body>
 </html>

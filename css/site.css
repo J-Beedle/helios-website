@@ -1011,3 +1011,11 @@ body.solo-hso #stage { position: fixed; inset: 0; height: auto; min-height: 0; m
 .fw-info-card .fi-go:hover { background: #006a00; }
 .fw-info-card p:last-child { margin-bottom: 0; }
 
+/* ── two generations of figures (js/gfx/switch.js): the set not shown is removed; until then the first is hidden ── */
+[data-gfx="classic"] { display: none; }
+html[data-gfx-mode="classic"] [data-gfx="classic"] { display: revert; }
+html[data-gfx-mode="classic"] [data-gfx="new"] { display: none; }
+.gfx-switch-row { margin: 18px 0 0; color: var(--muted, #8b8d98); font: 500 12px/1.5 "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+.gfx-switch-row a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.gfx-switch-row a:hover { color: #f4f5f7; }
+
