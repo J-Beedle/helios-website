@@ -6,8 +6,11 @@
  *   Venus    bow shock: a conic, L 1.303 R_V, ε 1.056, x₀ 0.788; ion composition boundary: a circle of 1.109 R_V by
  *            day and ρ = 1.109 − 0.097 x by night (Martinecz et al. 2008, Venus Express at solar minimum).
  *   Earth    Shue et al. (1998) and Jelínek et al. (2012) at 2 nPa and Bz = 0.
- *   Mars     bow shock: x₀ 0.64, ε 1.03, L 2.04 R_M; magnetic pileup boundary: x₀ 0.78, ε 0.90, L 0.96
- *            (Vignes et al. 2000, Mars Global Surveyor).
+ *   Mars     bow shock: x₀ 0.600, ε 1.026, L 2.081 R_M; magnetic pileup boundary: x₀ 0.640, ε 0.770, L 1.080 by day
+ *            and x₀ 1.600, ε 1.009, L 0.528 by night (Trotignon et al. 2006, Phobos 2 and Mars Global Surveyor: the
+ *            fits Helios's Mars view draws). The night-side piece is a hyperbola, so the tail it bounds keeps
+ *            flaring. A single conic with ε < 1 (Vignes et al. 2000's 0.90) is an ellipse: it fits the day side,
+ *            but carried down the tail it closes on itself, which no tail does.
  *   Jupiter  magnetopause and bow shock: Joy et al. (2002) in the noon–midnight cut, at a solar-wind pressure of
  *            0.071 nPa (the median at Jupiter: Rutala et al. 2025), which puts their noses 83 and 108 R_J out.
  *
@@ -38,15 +41,15 @@
       return r[lo] + (r[hi] - r[lo]) * (t - th[lo]) / Math.max(th[hi] - th[lo], 1e-12);
     };
   }
-  const shuePts = (r0, al, n = 320) => { const out = []; for (let i = 0; i <= n; i++) { const th = 3.02 * i / n, r = M.shueR(th, r0, al); out.push([r * Math.cos(th), r * Math.sin(th)]); } return out; };
+  const shuePts = (r0, al, n = 320, thMax = 3.02) => { const out = []; for (let i = 0; i <= n; i++) { const th = thMax * Math.pow(i / n, 1.3), r = M.shueR(th, r0, al); out.push([r * Math.cos(th), r * Math.sin(th)]); } return out; };
   const e2 = M.shue(2, 0), jel = M.jelinek(2);
   const venusICB = (() => { const out = []; for (let i = 0; i <= 60; i++) { const th = Math.PI / 2 * i / 60; out.push([1.109 * Math.cos(th), 1.109 * Math.sin(th)]); } for (let x = -0.1; x >= -60; x -= 0.1) out.push([x, 1.109 - 0.097 * x]); return out; })();
-  const marsMPB = (() => { const out = M.conic(0.78, 0.90, 0.96).points(-6.5, 300), rho = out[out.length - 1][1]; for (let x = -6.6; x >= -60; x -= 0.2) out.push([x, rho]); return out; })();
+  const marsMPB = M.conic(0.640, 0.770, 1.080).points(-0.001, 200).filter(p => p[0] >= 0).concat(M.conic(1.600, 1.009, 0.528).points(-400, 500).filter(p => p[0] < 0));
 
   const joyMP = M.joy("mp", 0.071), joyBS = M.joy("bs", 0.071);
   const BODIES = [
     { name: "Mercury", r_km: 2440, color: [176, 168, 160], own: true, dz: -0.196, mach: 5.5, tilt: 0, turn: 1 / 2900, map: "mercury",
-      mp: shuePts(1.45, 0.5), bs: M.conic(0.5, 1.02, 2.90 * 1.02).points(-400, 500), inner: 1.45, innerLabel: "magnetopause", shock: 0.5 + 2.90 * 1.02 / 2.02,
+      mp: shuePts(1.45, 0.5, 420, 3.1), bs: M.conic(0.5, 1.02, 2.90 * 1.02).points(-400, 500), inner: 1.45, innerLabel: "magnetopause", shock: 0.5 + 2.90 * 1.02 / 2.02,
       grid: { x0: -6, x1: 3.4, zmax: 9, h: 0.07 }, unit: 0.145, xRef: 9, dx: 1.25, rIn: 0.8, rCut: 0.8, thetaD: 25, thetaN: 31, xIn: -1.3, xN: -11,
       sheet: (x) => 0.12 + 0.02 * Math.max(0, -x - 1.5), rest: [-0.9, -0.62, -0.44, -0.3, -0.1, -0.02, 0.06, 0.14, 0.22, 0.31, 0.42, 0.6, 0.9] },
     { name: "Venus", r_km: 6051.8, color: [226, 196, 142], own: false, dz: 0, mach: 6, tilt: 2.6, turn: -1 / 12000, map: "venus",
@@ -57,7 +60,7 @@
       grid: { x0: -48, x1: 23, zmax: 32, h: 0.4 }, unit: 1, xRef: 60, dx: 9, rIn: 1, rCut: 2.4, thetaD: 13, thetaN: 19, xIn: -6, xN: -130,
       rest: [-1 / 1.8, -1 / 3.3, -1 / 5, -1 / 7.5, -0.085, -0.03, 0.01, 0.045, 0.08, 0.118, 0.135, 1 / 6.2, 1 / 4.4, 1 / 3.3, 1 / 1.8] },
     { name: "Mars", r_km: 3389.5, color: [214, 116, 76], own: false, dz: 0, mach: 7, tilt: 25.2, turn: 1 / 51.3, map: "mars",
-      mp: marsMPB, bs: M.conic(0.64, 1.03, 2.04).points(-400, 500), inner: 0.78 + 0.96 / 1.90, innerLabel: "pileup boundary", shock: 0.64 + 2.04 / 2.03,
+      mp: marsMPB, bs: M.conic(0.600, 1.026, 2.081).points(-400, 500), inner: 0.640 + 1.080 / 1.770, innerLabel: "pileup boundary", shock: 0.600 + 2.081 / 2.026,
       grid: { x0: -7, x1: 3.4, zmax: 7.6, h: 0.07 }, unit: 0.13, xRef: 10, dx: 1.25 },
     // Jupiter, in Jupiter radii: the same model at eight times Earth's lengths
     { name: "Jupiter", r_km: 71492, color: [214, 180, 140], own: true, dz: 0, mach: 10, wide: true, tilt: 3.1, turn: 1 / 20.7, map: "jupiter",
