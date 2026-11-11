@@ -111,7 +111,7 @@
     return w;
   }
   function sizeCanvas(cv) {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = cv.clientWidth, h = cv.clientHeight;
+    const dpr = cv.pxScale || Math.min(window.devicePixelRatio || 1, 2), w = cv.clientWidth, h = cv.clientHeight;
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     const ctx = cv.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -700,7 +700,7 @@
     omBeta: { title: "Plasma β", label: "β", unit: "", w: 0.8, log: true, lines: [Sc("omni", "beta", 0, COL.mag, "β")] },
     omMa: { title: "Alfvén Mach number", label: "M_{A}", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "ma", 0, COL.mag, "M_{A}")] },
     omMms: { title: "Magnetosonic Mach number", label: "M_{ms}", unit: "", w: 0.8, floor: 0, lines: [Sc("omni", "mms", 0, COL.mag, "M_{ms}")] },
-    omR0: { title: "Magnetopause R₀ (Shue 1998)", label: "R_{0}", unit: "(R_E)", w: 0.8, lines: [Sc("omni", "r0", 0, COL.mag, "R_{0}")] },
+    omR0: { title: "Magnetopause R₀ (Shue 1998)", label: "R_{0}", unit: "(R_{E})", w: 0.8, lines: [Sc("omni", "r0", 0, COL.mag, "R_{0}")] },
     omSymh: { title: "SYM-H", label: "SYM-H", unit: "(nT)", w: 0.8, zero: true, lines: [Sc("omni", "symh", 0, COL.mag, "SYM-H")] },
     omAe: { title: "AE", label: "AE", unit: "(nT)", w: 0.8, floor: 0, lines: [Sc("omni", "ae", 0, COL.mag, "AE")] },
     omPcn: { title: "PC index (north)", label: "PCN", unit: "", w: 0.8, zero: true, lines: [Sc("omni", "pcn", 0, COL.mag, "PCN")] },
@@ -1031,7 +1031,8 @@
   function Panel(D, app, cv, over, cfg = {}) {
     const D0 = D;                                          // the window's own view; D is its resolution tier's while drawing
     cfg = Object.assign({ mission: "mms", coverage: true, tracker: true, spintone: true, smooth: false, smoothW: 10, outliers: false,
-                          lmn: null, marks: [], interval: null, bands: [], paint: null }, cfg);
+                          lmn: null, marks: [], interval: null, bands: [], paint: null, title: null, still: false }, cfg);
+    // cfg.title: the craft's name over the figure; cfg.still: no handles, selection or tracker. Both are the saved PNG's.
     let L = null;                                          // the layout last drawn
     const tiers = () => (D.bu ? [D.sv, D.bu] : [D.sv]);
     const P = {                                             // what derived lines need: the FGM and J beside a record set
@@ -1088,7 +1089,7 @@
     const legendOf = (line, R) => (R && (line.vec || line.rot) ? (line.lmnLabel ? line.lmnLabel(LMN[line.c]) : LMN[line.c]) : line.label);
     let barOn = false, info = { burst: null, e: null };    // the coverage bar this draw, and where its info badges go
     function layout(w, h, rows) {
-      const narrow = w < 500, left = narrow ? 62 : 100, right = narrow ? 44 : 64, top = barOn ? 24 : 12, bottom = 40;
+      const narrow = w < 500, left = narrow ? 62 : 100, right = narrow ? 44 : 64, top = (barOn ? 24 : 12) + (cfg.title ? 13 : 0), bottom = 40;
       const H = h - top - bottom;
       let y = top;
       const rr = rows.map((r, k) => { const hh = H / rows.length, R = { x: left, y, w: w - left - right, h: hh, row: r, k }; y += hh; return R; });
@@ -1139,6 +1140,8 @@
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
       const Pl = L.plot, xOf = (t) => Pl.x + (t - a) / (b - a) * Pl.w;
       info = { burst: null, e: null };
+      const by = cfg.title ? 13 : 0;                       // the rate bars sit under the title
+      if (cfg.title) rich(ctx, cfg.title, Pl.x + Pl.w / 2, barOn ? 9 : Pl.y / 2, { size: 11.5, weight: 600, align: "center", color: "#000" });
       if (barOn) {
         // The data-rate bars across the top (MMSStackPlot.drawRateBar): red where the probe was in fast survey, green
         // where it took burst — solid where this figure draws burst at burst resolution, hatched where it holds burst
@@ -1146,20 +1149,20 @@
         const X0 = Pl.x, X1 = Pl.x + Pl.w, cx = (t) => Math.min(X1, Math.max(X0, xOf(t)));
         const fast = cvr && cvr.fast ? cvr.fast : fastSegs(D0.sv.des);
         ctx.fillStyle = "#d90d0d";
-        for (const [s0, e0] of fast) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 7, cx(e0) - cx(s0), 2);
+        for (const [s0, e0] of fast) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 7 + by, cx(e0) - cx(s0), 2);
         const loaded = D0.bu ? D0.segs.des || [] : [], all = cvr && cvr.burst ? cvr.burst : loaded;
         // (a file's span and its samples' differ by a few seconds at each end: the loaded stretches reach 5 s further,
         // and a hatched sliver under 3 s is not one)
         const shown = tier === "native" ? loaded.map(([s0, e0]) => [s0 - 5, e0 + 5]) : [], solid = ivIntersect(all, shown), hatched = ivSubtract(all, shown).filter(([s0, e0]) => e0 - s0 >= 3);
         ctx.fillStyle = "#008000";
-        for (const [s0, e0] of solid) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 13, cx(e0) - cx(s0), 4);
-        for (const [s0, e0] of hatched) if (e0 > a && s0 < b) burstHatch(ctx, cx(s0), 13, cx(e0) - cx(s0), 4);
-        rich(ctx, "Fast", X1 + 6, 8, { size: 9, color: "#d90d0d" });
-        const bw = rich(ctx, "Burst", X1 + 6, 16, { size: 9, color: "#008000" });
+        for (const [s0, e0] of solid) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 13 + by, cx(e0) - cx(s0), 4);
+        for (const [s0, e0] of hatched) if (e0 > a && s0 < b) burstHatch(ctx, cx(s0), 13 + by, cx(e0) - cx(s0), 4);
+        rich(ctx, "Fast", X1 + 6, 8 + by, { size: 9, color: "#d90d0d" });
+        const bw = rich(ctx, "Burst", X1 + 6, 16 + by, { size: 9, color: "#008000" });
         const pending = ivIntersect(hatched, [[a, b]]);
         if (LIVE && pending.length) {
           const fetched = SRC.burstHalf ? [D.m.event.crossing - SRC.burstHalf, D.m.event.crossing + SRC.burstHalf] : null;
-          info.burst = { x: X1 + 6 + bw + 8, y: 15, tier, pending, fetched, beyond: fetched ? ivSubtract(pending, [fetched]) : [], keys: rows.map(r => r.key) };
+          info.burst = { x: X1 + 6 + bw + 8, y: 15 + by, tier, pending, fetched, beyond: fetched ? ivSubtract(pending, [fetched]) : [], keys: rows.map(r => r.key) };
         }
       }
       for (const Rw of L.rows) {
@@ -1326,6 +1329,7 @@
       // the edge trim handles (StackEdgeTrimLayer): a grey dashed line and an inward chevron just inside each side;
       // while one is dragged, the part being trimmed away is shaded and the new bound's time shown
       const top = L.rows[0].y, bot = L.rows[L.rows.length - 1].y + L.rows[L.rows.length - 1].h;
+      if (!cfg.still) {
       const dashed = (x, color, lw) => { ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke(); ctx.restore(); };
       dashed(Pl.x + 2.5, "rgba(128,128,128,0.5)", 1); dashed(Pl.x + Pl.w - 2.5, "rgba(128,128,128,0.5)", 1);
       rich(ctx, "▸", Pl.x + 6, top + 7, { size: 7, color: "rgba(128,128,128,0.8)", align: "center" });
@@ -1341,6 +1345,7 @@
         ctx.fillStyle = "rgba(255,255,255,0.95)"; ctx.fill(); ctx.lineWidth = 0.6; ctx.strokeStyle = "rgba(128,128,128,0.7)"; ctx.stroke();
         rich(ctx, chip, cx, top + 21, { size: 9, weight: 600, align: "center", color: "#000" });
       }
+      }
       // the VDF cuts' times, numbered, as Helios marks them on the figure
       for (const [k, m] of cfg.marks.entries()) {
         if (m.t < a || m.t > b) continue;
@@ -1350,6 +1355,7 @@
         ctx.beginPath(); ctx.arc(x, Pl.y - 1, 7, 0, Math.PI * 2); ctx.fillStyle = m.color; ctx.fill();
         rich(ctx, String(k + 1), x, Pl.y - 1, { size: 9.5, weight: 700, align: "center", color: "#fff" });
       }
+      if (cfg.still) return;
       if (app.sel) {
         const [s, e] = app.sel, x0 = Math.min(xOf(s), xOf(e)), x1 = Math.max(xOf(s), xOf(e)), c = cfg.paint ? REGION[cfg.paint].color : ORANGE;
         ctx.fillStyle = hexA(c, 0.16); ctx.fillRect(x0, Pl.y, x1 - x0, Pl.h);
@@ -1464,7 +1470,7 @@
     over.addEventListener("dblclick", () => app.setFocus(...app.home));
     /** The subplot under a y on the figure (for the editor), with its letter. */
     const rowAt = (y) => { const R = L && L.rows.find(R => y >= R.y && y <= R.y + R.h); return R ? Object.assign({ letter: "abcdefghijklmnopqrst"[R.k] }, R.row) : null; };
-    return { draw, overlay, cfg, rowAt, get info() { return info; } };
+    return { draw, overlay, cfg, rowAt, get info() { return info; }, get rows() { return L ? L.rows.length : 0; } };
   }
 
   // ───────────────────────── the VDF cuts, as Helios draws them ─────────────────────────
@@ -2041,6 +2047,8 @@
   // SF Symbols' arrow.left.and.right.circle.fill, gold, as Helios draws its reset
   const RESET = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4 8h8M6 5.6L3.8 8 6 10.4M10 5.6L12.2 8 10 10.4" fill="none" stroke="#14161b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const HAM = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
+  const SAVE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2v7.6M4.9 6.9 8 10l3.1-3.1M3 11.2v1.6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1.6" stroke-linejoin="round"/></svg>';
+  const SAVED = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="#5fd08a" stroke="none"/><path d="M4.8 8.3 7 10.5l4.3-4.8" stroke="#0c1410" stroke-width="1.7" stroke-linejoin="round"/></svg>';
   const CANON = ["b", "ionSpec", "elecSpec", "n", "ti", "te", "tanis", "p", "vi", "ve", "jfpi", "jpar", "jperp", "e"];
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const DAY = (() => { const d = new Date(T0 + 7200e3); return `${d.getUTCDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]} ${d.getUTCFullYear()}`; })();
@@ -2084,7 +2092,7 @@
         <button class="fw-ic fw-sb" aria-label="Show the figure and analysis tools" aria-pressed="false" title="Figure and analysis tools">${HAM}</button>
         ${host.pinned != null ? `<span class="fw-pin" title="Pinned: opened while the time machine was at this moment">${clock(host.pinned)} UTC</span>` : ""}
         <div class="fw-cuts" hidden><span class="fc-l">VDF cuts</span><span class="fc-chips"></span>${HAS_CRESCENT ? `<button class="fc-cres" title="${esc(CRESCENT_HELP)}">Crescent</button>` : ""}<div class="fw-add"><button class="pick fc-add" aria-haspopup="menu" aria-expanded="false" title="Add a VDF cut: a species at the current time. Then drag its numbered line, or type its time in its column."><b>+</b>Add</button><div class="pick-menu fc-menu" role="menu" hidden></div></div></div>
-        <div class="fw-range"><button class="fw-reset" hidden aria-label="Reset the time range" title="Reset the trimmed time range to the full ±window (or double-click the figure)">${RESET}</button><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
+        <div class="fw-range"><button class="fw-ic fw-save" aria-label="Save this figure as a PNG" title="Save this figure as a PNG, as it is drawn: its range, subplots, LMN frame, painted regions and VDF cuts">${SAVE}</button><button class="fw-reset" hidden aria-label="Reset the time range" title="Reset the trimmed time range to the full ±window (or double-click the figure)">${RESET}</button><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
       </div>
       <p class="fw-banner" hidden></p>
       <div class="fw-main">
@@ -2913,6 +2921,61 @@
       W.rangeText();
     });
     $(".fw-reset", el).addEventListener("click", () => { if (A.home) { A.setFocus(...A.home); W.rangeText(); } });
+
+    // ── Save the figure as a PNG (Helios's saveFigure): the figure as it is drawn, on white with the craft's name over it,
+    //    1000 points wide and as tall as its subplots need, its type 1.5× the screen's, at two pixels a point; the VDF
+    //    cuts' columns beside it while they are open. Named as Helios names it: "MMS1 2015-10-16 1237-1337 UT.png". ──
+    function figureCanvas() {
+      W.drawNow();                                         // the figure's settings as they are now
+      const n = Math.max(W.panel.rows, 3), TYPE = 1.5, w = Math.round(1000 / TYPE), h = Math.round(clamp(130 + 110 * n, 460, 1600) / TYPE);
+      const box = document.createElement("div"), c1 = document.createElement("canvas"), c2 = document.createElement("canvas");
+      box.style.cssText = `position:fixed;left:-20000px;top:0;width:${w}px;height:${h}px;visibility:hidden;pointer-events:none`;
+      for (const c of [c1, c2]) { c.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%"; c.pxScale = 2 * TYPE; box.appendChild(c); }
+      document.body.appendChild(box);
+      try {
+        const still = Object.assign(Object.create(A), { hover: null, hoverY: null, sel: null, setHover() {}, setFocus() {} });
+        Panel(W.view, still, c1, c2, Object.assign({}, C, { still: true, tracker: false, title: CRAFT[W.n].name })).draw();
+        // the open cuts' columns: 250 points each, as on screen
+        const open = W.vdf.on ? [...cols.querySelectorAll(".vd-col")].filter(b => { const cv = $(".vd-cv", b); return cv && !cv.hidden && cv.width > 0; }) : [];
+        const CW = 500, HEAD = 96, colH = Math.max(0, ...open.map(b => { const cv = $(".vd-cv", b); return HEAD + Math.round(CW * cv.height / cv.width) + 16; }));
+        const out = document.createElement("canvas");
+        out.width = c1.width + CW * open.length; out.height = Math.max(c1.height, colH);
+        const x = out.getContext("2d");
+        x.fillStyle = "#fff"; x.fillRect(0, 0, out.width, out.height);
+        x.drawImage(c1, 0, 0); x.drawImage(c2, 0, 0);
+        x.imageSmoothingQuality = "high";
+        open.forEach((b, i) => {
+          const x0 = c1.width + CW * i, cv = $(".vd-cv", b), chip = $(".vd-n", b), mid = x0 + CW / 2;
+          x.fillStyle = chip.style.background || "#1f70d9"; x.beginPath(); x.arc(x0 + 30, 30, 16, 0, Math.PI * 2); x.fill();
+          rich(x, chip.textContent, x0 + 30, 31, { size: 20, weight: 700, align: "center", color: "#fff" });
+          rich(x, $(".vd-title", b).textContent, x0 + 56, 31, { size: 21, weight: 700, color: "#000" });
+          rich(x, `${$(".vd-time", b).value} UT`, x0 + CW - 14, 31, { size: 19, weight: 600, align: "right", color: chip.style.background || "#000" });
+          rich(x, $(".vd-rec", b).textContent, mid, 62, { size: 15, align: "center", color: "rgba(0,0,0,0.62)" });
+          rich(x, $(".vd-note", b).textContent, mid, 82, { size: 15, align: "center", color: "rgba(0,0,0,0.62)" });
+          x.drawImage(cv, x0, HEAD, CW, Math.round(CW * cv.height / cv.width));
+          x.fillStyle = "rgba(0,0,0,0.1)"; x.fillRect(x0, 0, 2, out.height);   // the column's edge, down the whole picture
+        });
+        return out;
+      } finally { box.remove(); }
+    }
+    const saveBtn = $(".fw-save", el);
+    let saveTimer = null;
+    saveBtn.addEventListener("click", () => {
+      if (!W.n || !W.panel.rows) return;
+      const hm = (t) => clock(t).slice(0, 5).replace(":", ""), day = new Date(T0 + A.a * 1000).toISOString().slice(0, 10);
+      const name = `${CRAFT[W.n].name} ${day} ${hm(A.a)}-${hm(A.b)} UT.png`;
+      let out;
+      try { out = figureCanvas(); } catch (err) { console.error(err); saveBtn.title = "The figure could not be saved."; return; }
+      out.toBlob((blob) => {
+        if (!blob) { saveBtn.title = "The figure could not be saved."; return; }
+        const url = URL.createObjectURL(blob), link = Object.assign(document.createElement("a"), { href: url, download: name });
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        saveBtn.innerHTML = SAVED; saveBtn.classList.add("done");   // Helios's green tick, for a moment
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => { saveBtn.innerHTML = SAVE; saveBtn.classList.remove("done"); }, 1600);
+      }, "image/png");
+    });
     $(".fw-sb", el).addEventListener("click", () => { W.sideOpen = !W.sideOpen; renderSide(); relayout(); });
     W.openTools = (tab) => { W.sideOpen = true; if (tab) W.tab = tab; renderSide(); relayout(); };
     new ResizeObserver(() => W.redraw()).observe($(".fw-main", el));
