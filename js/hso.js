@@ -398,8 +398,8 @@
   function burstHatch(ctx, x, y, w, h) {
     if (!(w > 0)) return;
     ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-    ctx.fillStyle = "rgba(0,128,0,0.22)"; ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = "#008000"; ctx.lineWidth = 0.9; ctx.beginPath();
+    ctx.fillStyle = "rgba(41,168,61,0.22)"; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#29a83d"; ctx.lineWidth = 0.9; ctx.beginPath();
     for (let X = x - h; X < x + w; X += 2.6) { ctx.moveTo(X, y + h); ctx.lineTo(X + h, y); }
     ctx.stroke(); ctx.restore();
   }
@@ -535,6 +535,79 @@
       ctx.fillStyle = INK; ctx.fillRect(R.x - 4, Math.round(y), 4, 1);
       rich(ctx, String(10 ** e), R.x - 6, y, { size: 10, align: "right", color: INK2 });
     }
+  }
+
+  // ── The figure as Helios's StackFigure draws and prints it (MMSStackPlot.swift): a white ground, a black frame round
+  //    each subplot, ticks inside the frames, numbers at 8 points and names at 9, in black. `u` is one of Helios's
+  //    unscaled points: a saved figure's type is 1.5× the screen's (cfg.fs) while its frames, traces and tick marks
+  //    keep their weight, so there u is 1/1.5. ──
+  const H_RED = "#d92921", H_GREEN = "#29a83d";
+  /** A tick's number as Helios writes it (tickLabel): the decimals its step needs. */
+  const tickText = (v, step) => (Math.abs(v) < 1e-9 ? "0" : v.toFixed(step > 0 ? clamp(Math.ceil(-Math.log10(step) - 1e-9), 0, 6) : 0));
+  /** Round tick values (Helios's niceTicks): about n of them on a 1-2-5 step, eight at most; a range that falls just
+   *  inside one coarse step would keep a single tick, so the step comes down until there are two. */
+  function niceTicksH(lo, hi, n) {
+    const range = hi - lo;
+    if (!(range > 0)) return [lo];
+    const raw = range / n, mag = 10 ** Math.floor(Math.log10(raw)), norm = raw / mag;
+    let step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+    const at = (st) => { const out = []; for (let k = Math.ceil(lo / st - 1e-9); k * st <= hi + st * 1e-9 && out.length < 8; k++) out.push(k === 0 ? 0 : k * st); return out; };
+    let out = at(step);
+    for (let i = 0; i < 3 && out.length < 2; i++) { const m = 10 ** Math.floor(Math.log10(step) + 1e-9), k = Math.round(step / m); step = k >= 5 ? 2 * m : k >= 2 ? m : 0.5 * m; out = at(step); }
+    return out;
+  }
+  /** A number beside the left axis: right-aligned, and hung inside its own row where the tick is at the row's edge. */
+  function axisNumber(ctx, str, R, y, u, size = 8) {
+    const yy = y - R.y < 4 ? y + size * 0.55 : R.y + R.h - y < 4 ? y - size * 0.55 : y;
+    rich(ctx, str, R.x - 4 * u, yy, { size, align: "right", color: "#000" });
+  }
+  /** A spectrogram's energy axis: a tick inside the frame at each decade, numbered where there is room. */
+  function energyAxisH(ctx, R, range, u) {
+    const [lo, hi] = range;
+    let last = -Infinity;
+    for (let e = Math.floor(hi); e >= Math.ceil(lo); e--) {
+      const y = R.y + R.h - (e - lo) / (hi - lo) * R.h;
+      ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(R.x, y - 0.4 * u, 3 * u, 0.8 * u);
+      if (y - last < 10) continue;
+      axisNumber(ctx, e >= 0 ? String(10 ** e) : (10 ** e).toFixed(-e), R, y, u); last = y;
+    }
+  }
+  function cbarUnit(ctx, unit, x, y) { ctx.save(); ctx.translate(x, y); ctx.rotate(-Math.PI / 2); rich(ctx, unit, 0, 0, { size: 7, align: "center", color: "#000" }); ctx.restore(); }
+  /** A spectrogram's color bar: the row's height, 8 points past the frame, its decades numbered, its unit beyond. */
+  function colorbarH(ctx, R, range, unit, u) {
+    const x = R.x + R.w + 8, w = 8, [lo, hi] = range;
+    for (let i = 0; i < 40; i++) { const c = Math.round(i / 39 * 255) * 3; ctx.fillStyle = `rgb(${LUT[c]},${LUT[c + 1]},${LUT[c + 2]})`; ctx.fillRect(x, R.y + R.h - (i + 1) / 40 * R.h, w, R.h / 40 + 0.6); }
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 0.5 * u; ctx.strokeRect(x, R.y, w, R.h);
+    const step = Math.max(hi - lo > 3 ? 2 : 1, Math.ceil(10 / (R.h / Math.max(hi - lo, 1e-9))));
+    for (let e = Math.ceil(lo); e <= Math.floor(hi); e++) {
+      if (((e % step) + step) % step) continue;
+      rich(ctx, `10^{${e}}`, x + w + 3, clamp(R.y + R.h - (e - lo) / (hi - lo) * R.h, R.y + 4, R.y + R.h - 4), { size: 7.5, color: "#000" });
+    }
+    if (unit) cbarUnit(ctx, unit, R.x + R.w + 44, R.y + R.h / 2);
+  }
+  /** Time ticks on round instants (Helios's timeTicks): the smallest step whose labels keep a label and a half apart
+   *  at this width, and the minor ticks that divide it. */
+  const LADDER = [[0.01, 5], [0.02, 4], [0.05, 5], [0.1, 5], [0.2, 4], [0.5, 5], [1, 5], [5, 5], [10, 5], [15, 3], [30, 6], [60, 6], [300, 5], [600, 5], [900, 3], [1800, 6],
+                  [3600, 6], [10800, 6], [21600, 6], [43200, 6], [86400, 4]];
+  function heliosTicks(a, b, plotW) {
+    const dur = Math.max(b - a, 0.01), multi = dur > 86400, z = T0 / 1000;
+    const minPx = (st) => (multi ? 5 : st < 1 ? 9 + (st >= 0.1 - 1e-9 ? 1 : 2) : st < 60 ? 8 : 5) * 5.4 + 12;
+    const [step, minors] = LADDER.find(([st]) => plotW / (dur / st) >= minPx(st)) || LADDER[LADDER.length - 1];
+    const major = [], minor = [], s0 = a + z, s1 = b + z, eps = Math.min(1e-6, step * 1e-3), sub = step / minors;
+    for (let k = Math.floor(s0 / step); k * step <= s1 + eps; k++) {
+      const t = k * step;
+      if (t >= s0 - eps) major.push(t - z);
+      for (let j = 1; j < minors; j++) { const m = t + sub * j; if (m >= s0 - eps && m <= s1 + eps) minor.push(m - z); }
+    }
+    return { major, minor, step, multi };
+  }
+  /** A major tick's label: HH:MM, HH:MM:SS under a minute's step, tenths or hundredths under a second's. */
+  function tickClock(t, step) {
+    const d = new Date(Math.round(T0 + t * 1000)), hms = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+    if (step >= 60) return hms.slice(0, 5);
+    if (step >= 1) return hms;
+    const dec = step >= 0.1 - 1e-9 ? 1 : 2;
+    return `${hms}.${String(d.getUTCMilliseconds()).padStart(3, "0").slice(0, dec)}`;
   }
 
   // ───────────────────────── the data panel ─────────────────────────
@@ -1031,8 +1104,9 @@
   function Panel(D, app, cv, over, cfg = {}) {
     const D0 = D;                                          // the window's own view; D is its resolution tier's while drawing
     cfg = Object.assign({ mission: "mms", coverage: true, tracker: true, spintone: true, smooth: false, smoothW: 10, outliers: false,
-                          lmn: null, marks: [], interval: null, bands: [], paint: null, title: null, still: false }, cfg);
-    // cfg.title: the craft's name over the figure; cfg.still: no handles, selection or tracker. Both are the saved PNG's.
+                          lmn: null, marks: [], interval: null, bands: [], paint: null, title: null, still: false, fs: 1 }, cfg);
+    // cfg.title: the craft's name over the figure; cfg.still: no handles, selection or tracker; cfg.fs: how much larger
+    // the type is than the screen's. All three are the saved PNG's.
     let L = null;                                          // the layout last drawn
     const tiers = () => (D.bu ? [D.sv, D.bu] : [D.sv]);
     const P = {                                             // what derived lines need: the FGM and J beside a record set
@@ -1088,12 +1162,16 @@
     /** A line's legend: under LMN a turned vector names its axis (E_L, or the line's own name where the row says it). */
     const legendOf = (line, R) => (R && (line.vec || line.rot) ? (line.lmnLabel ? line.lmnLabel(LMN[line.c]) : LMN[line.c]) : line.label);
     let barOn = false, info = { burst: null, e: null };    // the coverage bar this draw, and where its info badges go
-    function layout(w, h, rows) {
-      const narrow = w < 500, left = narrow ? 62 : 100, right = narrow ? 44 : 64, top = (barOn ? 24 : 12) + (cfg.title ? 13 : 0), bottom = 40;
-      const H = h - top - bottom;
-      let y = top;
-      const rr = rows.map((r, k) => { const hh = H / rows.length, R = { x: left, y, w: w - left - right, h: hh, row: r, k }; y += hh; return R; });
-      return { w, h, narrow, plot: { x: left, y: top, w: w - left - right, h: H }, rows: rr };
+    /** Helios's StackGeom: the left margin holds the widest name or unit and the tick numbers, the right the legend
+     *  or a color bar, the top the title and the rate bars, the bottom the tick labels and the date. */
+    function layout(ctx, w, h, rows) {
+      const narrow = w < 500, multi = app.b - app.a > 86400, tickW = narrow ? 24 : 28;
+      const labelW = Math.max(20, ...rows.flatMap(r => [narrow ? r.short || r.label : r.label, r.unit].filter(Boolean).map(str => rich(ctx, str, 0, 0, { size: 9, measure: true }))));
+      const left = Math.round(Math.max(46, 4 + labelW + 5 + tickW + 5)), right = narrow ? 46 : 54;
+      const top = cfg.title ? (barOn ? 32 : 20) : (barOn ? 20 : 8), bottom = multi ? 58 : 48;
+      const H = h - top - bottom, edge = (i) => Math.round(top + H * i / rows.length);   // whole points: stacked frames stay flush
+      const rr = rows.map((r, k) => ({ x: left, y: edge(k), w: Math.round(w - left - right), h: edge(k + 1) - edge(k), row: r, k }));
+      return { w, h, narrow, top, bottom, labelRight: left - 4 - tickW - 5, plot: { x: left, y: top, w: Math.round(w - left - right), h: edge(rows.length) - top }, rows: rr };
     }
 
     function draw() {
@@ -1135,42 +1213,54 @@
       const R = cfg.lmn ? cfg.lmn.R : null;
       const cvr = LIVE && mission === "mms" && D0.craft && D0.craft[D0.n] ? D0.craft[D0.n].coverage || null : null, tier = D.tier || "native";
       barOn = !!(cfg.coverage && mission === "mms" && (D0.bu || (cvr && ((cvr.burst && cvr.burst.length) || (cvr.fast && cvr.fast.length)))));
-      L = layout(w, h, rows);
+      L = layout(ctx, w, h, rows);
       L.yOf = []; L.acc = []; L.yOf2 = [];
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
       const Pl = L.plot, xOf = (t) => Pl.x + (t - a) / (b - a) * Pl.w;
       info = { burst: null, e: null };
-      const by = cfg.title ? 13 : 0;                       // the rate bars sit under the title
-      if (cfg.title) rich(ctx, cfg.title, Pl.x + Pl.w / 2, barOn ? 9 : Pl.y / 2, { size: 11.5, weight: 600, align: "center", color: "#000" });
+      const u = 1 / (cfg.fs || 1);                         // one of Helios's unscaled points
+      if (cfg.title) rich(ctx, cfg.title, Pl.x + Pl.w / 2, barOn ? 10 : L.top / 2, { size: 13, weight: 600, align: "center", color: "#000" });
+      const by = L.top - 8 * u, bh = 3.5 * u, by2 = by + bh + 1.5 * u;   // the rate bars: fast, and burst under it
       if (barOn) {
         // The data-rate bars across the top (MMSStackPlot.drawRateBar): red where the probe was in fast survey, green
         // where it took burst — solid where this figure draws burst at burst resolution, hatched where it holds burst
         // averaged, or knows of burst it has not fetched (BurstBarState). Live, both rows are CDAWeb's file lists.
         const X0 = Pl.x, X1 = Pl.x + Pl.w, cx = (t) => Math.min(X1, Math.max(X0, xOf(t)));
         const fast = cvr && cvr.fast ? cvr.fast : fastSegs(D0.sv.des);
-        ctx.fillStyle = "#d90d0d";
-        for (const [s0, e0] of fast) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 7 + by, cx(e0) - cx(s0), 2);
+        ctx.fillStyle = H_RED;
+        for (const [s0, e0] of fast) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), by, cx(e0) - cx(s0), bh);
         const loaded = D0.bu ? D0.segs.des || [] : [], all = cvr && cvr.burst ? cvr.burst : loaded;
         // (a file's span and its samples' differ by a few seconds at each end: the loaded stretches reach 5 s further,
         // and a hatched sliver under 3 s is not one)
         const shown = tier === "native" ? loaded.map(([s0, e0]) => [s0 - 5, e0 + 5]) : [], solid = ivIntersect(all, shown), hatched = ivSubtract(all, shown).filter(([s0, e0]) => e0 - s0 >= 3);
-        ctx.fillStyle = "#008000";
-        for (const [s0, e0] of solid) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), 13 + by, cx(e0) - cx(s0), 4);
-        for (const [s0, e0] of hatched) if (e0 > a && s0 < b) burstHatch(ctx, cx(s0), 13 + by, cx(e0) - cx(s0), 4);
-        rich(ctx, "Fast", X1 + 6, 8 + by, { size: 9, color: "#d90d0d" });
-        const bw = rich(ctx, "Burst", X1 + 6, 16 + by, { size: 9, color: "#008000" });
+        ctx.fillStyle = H_GREEN;
+        for (const [s0, e0] of solid) if (e0 > a && s0 < b) ctx.fillRect(cx(s0), by2, cx(e0) - cx(s0), bh);
+        for (const [s0, e0] of hatched) if (e0 > a && s0 < b) burstHatch(ctx, cx(s0), by2, cx(e0) - cx(s0), bh);
+        rich(ctx, "Fast", X1 + 4 * u, by + bh / 2, { size: 6.5 * u, weight: 600, color: H_RED });
+        const bw = rich(ctx, "Burst", X1 + 4 * u, by2 + bh / 2, { size: 6.5 * u, weight: 600, color: H_GREEN });
         const pending = ivIntersect(hatched, [[a, b]]);
         if (LIVE && pending.length) {
           const fetched = SRC.burstHalf ? [D.m.event.crossing - SRC.burstHalf, D.m.event.crossing + SRC.burstHalf] : null;
-          info.burst = { x: X1 + 6 + bw + 8, y: 15 + by, tier, pending, fetched, beyond: fetched ? ivSubtract(pending, [fetched]) : [], keys: rows.map(r => r.key) };
+          info.burst = { x: X1 + 4 + bw + 9, y: by2 + bh / 2, tier, pending, fetched, beyond: fetched ? ivSubtract(pending, [fetched]) : [], keys: rows.map(r => r.key) };
         }
       }
+      // one unit for a run of adjacent spectrograms that share it, centered on the run (Helios, 2026-09-10)
+      const unitOf = (r) => (r.spec && !L.narrow ? r.cbar || (r.spec === "esp" && mission === "c4" ? "keV/cm²-s-sr-keV" : "eV/cm²-sr-eV-s") : null);
+      const sharedUnit = new Set(), unitRuns = [];
+      for (let i0 = 0; i0 < L.rows.length; i0++) {
+        const un = unitOf(L.rows[i0].row);
+        if (!un) continue;
+        let i1 = i0;
+        while (i1 + 1 < L.rows.length && unitOf(L.rows[i1 + 1].row) === un) i1++;
+        if (i1 > i0) { for (let k = i0; k <= i1; k++) sharedUnit.add(k); unitRuns.push([un, (L.rows[i0].y + L.rows[i1].y + L.rows[i1].h) / 2]); }
+        i0 = i1;
+      }
+      const tk = heliosTicks(a, b, Pl.w);
       for (const Rw of L.rows) {
         const r = Rw.row;
         if (r.spec && !(D.sv[r.spec] && D.erange[r.spec])) {      // an on-demand spectrogram still on its way
-          ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
           if (r.lazy && mission === "mms" && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
-          else rich(ctx, "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 11, align: "center", color: INK2 });
+          else rich(ctx, "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 9, align: "center", color: "rgba(0,0,0,0.55)" });
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else if (r.spec) {
           const win = specRange(D, r.spec, r.range, a, b, true), E = r.edit;
@@ -1178,11 +1268,10 @@
           if (E && E.zHi != null) win[1] = E.zHi;
           if (win[1] <= win[0]) win[1] = win[0] + 1;
           spectrogram(ctx, Rw, a, b, D.tier === "survey" ? D : D0, r.spec, true, dpr, LIVE ? win : null);   // the electrons' spectra keep their cadence
-          energyAxis(ctx, Rw, D.erange[r.spec]);
-          colorbar(ctx, Rw.x + Rw.w + 6, Rw.y + 4, 9, Rw.h - 8, win, L.narrow ? null : r.cbar || (r.spec === "esp" && mission === "c4" ? "keV/cm²-s-sr-keV" : "eV/cm²-sr-eV-s"));
+          energyAxisH(ctx, Rw, D.erange[r.spec], u);
+          colorbarH(ctx, Rw, win, sharedUnit.has(Rw.k) ? null : unitOf(r), u);
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else {
-          ctx.fillStyle = PAPER; ctx.fillRect(Rw.x, Rw.y, Rw.w, Rw.h);
           if (r.lazy && LIVE && mission === "mms" && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
           let lo = Infinity, hi = -Infinity;
           const accs = r.lines.map(line => accessor(line, R, r.key)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
@@ -1232,17 +1321,20 @@
             rich(ctx, r.lines[ax2[0]].unit || "", Rw.x + Rw.w - 6, Rw.y + Rw.h - 8, { size: 9, align: "right", color: col2 });
           }
           L.yOf2.push(yOf2);
-          const ticks = r.log ? Array.from({ length: hi - lo + 1 }, (_, k) => lo + k) : nice(lo, hi, Rw.h > 70 ? 4 : 3);
-          ctx.fillStyle = INK;
+          if (r.zero && lo < 0 && hi > 0) {                 // the zero line, under the traces
+            ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(128,128,128,0.55)"; ctx.lineWidth = 0.5 * u;
+            ctx.beginPath(); ctx.moveTo(Rw.x, yOf(0)); ctx.lineTo(Rw.x + Rw.w, yOf(0)); ctx.stroke(); ctx.restore();
+          }
+          // the left axis: a tick inside the frame and its number, three or so to a row; a log row's whole decades
+          const kDec = r.log ? Math.max(1, Math.ceil(11 / (Rw.h / Math.max(hi - lo, 1e-9)))) : 1;
+          const ticks = r.log ? Array.from({ length: hi - lo + 1 }, (_, k) => lo + k).filter(v => v % kDec === 0) : niceTicksH(lo, hi, Math.min(Math.max(2, Math.floor(Rw.h / 13)), 3));
+          const tStep = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 0;
+          ctx.fillStyle = "#000";
           for (const v of ticks) {
             const y = yLin(v);
-            if (y < Rw.y + (r.log ? -0.5 : 6) || y > Rw.y + Rw.h - (r.log ? -0.5 : 4)) continue;
-            ctx.fillRect(Rw.x - 4, Math.round(y), 4, 1);
-            rich(ctx, r.log ? `10^{${v}}` : String(+v.toPrecision(4)), Rw.x - 6, y, { size: r.log ? 9.5 : 10, align: "right", color: INK2 });
-          }
-          if (r.zero && lo < 0 && hi > 0) {
-            ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(29,29,34,0.35)"; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(Rw.x, Math.round(yOf(0)) + 0.5); ctx.lineTo(Rw.x + Rw.w, Math.round(yOf(0)) + 0.5); ctx.stroke(); ctx.restore();
+            if (y < Rw.y - 1 || y > Rw.y + Rw.h + 1) continue;
+            ctx.fillRect(Rw.x, y - 0.3 * u, 3 * u, 0.6 * u);
+            axisNumber(ctx, r.log ? `10^{${v}}` : tickText(v, tStep), Rw, y, u);
           }
           const bandsOf = r.lines[0] && r.lines[0].bands;
           for (const [v, color] of bandsOf || []) {          // faint band thresholds, so the colors read as tiers
@@ -1258,37 +1350,49 @@
             rich(ctx, label, Rw.x + 4, y - 7, { size: 10, weight: 600, color });
           }
           r.lines.forEach((line, i) => line.bands ? strokeBands(ctx, Rw, a, b, rrs[i], accs[i], yOf, line.bands)
-                                                  : stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, line.ds === "fgm" ? 1 : 1.1, line.shift));
-          const n = r.lines.length;                       // the legend, top to bottom, at the right
+                                                  : stroke(ctx, Rw, a, b, rrs[i], accs[i], line.axis2 ? yOf2 : yOf, line.color, 0.9 * u, line.shift));
+          // the legend past the frame, centered on the row; its pitch and type give way in a short row
+          const n = r.lines.length, lh = Math.min(11.5, Math.max(7, n > 1 ? (Rw.h - 10) / (n - 1) : 11.5)), lf = Math.min(9, Math.max(6.5, lh - 1.5));
           r.lines.forEach((line, i) =>
-            rich(ctx, legendOf(line, R), Rw.x + Rw.w + 6, Rw.y + Rw.h / 2 + (i - (n - 1) / 2) * Math.min(13, (Rw.h - 6) / n), { size: 10.5, weight: 600, color: line.color }));
+            rich(ctx, legendOf(line, R), Rw.x + Rw.w + 7, Rw.y + Rw.h / 2 + (i - (n - 1) / 2) * lh, { size: lf, weight: 600, color: line.bands ? "#000" : line.color }));
         }
-        // the row's frame, name and letter
-        ctx.strokeStyle = "rgba(29,29,34,0.45)"; ctx.lineWidth = 1;
-        ctx.strokeRect(Math.round(Rw.x) + 0.5, Math.round(Rw.y) + 0.5, Math.round(Rw.w) - 1, Math.round(Rw.h));
+        // the row's letter and name, and the time ticks inside its bottom edge
         if (LIVE && mission === "mms" && r.key === "e" && D.sv.efiN && D.sv.efiN.t.length) info.e = { x: Rw.x + Rw.w + 12, y: Rw.y + 9, span: b - a };
         const cy = Rw.y + Rw.h / 2, rowLabel = R && r.comp != null ? r.label.replace(/\{[xyz]\}/, `{${LMN[r.comp]}}`) : r.label;
-        if (L.narrow) {
-          rich(ctx, r.short || rowLabel, 6, cy - 6, { size: 10.5, weight: 600 });
-          rich(ctx, r.unit, 6, cy + 7, { size: 9, color: INK2 });
-        } else {
-          rich(ctx, rowLabel, Rw.x - 66, cy - 7, { size: 11.5, weight: 600, align: "center" });
-          rich(ctx, r.unit, Rw.x - 66, cy + 7, { size: 10, align: "center", color: INK2 });
-        }
-        rich(ctx, `(${"abcdefghijklmnopqrst"[Rw.k]})`, Rw.x + Rw.w - 6, Rw.y + 9, { size: 10, align: "right", color: INK2 });
+        rich(ctx, `(${"abcdefghijklmnopqrst"[Rw.k]})`, Rw.x + Rw.w - 13, Rw.y + 9, { size: 10, align: "center", color: "#000" });
+        const name = L.narrow ? r.short || rowLabel : rowLabel, two = r.unit && Rw.h >= 26;
+        rich(ctx, name, L.labelRight, two ? cy - 6 : cy, { size: 9, align: "right", color: "#000" });
+        if (two) rich(ctx, r.unit, L.labelRight, cy + 6, { size: 9, align: "right", color: "#000" });
+        const yb = Rw.y + Rw.h;
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 0.7; ctx.beginPath();
+        for (const t of tk.major) { const x = xOf(t); ctx.moveTo(x, yb); ctx.lineTo(x, yb - 5); }
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(0,0,0,0.75)"; ctx.lineWidth = 0.5; ctx.beginPath();
+        for (const t of tk.minor) { const x = xOf(t); ctx.moveTo(x, yb); ctx.lineTo(x, yb - 3); }
+        ctx.stroke();
       }
-      // the time axis
-      const { ticks, secs } = timeTicks(a, b, Pl.w);
+      for (const [un, midY] of unitRuns) cbarUnit(ctx, un, Pl.x + Pl.w + 44, midY);
+      // the frames last, over everything, each a crisp black line
+      ctx.strokeStyle = "#000"; ctx.lineWidth = u;
+      for (const Rw of L.rows) ctx.strokeRect(Rw.x + 0.5 * u, Rw.y + 0.5 * u, Rw.w, Rw.h);
+      // the time axis under the last row: a tick and a label at each major, the minors between
       const yb = Pl.y + Pl.h;
-      ctx.fillStyle = INK;
-      for (const t of ticks) {
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 0.6; ctx.beginPath();
+      for (const t of tk.major) { const x = xOf(t); ctx.moveTo(x, yb); ctx.lineTo(x, yb + 4); }
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(0,0,0,0.75)"; ctx.lineWidth = 0.5; ctx.beginPath();
+      for (const t of tk.minor) { const x = xOf(t); ctx.moveTo(x, yb); ctx.lineTo(x, yb + 2.2); }
+      ctx.stroke();
+      for (const t of tk.major) {
         const x = xOf(t);
-        ctx.fillRect(Math.round(x), yb, 1, 4);
-        const hm = clock(t).slice(0, 5), d = new Date(T0 + t * 1000);   // a multi-day axis names its midnights
-        rich(ctx, secs ? clock(t) : b - a > 86400 && hm === "00:00" ? `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}` : hm, x, yb + 12, { size: 10.5, align: "center" });
+        if (tk.multi) {                                     // over a day the hour alone is ambiguous: the date over it
+          const d = new Date(Math.round(T0 + t * 1000));
+          rich(ctx, `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`, x, yb + 11, { size: 8, weight: 600, align: "center", color: "#000" });
+          rich(ctx, tickClock(t, 60), x, yb + 21, { size: 8, align: "center", color: "#000" });
+        } else rich(ctx, tickClock(t, tk.step), x, yb + 13, { size: 9, align: "center", color: "#000" });
       }
       const ymd = (t) => new Date(T0 + t * 1000).toISOString().slice(0, 10);
-      rich(ctx, `Time: ${b - a > 86400 ? `${ymd(a)} – ${ymd(b)}` : ymd((a + b) / 2)}${cfg.lmn ? ` · ${cfg.lmn.label}` : ""}`, Pl.x + Pl.w / 2, h - 10, { size: 10.5, align: "center", color: INK2 });
+      rich(ctx, `Time: ${b - a > 86400 ? `${ymd(a)} – ${ymd(b)}` : ymd((a + b) / 2)}${cfg.lmn ? ` · ${cfg.lmn.label}` : ""}`, Pl.x + Pl.w / 2, h - L.bottom / 2 + 6, { size: 11, align: "center", color: "#000" });
       overlay();
     }
 
@@ -2934,7 +3038,7 @@
       document.body.appendChild(box);
       try {
         const still = Object.assign(Object.create(A), { hover: null, hoverY: null, sel: null, setHover() {}, setFocus() {} });
-        Panel(W.view, still, c1, c2, Object.assign({}, C, { still: true, tracker: false, title: CRAFT[W.n].name })).draw();
+        Panel(W.view, still, c1, c2, Object.assign({}, C, { still: true, tracker: false, title: CRAFT[W.n].name, fs: TYPE })).draw();
         // the open cuts' columns: 250 points each, as on screen
         const open = W.vdf.on ? [...cols.querySelectorAll(".vd-col")].filter(b => { const cv = $(".vd-cv", b); return cv && !cv.hidden && cv.width > 0; }) : [];
         const CW = 500, HEAD = 96, colH = Math.max(0, ...open.map(b => { const cv = $(".vd-cv", b); return HEAD + Math.round(CW * cv.height / cv.width) + 16; }));
