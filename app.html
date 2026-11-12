@@ -26,7 +26,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="css/site.css?v=64">
-  <link rel="stylesheet" href="css/app.css?v=3">
+  <link rel="stylesheet" href="css/app.css?v=4">
 </head>
 <body class="helios-app" data-default-t="2015-10-16T13:07:02Z">
   <header class="la-bar" id="la-bar">
@@ -34,7 +34,13 @@
     <span class="la-tag">Live</span>
     <form class="la-pick" id="live-pick">
       <select id="live-event" aria-label="Open a known event"><option value="">Events…</option></select>
-      <input type="date" id="live-date" min="2015-03-13" required aria-label="Date (UTC)">
+      <span class="la-date" role="group" aria-label="Date (UTC)">
+        <select id="live-year" autocomplete="off" aria-label="Year (UTC)" title="Year (UTC). Type it, or step it with the arrow keys."></select>
+        <select id="live-month" autocomplete="off" aria-label="Month (UTC)" title="Month (UTC). Type its first letters, or step it with the arrow keys."></select>
+        <input type="text" id="live-day" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="2" size="2" required placeholder="DD" title="Day of the month (UTC). The arrow keys step it by a day, or a week with Shift." aria-label="Day of the month (UTC)">
+        <button type="button" class="la-cal" id="live-cal" title="Pick the date on a calendar" aria-label="Pick the date on a calendar" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></svg></button>
+        <input type="date" id="live-date" min="2015-03-13" tabindex="-1" aria-hidden="true">
+      </span>
       <input type="text" id="live-time" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="5" size="5" required placeholder="HH:MM" title="Time in UTC, on the 24-hour clock (HH:MM). The arrow keys step it by a minute." aria-label="Time (UTC, 24-hour)">
       <span class="la-utc">UTC</span>
       <button class="la-go" type="submit">Load</button>
@@ -92,7 +98,7 @@
     <h2 id="la-about-h">About Helios Live</h2>
     <p class="la-lede">The Heliophysics System Observatory at any moment since March 2015: where each spacecraft was, the boundaries the solar wind set, and every mission's data a click away. Your browser reads it all straight from the public archives when you load a moment; no Helios server is involved.</p>
     <h3>Using it</h3>
-    <p>Pick an event or a date and time (UTC) in the bar and press Load. Click any spacecraft for its data window, and Earth for the geomagnetic indices. Drag a window's bar to the top or a side of the screen to tile it; the green button opens it in a tab of its own. The down arrow in a window's bar saves its figure as a PNG, as it is drawn. The time bar under the view moves the whole fleet. The page's address always describes what is on screen, so a copied link opens the same view.</p>
+    <p>Pick an event or a date and time (UTC) in the bar and press Load. The year, month and day change on their own, so the same day in another year is one change; the arrow keys step the day and the time, and a pasted date such as 2017-07-11 22:34 fills them all.Click any spacecraft for its data window, and Earth for the geomagnetic indices. Drag a window's bar to the top or a side of the screen to tile it; the green button opens it in a tab of its own. The down arrow in a window's bar saves its figure as a PNG, as it is drawn. The time bar under the view moves the whole fleet. The page's address always describes what is on screen, so a copied link opens the same view.</p>
     <h3>What you are looking at</h3>
     <p><b>The view.</b> OMNI's 1-minute solar wind sizes the magnetopause and the bow shock; the view names each model it draws. Frames come from MMS's ephemeris, or are computed here for moments it has not reached. Orbits are SSCWeb's. Field lines are traced through IGRF-14 and T89 at the moment's Kp; the auroral oval follows Starkov with the hour's AL.</p>
     <p><b>MMS.</b> FGM, FPI moments and spectra, HPCA, EDP and DSP: survey for four hours around the moment and burst within ten minutes of it, with electron, ion and HPCA distribution cuts on request.</p>
@@ -113,11 +119,11 @@
     </div>
   </div>
 
-  <script src="js/app-page.js?v=3"></script>
+  <script src="js/app-page.js?v=4"></script>
   <script src="js/igrf14.js?v=38"></script>
   <script src="js/fieldlines.js?v=39"></script>
-  <script src="js/hsoview.js?v=57"></script>
+  <script src="js/hsoview.js?v=58"></script>
   <script src="js/hso-live.js?v=75"></script>
-  <script src="js/hso.js?v=75"></script>
+  <script src="js/hso.js?v=76"></script>
 </body>
 </html>
