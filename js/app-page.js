@@ -131,9 +131,11 @@
     return { btn, sync, close };
   }
 
-  // ── the moment: ?t=…, or the default named on <body> ──
+  // ── the moment: ?t=…, or the default named on <body>; ?t=now is the present, following the clock (hso-now.js) ──
   const raw = (q.get("t") || document.body.dataset.defaultT || "").trim();
-  const at = Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(raw) ? raw : raw + "Z");
+  const NOW = raw.toLowerCase() === "now";
+  if (NOW) window.HSO_NOW_AT = Math.floor(Date.now() / 60000) * 60000;   // the minute it opened on, for every script
+  const at = NOW ? window.HSO_NOW_AT : Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(raw) ? raw : raw + "Z");
   const form = $("#live-pick"), date = $("#live-date"), time = $("#live-time"), pick = $("#live-event"), ref = $("#live-ref");
   const yearSel = $("#live-year"), monSel = $("#live-month"), day = $("#live-day"), cal = $("#live-cal");
   const shown = new Date(isFinite(at) ? at : Date.UTC(2015, 9, 16, 13, 7));
@@ -145,7 +147,8 @@
   // here, dd/mm/yyyy there) and reads 0002, 0020 and 0201, all invalid dates, on the way to a typed 2017. Its calendar
   // stays one button away (an unseen copy of that field) where the browser can open it.
   const DAY = 86400e3, ymd = (ms) => new Date(ms).toISOString().slice(0, 10);
-  const now = new Date(), FIRST = Date.parse(date.min + "T00:00:00Z"), LAST = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const now = new Date(), FIRST = Date.parse(date.min + "T00:00:00Z");
+  let LAST = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const dim = (y, m) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();          // days in month m (0-based) of year y
   date.max = ymd(LAST);
   for (let y = new Date(FIRST).getUTCFullYear(); y <= now.getUTCFullYear(); y++) yearSel.add(new Option(String(y), String(y)));
@@ -245,6 +248,39 @@
   date.addEventListener("change", fromCalendar);
   setDay(Date.UTC(shown.getUTCFullYear(), shown.getUTCMonth(), shown.getUTCDate()));
   time.value = shown.toISOString().slice(11, 16);
+  // Now: in to real time; out again by loading a date and time, or an event
+  const nowBtn = $("#live-now");
+  if (nowBtn) {
+    nowBtn.setAttribute("aria-pressed", String(NOW));
+    nowBtn.title = NOW ? "Real time: the view follows the clock. Load a date and time, or pick an event, to leave it."
+                       : "Real time: the present, following the clock, with NOAA's real-time solar wind";
+    nowBtn.addEventListener("click", () => {                 // (no data windows in real time: ?open= is dropped)
+      if (NOW) return;
+      const u = new URL(location.href); u.searchParams.set("t", "now"); u.searchParams.delete("open"); location.assign(u);
+    });
+  }
+  if (NOW) {
+    document.body.classList.add("now-mode");
+    $("#la-moment b").textContent = "NOW";
+    $("#la-moment").title = "Real time (UTC), following the clock: choose a moment to leave it";
+    // The clock fills the date and the time (hso-now.js's tickClock calls HSO_showNow each minute) until the visitor
+    // starts to change one: a press or a key in the date fields or the time, or a pick from the calendar.
+    const edited = (e) => { if (!(e && e.key === "Tab")) time.dataset.edited = "1"; };
+    for (const el of [$(".la-date"), time]) { el.addEventListener("pointerdown", edited); el.addEventListener("keydown", edited); }
+    for (const ev of ["input", "change"]) date.addEventListener(ev, edited);
+    window.HSO_showNow = (ms) => {
+      if (time.dataset.edited || form.contains(document.activeElement)) return false;
+      const d0 = ms - (ms % DAY);
+      if (d0 > LAST) {                                       // past midnight UTC: the new day (and year) can be shown
+        LAST = d0; date.max = ymd(LAST);
+        const y = new Date(LAST).getUTCFullYear();
+        if (![...yearSel.options].some(o => +o.value === y)) { yearSel.add(new Option(String(y), String(y))); }
+      }
+      setDay(d0);
+      time.value = new Date(ms).toISOString().slice(11, 16);
+      return true;
+    };
+  }
   // The time is typed on the 24-hour clock. (A type="time" field follows the visitor's locale, and in a 12-hour one
   // shows "02:41 PM" for 14:41 UTC.) 1441, 14:41 and 9:05 are all taken; the arrow keys step it by a minute.
   const hhmm = (s) => { const m = /^\s*(\d{1,2})(?::?(\d{2}))?\s*$/.exec(s); if (!m) return null; const h = +m[1], mi = +(m[2] || 0); return h < 24 && mi < 60 ? `${String(h).padStart(2, "0")}:${String(mi).padStart(2, "0")}` : null; };
@@ -284,7 +320,7 @@
     if (t) { time.value = t; time.setCustomValidity(""); }
   });
   const stamp = `${shown.getUTCDate()} ${M[shown.getUTCMonth()]} ${shown.getUTCFullYear()} ${shown.toISOString().slice(11, 16)} UTC`;
-  document.title = `Helios Live · ${stamp}`;
+  document.title = NOW ? `Helios Live · Now · ${stamp}` : `Helios Live · ${stamp}`;
   $("#rail-day").textContent = `${M[shown.getUTCMonth()]} ${shown.getUTCDate()}`;
   $("#rail-year").textContent = shown.getUTCFullYear();
   $("#rail-hm").textContent = shown.toISOString().slice(11, 16);
@@ -305,7 +341,7 @@
       }
       pick.appendChild(og);
     }
-    const cur = list.find(ev => Math.abs(Date.parse(ev.t) - at) < 60e3);
+    const cur = NOW ? null : list.find(ev => Math.abs(Date.parse(ev.t) - at) < 60e3);
     if (cur) { pick.value = cur.t; ref.hidden = false; ref.textContent = `${cur.name} · ${cur.ref}`; ref.title = ref.textContent; }
   });
   pick.addEventListener("change", () => { if (pick.value) go(pick.value); });

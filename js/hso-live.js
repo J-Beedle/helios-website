@@ -12,7 +12,9 @@
   if (window.HSO_GATED) return;                            // app.html held back (a small screen, or a browser missing a piece)
   // app.html names a default moment on <body>, so the app never opens empty
   const raw = (q.get("t") || (document.body && document.body.dataset.defaultT) || "").trim();
-  const AT = raw ? Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(raw) ? raw : raw + "Z") : NaN;
+  // ?t=now: the present, following the clock (hso-now.js has the real-time feeds and names the minute it opened on)
+  const NOW = raw.toLowerCase() === "now" && !!window.HSO_NOW;
+  const AT = NOW ? window.HSO_NOW.at : raw ? Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(raw) ? raw : raw + "Z") : NaN;
   if (!isFinite(AT)) return;                               // no moment picked: the page shows its picker only
 
   const HALF = 2 * 3600, SPAN = 2 * HALF, T0 = AT - HALF * 1000;   // the overview runs two hours either side
@@ -1381,6 +1383,7 @@
     if (mecP) return mecP;
     const a = AT - 43 * 3600e3, b = AT + 43 * 3600e3, k0 = T0 + KEEP[0] * 1000, k1 = T0 + KEEP[1] * 1000;
     const none = { t: new Float64Array(0), cols: [], n: 0 };
+    if (NOW) return (mecP = mecFromSSC(a, b, k0, k1));      // the present: MEC's files are weeks away, so not asked
     mecP = Promise.all([
       track("MMS ephemeris (MEC)", hapiChunked("MMS1_MEC_SRVY_L2_EPHT89D", ["mms1_mec_dipole_tilt", "mms1_mec_kp",
         "mms1_mec_quat_eci_to_geo", "mms1_mec_quat_eci_to_sm", "mms1_mec_r_gse", "mms1_mec_quat_eci_to_gse"], a, b, 4)
@@ -1434,7 +1437,7 @@
     const S = Math.sqrt(1 + M[8] - M[0] - M[4]) * 2; return [(M[2] + M[6]) / S, (M[5] + M[7]) / S, S / 4, (M[3] - M[1]) / S];
   }
   async function mecFromSSC(a, b, k0, k1) {
-    const pos = await track("MMS positions (SSCWeb) and computed frames — MEC has not reached this moment", ssc(["mms1", "mms2", "mms3", "mms4"], a, b)).catch(() => ({}));
+    const pos = await track(NOW ? "MMS positions (SSCWeb, predicted) and computed frames" : "MMS positions (SSCWeb) and computed frames — MEC has not reached this moment", ssc(["mms1", "mms2", "mms3", "mms4"], a, b)).catch(() => ({}));
     const o1 = pos.mms1, none = { t: new Float64Array(0), cols: [], n: 0 };
     if (!o1 || !o1.t.length) return [none, null, null, null];
     const n = o1.t.length, cols = Array.from({ length: 17 }, () => new Float64Array(n));
@@ -1459,7 +1462,8 @@
   function nearest(t, x) { let b = 0; for (let i = 1; i < t.length; i++) if (Math.abs(t[i] - x) < Math.abs(t[b] - x)) b = i; return b; }
 
   async function context() {
-    const [[m1], omni] = await Promise.all([mec(), track("OMNI solar wind", hapi("OMNI_HRO_1MIN",
+    const [[m1], omni] = await Promise.all([mec(), NOW ? track("Real-time solar wind (NOAA SWPC RTSW)", window.HSO_NOW.wind())
+      : track("OMNI solar wind", hapi("OMNI_HRO_1MIN",
       ["F", "BX_GSE", "BY_GSM", "BZ_GSM", "flow_speed", "proton_density", "Pressure"], T0 - 3600e3, T0 + (SPAN + 3600) * 1000))]);
     if (!m1.n) throw new Error("No MMS positions for this moment: neither CDAWeb's MEC (from 2015-09-01) nor SSCWeb has any. MMS launched in March 2015.");
     // MMS1's orbit, a point a minute across the overview, for the view's MMS1 marker
@@ -1469,16 +1473,17 @@
       ot.push(m1.t[i]); or.push(m1.cols[0][i] / RE_KM, m1.cols[1][i] / RE_KM, m1.cols[2][i] / RE_KM);
     }
     const fill = { b: 9999.9, bx: 9999.9, by: 9999.9, bz: 9999.9, v: 99999.0, n: 999.9, p: 99.9 };
-    const omniSet = { t: f32(omni.t), cols: { t: 1 } };
-    Object.keys(fill).forEach((k, j) => { omniSet[k] = f32(omni.cols[j]).map(x => (x >= fill[k] ? NaN : x)); omniSet.cols[k] = 1; });
+    let omniSet = { t: f32(omni.t), cols: { t: 1 } };
+    if (NOW) omniSet = omni;                                 // already in the shape, its times the arrivals at the nose
+    else Object.keys(fill).forEach((k, j) => { omniSet[k] = f32(omni.cols[j]).map(x => (x >= fill[k] ? NaN : x)); omniSet.cols[k] = 1; });
     const i0 = nearest(m1.t, HALF);
     const m = {
-      event: { name: `Live · ${iso(AT)}`, t0: iso(T0), span: [0, SPAN], crossing: HALF, focus: [HALF - 300, HALF + 300],
-               kp: m1.cols[3][i0], dipoleTilt: m1.cols[4][i0], rCrossing: [0, 1, 2].map(c => m1.cols[c][i0] / RE_KM), live: true },
+      event: { name: `${NOW ? "Now" : "Live"} · ${iso(AT)}`, t0: iso(T0), span: [0, SPAN], crossing: HALF, focus: [HALF - 300, HALF + 300],
+               kp: m1.cols[3][i0], dipoleTilt: m1.cols[4][i0], rCrossing: [0, 1, 2].map(c => m1.cols[c][i0] / RE_KM), live: true, now: NOW },
       craft: { 1: {}, 2: {}, 3: {}, 4: {} },
       spectra: { dis: { log10: SPEC_RANGE.dis, units: "keV/(cm² s sr keV)" }, des: { log10: SPEC_RANGE.des, units: "keV/(cm² s sr keV)" } },
       units: { b: "nT", n: "cm⁻³", v: "km/s", t: "eV", e: "eV", j: "µA/m²", p: "nPa", r: "R_E (6371.2 km), GSE" },
-      sources: ["CDAWeb HAPI (live)", "SSCWeb (live)"],
+      sources: NOW ? ["NOAA SWPC RTSW (real time)", "SSCWeb (live)"] : ["CDAWeb HAPI (live)", "SSCWeb (live)"],
     };
     return { m, ctx: { orbit: { t: f32(ot), r: f32(or), cols: { t: 1, r: 3 } }, omni: omniSet } };
   }
@@ -1506,6 +1511,10 @@
    *  nearest the moment (KP1800, rows repeat their 3-h block; tens + (units ÷ 3)/3, fill 99), and AL as the mean of
    *  OMNI's 1-min AL_INDEX over the hour centered on it (≥ 30 valid minutes; HRO2, then HRO). */
   async function auroralDriver() {
+    if (NOW) {                                               // the present: NOAA's Kp (hso-now.js); no real-time AL here
+      const k = await window.HSO_NOW.kp().catch(() => null);
+      return { kp: k ? k.kp : null, al: null, nowSrc: k ? k.src : null };
+    }
     const [k, al2, al1] = await Promise.all([
       hapi("OMNI2_H0_MRG1HR", ["KP1800"], AT - 5400e3, AT + 5400e3, true).catch(() => null),
       hapi("OMNI_HRO2_1MIN", ["AL_INDEX"], AT - 1800e3, AT + 1800e3, true).catch(() => null),
@@ -1527,7 +1536,7 @@
   }
   async function scene() {
     const keoP = track("All-sky imager keograms (UCalgary)", keogramLists()).catch(() => ({}));
-    const driverP = track("Kp (OMNI2) and AL (OMNI)", auroralDriver()).catch(() => ({ kp: null, al: null }));
+    const driverP = track(NOW ? "Kp (NOAA SWPC)" : "Kp (OMNI2) and AL (OMNI)", auroralDriver()).catch(() => ({ kp: null, al: null }));
     const [[m1, ...others], sites, starsBuf, fleetA, fleetB, fleetC, fleetD] = await Promise.all([
       mec(),
       fetch("assets/data/live/asi-sites.json").then(r => r.json()),
@@ -1537,7 +1546,7 @@
       // the Moon and ARTEMIS to 31 h ahead: ARTEMIS's loop is drawn over the 30 h from the moment, about the Moon
       track("Fleet: the Moon and ARTEMIS", ssc(["moon", ...(AT >= Date.UTC(2011, 6, 1) ? ["artemisp1", "artemisp2"] : [])], AT - 13 * 3600e3, AT + 31 * 3600e3)).catch(() => ({})),
       track("Fleet: Cluster", ssc(["cluster1", "cluster2", "cluster3", "cluster4"], AT - 27 * 3600e3, AT + 27 * 3600e3)).catch(() => ({})),
-      track("Fleet: Geotail and the L1 monitors", ssc(["geotail", "ace", "dscovr", "wind"], AT - 62 * 3600e3, AT + 62 * 3600e3)).catch(() => ({})),
+      track("Fleet: Geotail and the L1 monitors", ssc(["geotail", "ace", "dscovr", "wind", ...(NOW ? ["solar1", "imap"] : [])], AT - 62 * 3600e3, AT + 62 * 3600e3)).catch(() => ({})),
     ]);
     const GOES_SINCE = { goes16: Date.UTC(2017, 0, 1), goes17: Date.UTC(2018, 2, 1), goes18: Date.UTC(2022, 2, 1), goes19: Date.UTC(2024, 5, 1) };
     const goes = await track("Fleet: GOES-16 to 19", Promise.all(Object.entries(GOES_SINCE).filter(([, t]) => AT >= t)
@@ -1572,9 +1581,11 @@
       frames.sm.push(mul(G, T_(eciTo(13, i))).map(x => +x.toFixed(6)));
     }
     // THEMIS and the SSCWeb fleet as the demo's scene carries them
-    const th = [];
+    const th = [], missing = [];                            // missing: asked of SSCWeb, but no position for the present
+    const covers = (o) => o && o.t.length && o.t[0] <= HALF && o.t[o.t.length - 1] >= HALF;
     for (const [id, L] of [["themisa", "A"], ["themisd", "D"], ["themise", "E"]]) {
       const o = fleetData[id];
+      if (NOW && !covers(o)) { missing.push(`THEMIS-${L}`); continue; }
       if (!o || !o.t.length) continue;
       th.push({ id: L, pos: r3(posAt(o, HALF)), track: thin(o, HALF - 12 * 3600, HALF + 12 * 3600, 150), timeline: timeline(o) });
     }
@@ -1583,12 +1594,16 @@
                    ["cluster1", "Cluster-1", "cluster", 240], ["cluster2", "Cluster-2", "cluster", 240], ["cluster3", "Cluster-3", "cluster", 240],
                    ["cluster4", "Cluster-4", "cluster", 240], ["rbspa", "RBSP-A", "rbsp", 114], ["rbspb", "RBSP-B", "rbsp", 114], ["geotail", "Geotail", "geotail", 209],
                    ["goes16", "GOES-16", "goes", 97], ["goes17", "GOES-17", "goes", 97], ["goes18", "GOES-18", "goes", 97], ["goes19", "GOES-19", "goes", 97],
-                   ["arase", "Arase", "arase", 114], ["tracers1", "TRACERS-1", "tracers", 30], ["tracers2", "TRACERS-2", "tracers", 30]];
+                   ["arase", "Arase", "arase", 114], ["tracers1", "TRACERS-1", "tracers", 30], ["tracers2", "TRACERS-2", "tracers", 30],
+                   ...(NOW ? [["solar1", "SOLAR-1", "l1", 0], ["imap", "IMAP", "l1", 0]] : [])];
     const span_ = { artemis: 13, sdo: 12, cluster: 27, rbsp: 4.5, geotail: 62, arase: 4.8, tracers: 0.8 };
     const fleet = [];
     for (const [id, name, cat, m] of FLEET) {
       const o = fleetData[id];
-      if (!o || !o.t.length || o.t[0] > HALF || o.t[o.t.length - 1] < HALF) continue;
+      if (!o || !o.t.length || o.t[0] > HALF || o.t[o.t.length - 1] < HALF) {
+        if (NOW && cat !== "moon") missing.push(name);           // (at the present every craft in the list is asked for)
+        continue;
+      }
       const pos = posAt(o, HALF);
       let orbit = m && !(cat === "goes" && fleet.some(f => f.cat === "goes")) ? thin(o, HALF - (span_[cat] || 12) * 3600, HALF + (span_[cat] || 12) * 3600, m) : [];
       if (cat === "moon") orbit = lunarRing(pos, posAt(o, HALF - 12 * 3600), posAt(o, HALF + 12 * 3600));
@@ -1642,10 +1657,12 @@
     }
     const S = {
       epoch: HALF, mms: { t: T, p: P, loop: loopOf(P), formation: { t: formT, rel } }, themis: th, fleet, frames, planets, solar, asi,
-      ...(await driverP.then(({ kp, al }) => {
+      ...(await driverP.then(({ kp, al, nowSrc }) => {
         const mk = m1.cols[3][i0], k = kp ?? (isFinite(mk) && mk >= 0 && mk <= 9 ? mk : 2);    // Kp 0 is a value, not a gap
-        return { kp: +k.toFixed(2), al: al === null ? null : +al.toFixed(0), kpSrc: kp !== null ? "OMNI2" : isFinite(mk) ? "MEC" : "assumed" };
-      })), sources: "Live: MMS MEC via CDAWeb HAPI, SSCWeb, JPL approximate planetary elements, Yale BSC",
+        return { kp: +k.toFixed(2), al: al === null ? null : +al.toFixed(0), kpSrc: kp !== null ? (NOW ? "NOAA" : "OMNI2") : isFinite(mk) ? "MEC" : "assumed",
+                 ...(NOW ? { kpSrcNow: kp !== null ? nowSrc : null } : {}) };
+      })), ...(NOW ? { nowMissing: missing } : {}),
+      sources: NOW ? "Now: SSCWeb (predicted orbits), NOAA SWPC, JPL approximate planetary elements, Yale BSC" : "Live: MMS MEC via CDAWeb HAPI, SSCWeb, JPL approximate planetary elements, Yale BSC",
     };
     return [S, out.buffer];
   }
@@ -2041,6 +2058,8 @@
   const craftCache = {};
   window.HSO_SOURCE = {
     live: true, at: AT, t0: T0, half: HALF,
+    /** ?t=now: the present; nowT() is the clock's time on the view's axis (s after T0). */
+    now: NOW, nowT: () => (Date.now() - T0) / 1000,
     get bytes() { return bytes; },
     load: () => context(),
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),

@@ -3157,6 +3157,8 @@
     const ev = D.m.event, body = $("#stage-body"), layer = $("#stage-wins"), dock = $("#stage-dock");
     const wins = [];
     let z = 10, scrubbed = false;
+    // ?t=now (hso-now.js): the view follows the clock; the time bar's button goes back to the present
+    const NOWM = LIVE && !!SRC.now, home = () => (NOWM ? clamp(SRC.nowT(), ev.span[0], ev.span[1]) : ev.crossing);
 
     // the view, and its time bar
     const scene = window.HSOView({
@@ -3164,6 +3166,7 @@
       ...liveClicks((k) => open(k, scrubbed ? scene.time : null), body, () => scene),
       onMMS: (n, t) => open(n, scrubbed ? t : null),
       onOther: (name, t) => {
+        if (NOWM) { nowNote(name); return true; }
         const key = representative(name);
         if (!key) return false;
         open(key, scrubbed ? t : null);
@@ -3199,8 +3202,13 @@
       requestAnimationFrame(step);
     });
     speedBtn.addEventListener("click", () => { speed = [10, 60, 600][([10, 60, 600].indexOf(speed) + 1) % 3]; speedBtn.textContent = `${speed}×`; });
-    $(".ht-event", tb).addEventListener("click", () => { stop(); setTime(ev.crossing, false); });
-    setTime(ev.crossing, false);
+    $(".ht-event", tb).addEventListener("click", () => { stop(); setTime(home(), false); });
+    setTime(home(), false);
+    if (NOWM) {
+      const evBtn = $(".ht-event", tb);
+      evBtn.textContent = "NOW"; evBtn.title = "Back to the present, following the clock";
+      setInterval(() => { if (!scrubbed && !playing) setTime(home(), false); }, 15000);
+    }
 
     // ── the data windows ──
     const bounds = () => [layer.clientWidth, layer.clientHeight];
@@ -3305,7 +3313,15 @@
       const up = () => { splitEl.classList.remove("on"); L.redraw(); R.redraw(); splitEl.removeEventListener("pointermove", move); splitEl.removeEventListener("pointerup", up); splitEl.removeEventListener("pointercancel", up); };
       splitEl.addEventListener("pointermove", move); splitEl.addEventListener("pointerup", up); splitEl.addEventListener("pointercancel", up);
     });
+    /** Real time has no archive data to window: say what there is instead of opening an empty window. */
+    function nowNote(n) {
+      const nm = Object.hasOwn(CRAFT, n) ? CRAFT[n].name : String(n);
+      scene.say(typeof n === "number" ? `${nm}: no science data exist for the present. MMS Level 2 files reach the archives weeks after the day; its position here is SSCWeb's predicted orbit. Pick a past moment for its data.`
+        : n === "idx" ? "Geomagnetic indices: the real-time Kp and NOAA's scales are in the Now panel. OMNI's indices follow by days to weeks."
+        : `${nm}: its archive data are not available in real time. This mode shows positions and NOAA's real-time solar wind; pick a past moment for its data.`, 7000);
+    }
     function open(n, pinned = null, rect = null) {
+      if (NOWM) { nowNote(n); return null; }
       const same = wins.find(w => (w.n || w.want) === n && w.pinned === pinned);
       if (same) { restore(same); front(same); if (rect) { place(same, rect); same.redraw(); } return same; }
       const el = document.createElement("div");
@@ -3408,6 +3424,7 @@
       const link = /crescent=mms([23])/.exec(location.hash);
       if (!link) return;
       const W = open(+link[1]);
+      if (!W) return;
       W.ready.then(() => W.crescent()).then(() => { if (/tools/.test(location.hash)) W.openTools("analysis"); });   // #crescent=mms2&tools also opens the tools
       setTimeout(() => { root.scrollIntoView({ block: "start" }); $("#head")?.classList.add("hidden"); }, 300);   // the header would cover the windows' bars
     }
@@ -3427,6 +3444,10 @@
         const key = /^\d$/.test(k) ? +k : k;
         if (Object.hasOwn(CRAFT, key)) open(key);
       }
+    }
+    if (NOWM) {                                            // the Now panel (hso-now.js) reads the view and steers its clock
+      const cmp = $(".hso-compare", root); if (cmp) cmp.style.display = "none";   // no MMS windows in real time
+      window.HSO_STAGE = { scene, S, get scrubbed() { return scrubbed; }, home: () => { stop(); setTime(home(), false); } };
     }
     root.classList.add("ready");
   }

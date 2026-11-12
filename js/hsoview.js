@@ -218,7 +218,7 @@
   window.HSOView = function HSOView(o) {
     const root = o.root, cv = root.querySelector("canvas"), S = o.S;
     const card = root.querySelector(".hso-card"), toast = root.querySelector(".hso-toast"), swBox = root.querySelector(".hso-sw");
-    const winds = Winds(o.omni);
+    let winds = Winds(o.omni);                              // replaced as new solar wind arrives (app.html?t=now, setWind)
     const show = { topo: false, mp: true, bs: true, lines: true, ref: false };
     // the field the lines are traced through (Helios's FieldLineOverlay.ModelChoice, without T01): "off", "igrf" (IGRF-14
     // alone) or "t89" (with Tsyganenko 1989 at the moment's Kp). Every cache is keyed by it.
@@ -1615,9 +1615,9 @@
       card.hidden = false;
     }
     let drag = null, toastTimer = 0;
-    function say(msg) {
+    function say(msg, ms = 2600) {
       toast.textContent = msg; toast.hidden = false;
-      clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+      clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, ms);
     }
     cv.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;                          // a right-click is the spacecraft card's, not a click or a turn
@@ -1809,6 +1809,24 @@
       setRung,
       say,
       redraw: request,
+      /** A new solar-wind set (the OMNI shape: t in s, b, bx, by, bz, v, n, p): the boundaries are drawn from it. */
+      setWind(om) { winds = Winds(om); G = null; request(); },
+      /** The drawn boundaries' numbers at t (s): the wind sample they use, Shue's standoff, Jelínek's nose and the nose of
+       *  Lin's surface, R_E; dpAssumed where the sample has no pressure and the default 2 nPa stands in. */
+      boundaryAt(t) {
+        const w = winds.at(t), B = boundary(w, tiltAt(w.t));
+        return { w, mpR0: B.mpR0, bsR0: B.bsR0, linR0: Lin.radius(0, 0, B.lin), dp: B.dp, bz: B.bz, dpAssumed: !(w.n > 0 && w.v > 0) };
+      },
+      /** Each drawn spacecraft (the Moon left out) against the model boundaries at t (region(): Shue 1998 and Jelínek
+       *  2012 in the aberrated frame): [{ name, region, color, r (R_E) }]. MMS1–4 share one entry (MMS1's orbit). */
+      regionsAt(t) {
+        const B = boundary(winds.at(t), tiltAt(t)), out = [];
+        const add = (nm, p) => { if (!p) return; const [reg, col] = region(p, B); out.push({ name: nm, region: reg, color: rgba(col), r: len3(p) }); };
+        add("MMS1–4", orbitAt(t));
+        for (const th of S.themis) add(`THEMIS-${th.id}`, posAt(th, t));
+        for (const f of S.fleet) if (f.cat !== "moon") add(f.id, posAt(f, t));
+        return out;
+      },
     };
   };
 })();
