@@ -222,7 +222,7 @@
     const show = { topo: false, mp: true, bs: true, lines: true, ref: false };
     // the field the lines are traced through (Helios's FieldLineOverlay.ModelChoice, without T01): "off", "igrf" (IGRF-14
     // alone) or "t89" (with Tsyganenko 1989 at the moment's Kp). Every cache is keyed by it.
-    let fieldModel = "t89";
+    let fieldModel = "off";                                  // off until the View options pick a model (2026-11-12)
     const kpField = () => (fieldModel === "igrf" ? -1 : S.kp ?? 2);
     const view = { az: 0, tilt: 0 };
     let time = S.epoch, hover = null, rings = [], formDots = [], P = null, anim = null;

@@ -3090,12 +3090,17 @@
 
   /** The app's View options (Helios's HSOViewOptions): a button at the figure's top right that names what is drawn and
    *  opens a panel — the field the lines are traced through (off, IGRF-14 alone, or with T89), which lines, and the
-   *  boundaries. It stays open while the view is turned; the choices are kept in this browser. */
+   *  boundaries. A click elsewhere closes it, a drag that turns the view does not; the choices are kept in this browser. */
   function viewOptions(host, scene) {
-    const KEY = "helios-live-view";
-    const st = { model: "t89", lines: true, ref: false, mp: true, bs: true };
-    try { const saved = JSON.parse(localStorage.getItem(KEY) || "{}"); for (const k of Object.keys(st)) if (typeof saved[k] === typeof st[k]) st[k] = saved[k]; } catch (e) { /* the defaults */ }
-    if (!["off", "igrf", "t89"].includes(st.model)) st.model = "t89";
+    const KEY = "helios-live-view", MODELS = ["off", "igrf", "t89"];
+    // Field lines start off (user request, 2026-11-12). The field model is kept only once a visitor has picked one
+    // (`picked`): the copies saved before held T89 because every visit saved the defaults, so their `model` is ignored.
+    const st = { model: "off", lines: true, ref: false, mp: true, bs: true, picked: null };
+    try {
+      const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+      for (const k of ["lines", "ref", "mp", "bs"]) if (typeof saved[k] === typeof st[k]) st[k] = saved[k];
+      if (MODELS.includes(saved.picked)) st.model = st.picked = saved.picked;
+    } catch (e) { /* the defaults */ }
     const box = document.createElement("div");
     box.className = "hso-view";
     box.innerHTML = `<button class="hv-btn" aria-expanded="false" title="What the view draws: field lines and boundaries"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14 5.4 8 8.6 2 5.4zM2.6 8.3 8 11.2l5.4-2.9M2.6 11 8 13.9l5.4-2.9"/></svg>View<span class="hv-badge"></span></button>
@@ -3127,10 +3132,16 @@
       try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* this visit only */ }
     };
     btn.addEventListener("click", () => { panel.hidden = !panel.hidden; btn.setAttribute("aria-expanded", String(!panel.hidden)); });
-    box.addEventListener("click", (e) => { const b = e.target.closest("[data-model]"); if (b) { st.model = b.dataset.model; sync(); } });
+    box.addEventListener("click", (e) => { const b = e.target.closest("[data-model]"); if (b && MODELS.includes(b.dataset.model)) { st.model = st.picked = b.dataset.model; sync(); } });
     box.addEventListener("change", (e) => { const c = e.target.closest("[data-view]"); if (c) { st[c.dataset.view] = c.checked; sync(); } });
     box.addEventListener("pointerdown", (e) => e.stopPropagation());
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !panel.hidden) { panel.hidden = true; btn.setAttribute("aria-expanded", "false"); } });
+    const shut = () => { if (!panel.hidden) { panel.hidden = true; btn.setAttribute("aria-expanded", "false"); } };
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") shut(); });
+    // A click anywhere else closes it (user report, 2026-11-12); a drag that turns the view leaves it open, so the lines
+    // can be watched as the view turns.
+    let downAt = null;
+    window.addEventListener("pointerdown", (e) => { downAt = !panel.hidden && !box.contains(e.target) ? [e.clientX, e.clientY] : null; }, true);
+    window.addEventListener("pointerup", (e) => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) < 6) shut(); downAt = null; }, true);
     sync();
   }
 
