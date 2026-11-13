@@ -710,6 +710,9 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .sun-quad { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: #a9adb6; font-size: 11px; white-space: nowrap; cursor: pointer; }
 .sun-quad input { margin: 0; }
 .sun-tools .fw-ic { flex: none; }
+.sun-dl.busy svg { animation: sun-pulse 0.9s ease-in-out infinite alternate; }
+@keyframes sun-pulse { to { opacity: 0.25; } }
+.sun-dl.failed { color: #ff8a80; }
 .sun-body { position: relative; flex: 1; min-height: 0; background: #000; }
 .sun-grid { position: absolute; inset: 0; display: grid; }
 .sun-grid.quad { grid-template: 1fr 1fr / 1fr 1fr; }

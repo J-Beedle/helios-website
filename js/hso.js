@@ -3141,6 +3141,29 @@
       im.src = url;
     });
   }
+  /** A Helioviewer screenshot's id (2048 px, 1.2″/px), asked for by the sandboxed helper page hv-frame.html: Helioviewer
+   *  answers other sites only through a JSONP callback, and the script it returns runs there, with no origin, not here.
+   *  Only an integer comes back. null when Helioviewer did not answer within 45 s. */
+  function hvShot(ch, ms) {
+    return new Promise((res) => {
+      const f = document.createElement("iframe");
+      f.hidden = true; f.setAttribute("sandbox", "allow-scripts"); f.setAttribute("aria-hidden", "true"); f.tabIndex = -1;
+      const on = (e) => {
+        if (e.source !== f.contentWindow || !e.data || typeof e.data !== "object" || !("hvShot" in e.data)) return;
+        done(Number.isInteger(e.data.hvShot) && e.data.hvShot > 0 ? e.data.hvShot : null);
+      };
+      const timer = setTimeout(() => done(null), 45000);
+      function done(id) { clearTimeout(timer); window.removeEventListener("message", on); f.remove(); res(id); }
+      window.addEventListener("message", on);
+      f.src = `hv-frame.html?v=1#date=${isoS(Math.round(ms / 1000) * 1000)}&scale=1.2&src=${ch.hv}&px=2048`;
+      document.body.appendChild(f);
+    });
+  }
+  /** Helioviewer serves a screenshot by id as an attachment: the browser saves it and the page stays. */
+  function hvDownload(id) {
+    const a = Object.assign(document.createElement("a"), { href: `https://api.helioviewer.org/v2/downloadScreenshot/?id=${id}`, rel: "noopener noreferrer" });
+    document.body.appendChild(a); a.click(); a.remove();
+  }
   /** host: { el, pinned (s after T0, or null), now (the page is ?t=now), time() and scrubbed() (the view's clock),
    *  span() (the view's track, s after T0) }. Returns the window the stage moves, minimizes and closes. */
   function SunWindow(host) {
@@ -3154,6 +3177,7 @@
       <div class="sun-tools">
         <span class="sun-chips">${SDO_CH.map(c => `<button data-ch="${c.id}" style="--tint:${c.tint}" title="${esc(c.blurb)}">${c.label}</button>`).join("")}</span>
         <label class="sun-quad" title="193 · 304 · 171 · HMI magnetogram at once"><input type="checkbox">Quad</label>
+        <button class="fw-ic sun-dl" aria-label="Download the frame on screen" title="Download the frame on screen as a 2048-px PNG (Helioviewer's render of the SDO archive; in Quad, one file per channel)">${SAVE}</button>
         <button class="fw-ic sun-re" aria-label="Reload the frames" title="Reload the frames">${RELOAD}</button>
       </div>
       <div class="sun-body"><div class="sun-grid"></div><p class="sun-bar" hidden></p></div>
@@ -3282,7 +3306,29 @@
       barEl.hidden = !(all > 0 && done < all);
       if (!barEl.hidden) barEl.innerHTML = `<span style="--p:${(done / all * 100).toFixed(1)}%"></span>${done}/${all} frames`;
     }
+    // the download: the frame on screen (the strip's nearest, a pinned moment, or the present) at 2048 px, from Helioviewer
+    const dl = $(".sun-dl", el), DL_TITLE = dl.title;
+    let dlBusy = false, dlTimer = null;
+    async function download() {
+      if (dlBusy) return;
+      dlBusy = true; clearTimeout(dlTimer);
+      dl.classList.remove("done", "failed"); dl.classList.add("busy"); dl.title = "Asking Helioviewer for the frame…";
+      const m = mode(), c = cur();
+      const at = (ch) => { if (m !== "strip") return Math.min(c, Date.now()); const f = nearest(ch, c); return f ? f.t : Math.min(c, Date.now()); };
+      let ok = 0;
+      const chans = shown();
+      for (const ch of chans) {
+        const id = await hvShot(ch, at(ch));
+        if (dead) return;
+        if (id) { hvDownload(id); ok++; if (chans.length > 1) await new Promise(r => setTimeout(r, 400)); }
+      }
+      dlBusy = false; dl.classList.remove("busy");
+      if (ok) { dl.innerHTML = SAVED; dl.classList.add("done"); dl.title = ok < chans.length ? `${ok} of ${chans.length} frames downloaded; Helioviewer did not answer for the rest` : DL_TITLE; }
+      else { dl.classList.add("failed"); dl.title = "Helioviewer did not answer. Try again in a moment."; }
+      dlTimer = setTimeout(() => { dl.innerHTML = SAVE; dl.classList.remove("done", "failed"); dl.title = DL_TITLE; }, ok ? 1600 : 6000);
+    }
     el.addEventListener("click", (e) => {
+      if (e.target.closest(".sun-dl")) { download(); return; }
       const b = e.target.closest(".sun-chips button");
       if (b) { st.ch = b.dataset.ch; st.quad = false; draw(); return; }
       if (e.target.closest(".sun-re")) { gen++; jobs = []; refining = 0; strips.clear(); asked.clear(); st.salt++; lastKey = ""; draw(); }
