@@ -994,15 +994,52 @@
       }).filter(r => isFinite(r[0]));
     });
   }
+  // SWPC's own GOES JSON (services.swpc.noaa.gov, the last 7 days, 5-min differential and 1-min X-ray records): the
+  // smallest product that reaches back to `a`. Each record names the satellite that served it.
+  const SWPC_GOES = "https://services.swpc.noaa.gov/json/goes";
+  async function swpcGoes(feed, product, a, b) {
+    const back = Date.now() - a, len = back <= 6 * 3600e3 ? "6-hour" : back <= 864e5 ? "1-day" : back <= 3 * 864e5 ? "3-day" : "7-day";
+    const url = `${SWPC_GOES}/${feed}/${product}-${len}.json`;
+    const list = await slot(async () => {
+      const r = await get(url);
+      if (!r.ok) return [];
+      const body = await bodyOf(r); bytes += body.length; emit();
+      const j = JSON.parse(textOf(body));
+      return Array.isArray(j) ? j : [];
+    });
+    const out = [];
+    for (const o of list) {
+      if (!o || typeof o.time_tag !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?Z?$/.test(o.time_tag)) continue;
+      const ms = Date.parse(o.time_tag.endsWith("Z") ? o.time_tag : o.time_tag + "Z"), f = +o.flux, sat = +o.satellite;
+      if (!(ms >= a && ms <= b) || !(f > 0 && f < 1e12) || typeof o.energy !== "string" || !/^[\d.\- ]+(keV|nm)$/.test(o.energy)) continue;
+      out.push({ t: sec(ms), e: o.energy, f, sat: Number.isInteger(sat) && sat > 0 && sat < 40 ? sat : null });
+    }
+    return out;
+  }
+  /** SWPC records → one record set of every energy band (ascending), and the satellite that served most of them. */
+  function swpcBands(recs) {
+    if (!recs.length) return null;
+    const lo = (e) => parseFloat(e), bands = [...new Set(recs.map(r => r.e))].sort((p, q) => lo(p) - lo(q));
+    const times = [...new Set(recs.map(r => r.t))].sort((p, q) => p - q), row = new Map(times.map((t, i) => [t, i]));
+    const f = new Float32Array(times.length * bands.length).fill(NaN), col = new Map(bands.map((e, k) => [e, k])), sats = {};
+    for (const r of recs) { f[row.get(r.t) * bands.length + col.get(r.e)] = r.f; if (r.sat) sats[r.sat] = (sats[r.sat] || 0) + 1; }
+    const sat = Object.keys(sats).sort((p, q) => sats[q] - sats[p])[0];
+    return { set: set({ t: [Float32Array.from(times), 1], f: [f, bands.length] }), bands, sat: sat ? `GOES-${sat}` : null };
+  }
   /** GOES-16 … 19, as Helios's fetchGoes: the named satellite's own NOAA L2 1-min field in GSE where LaTiS has it
    *  (~2018 → ~2025-04), else SWPC's primary (secondary for GOES-18) feed in the payload Hp/He/Hn frame; integral
-   *  particle fluxes from that feed (they exist only per feed); the named satellite's XRS. */
+   *  particle fluxes from that feed (they exist only per feed); the named satellite's XRS; and, where the window reaches
+   *  the last 8 days, SWPC's differential proton and electron fluxes (no archive serves them). Where the named
+   *  satellite's L2 X-ray file has not arrived yet (it lags the present), SWPC's real-time X-rays from that satellite. */
   async function goesWindow(key) {
     const sat = key.slice(1), [a, b] = window_, feed = sat === "18" ? "goess" : "goesp", feedName = feed === "goess" ? "SWPC secondary feed" : "SWPC primary feed";
-    const [own, part, xrs] = await Promise.all([
+    const pf = feed === "goess" ? "secondary" : "primary", recent = b > Date.now() - 8 * 864e5;
+    const [own, part, xrs, dpro, dele] = await Promise.all([
       sat === "19" ? Promise.resolve([]) : track(`GOES-${sat} magnetometer (NOAA L2)`, latis(`noaa_goes${sat}_magn_1m`, a, b)),
-      track(`GOES ${feed === "goess" ? "secondary" : "primary"} feed particles`, latis(`${feed}_part_flux_P5M`, a, b)),
+      track(`GOES ${pf} feed particles`, latis(`${feed}_part_flux_P5M`, a, b)),
       track(`GOES-${sat} X-rays (XRS)`, latis(`noaa_goes${sat}_xrs_1m`, a, b)),
+      recent ? track(`GOES ${pf} differential protons (SWPC)`, swpcGoes(pf, "differential-protons", a, b)).catch(() => []) : [],
+      recent ? track(`GOES ${pf} differential electrons (SWPC)`, swpcGoes(pf, "differential-electrons", a, b)).catch(() => []) : [],
     ]);
     let rows = own.filter(r => [1, 2, 3].every(c => Math.abs(r[c]) < 9000)), fromFeed = false;
     if (!rows.length) {
@@ -1034,16 +1071,38 @@
       xrs.forEach((r, i) => { f[i * 2] = pick(r[2], r[4], r[6]); f[i * 2 + 1] = pick(r[1], r[3], r[5]); });
       sv.gxrs = set({ t: [Float32Array.from(xrs, r => r[0]), 1], f: [f, 2] });
     }
+    // no L2 X-rays (the file lags the present): SWPC's real-time X-rays, from whichever of its feeds is this satellite
+    let xFeed = null;
+    if (!sv.gxrs && recent) {
+      for (const f2 of ["primary", "secondary"]) {
+        const recs = (await track(`GOES ${f2} X-rays (SWPC)`, swpcGoes(f2, "xrays", a, b)).catch(() => [])).filter(r => String(r.sat) === sat);
+        if (!recs.length) continue;
+        const byT = new Map();
+        for (const r of recs) { const k = r.e === "0.1-0.8nm" ? 0 : r.e === "0.05-0.4nm" ? 1 : -1; if (k < 0) continue; (byT.get(r.t) || byT.set(r.t, [NaN, NaN]).get(r.t))[k] = r.f; }
+        const ts = [...byT.keys()].sort((p, q) => p - q), f = new Float32Array(ts.length * 2);
+        ts.forEach((t, i) => { const v = byT.get(t); f[i * 2] = v[0]; f[i * 2 + 1] = v[1]; });
+        if (ts.length) { sv.gxrs = set({ t: [Float32Array.from(ts), 1], f: [f, 2] }); xFeed = f2; break; }
+      }
+    }
+    const DP = swpcBands(dpro), DE = swpcBands(dele);
+    if (DP) sv.gdpro = DP.set;
+    if (DE) sv.gdele = DE.set;
+    const band = (e) => e.replace(/^(\d+)-(\d+) keV$/, (_, p, q) => (+p >= 1000 ? `${+(p / 1000).toPrecision(3)}–${+(q / 1000).toPrecision(3)} MeV` : `${p}–${q} keV`));
     const PCOL = ["#001af2", "#d90d0d", "#008000", "#ff9900", "#7f33b3", "#008c8c"], ECOL = PCOL;   // Helios's fluxPalette, in order of appearance
     const relabel = {
       gP: { lines: (P ? P.keep : []).map((c, k) => ({ ds: "gpro", name: "f", c: k, color: PCOL[k % 6], label: `${PL[c]} MeV` })), title: `Protons >E, ${feed === "goess" ? "secondary" : "primary"} feed`, label: `Protons >E, ${feed === "goess" ? "secondary" : "primary"} feed` },
       gE: { lines: (E ? E.keep : []).map((c, k) => ({ ds: "gele", name: "f", c: k, color: ECOL[k % 6], label: `${EL[c]} MeV` })), title: `Electrons >E, ${feed === "goess" ? "secondary" : "primary"} feed`, label: `Electrons >E, ${feed === "goess" ? "secondary" : "primary"} feed` },
     };
+    if (DP) relabel.gDP = { lines: DP.bands.map((e, k) => ({ ds: "gdpro", name: "f", c: k, color: PCOL[k % 6], label: band(e) })), title: `Protons (diff.), ${DP.sat || `${pf} feed`}`, label: `Protons (diff.), ${DP.sat || `${pf} feed`}` };
+    if (DE) relabel.gDE = { lines: DE.bands.map((e, k) => ({ ds: "gdele", name: "f", c: k, color: ECOL[k % 6], label: band(e) })), title: `Electrons (diff.), ${DE.sat || `${pf} feed`}`, label: `Electrons (diff.), ${DE.sat || `${pf} feed`}` };
+    if (xFeed) relabel.gX = { title: `X-rays (XRS), SWPC real time`, label: "X-rays (XRS)" };
     if (fromFeed) relabel.b = { title: "B — payload frame (Hp, He, Hn)", lines: [{ ds: "fgm", name: "b", c: 3, color: "#151515", label: "|B|" },
       { ds: "fgm", name: "b", c: 0, color: "#2a46d6", label: "H_{p}", vec: true }, { ds: "fgm", name: "b", c: 1, color: "#1e8a36", label: "H_{e}", vec: true },
       { ds: "fgm", name: "b", c: 2, color: "#d8282a", label: "H_{n}", vec: true }] };
-    return { sv, bu: null, kind: "goes", label: `GOES-${sat}`, relabel, empty: !sv.fgm && !sv.gpro && !sv.gxrs,
-             notes: `GOES-${sat} via LASP's Space Weather Portal (LaTiS), as Helios reads it. ${fromFeed ? `The field is the ${feedName}'s, in the payload Hp/He/Hn frame: GOES-${sat}'s own L2 magnetometer file is not available for this interval.` : `The field is GOES-${sat}'s own NOAA L2 1-minute product, in GSE.`} Integral particle fluxes exist only as the ${feedName}, which may be another satellite.` };
+    return { sv, bu: null, kind: "goes", label: `GOES-${sat}`, relabel, empty: !sv.fgm && !sv.gpro && !sv.gxrs && !sv.gdpro && !sv.gdele,
+             notes: `GOES-${sat} via LASP's Space Weather Portal (LaTiS), as Helios reads it. ${fromFeed ? `The field is the ${feedName}'s, in the payload Hp/He/Hn frame: GOES-${sat}'s own L2 magnetometer file is not available for this interval.` : `The field is GOES-${sat}'s own NOAA L2 1-minute product, in GSE.`} Integral particle fluxes exist only as the ${feedName}, which may be another satellite.` +
+                    (xFeed ? ` The X-rays are SWPC's real-time ${xFeed}-feed record from GOES-${sat} (electron-corrected): NOAA's per-satellite L2 file has not reached this interval yet.` : "") +
+                    (DP || DE ? ` The differential fluxes are SWPC's real-time ${pf}-feed products (SEISS SGPS protons, MPS-HI electrons), kept for 7 days only, so they appear for recent moments alone; each is named by the satellite that served it.` : "") };
   }
 
   // ───────────────────────── all-sky imagers: which cameras imaged that day, and their keograms (UCalgary) ─────────────────────────
@@ -2063,6 +2122,8 @@
     get bytes() { return bytes; },
     load: () => context(),
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
+    /** Drops a window's fetched data, so the next ask fetches again (the present's GOES windows, every few minutes). */
+    forget: (key) => { delete craftCache[key]; },
     mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : key === "idx" ? indicesWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
       .catch((e) => { delete craftCache[key]; throw e; })),
     scene,

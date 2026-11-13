@@ -506,7 +506,7 @@
     // The Sun as Helios builds it (SunModel.swift): a map of the whole surface at 13:07 from seven SDO/AIA 193 Å images,
     // the near side from the image of the moment and the far side from those of the rotation before, carried forward by
     // differential rotation (prepare_hso_sun.py); here it is turned to the view and drawn as a sphere.
-    let sunMap = null;
+    let sunMap = null, sunHit = null;
     if (o.sun !== null) fetch(o.sun || "assets/data/hso/sun.json").then(r => r.json()).then(m => {
       const im = new Image();
       im.onload = () => {
@@ -754,6 +754,7 @@
       if (sunMap) ctx.drawImage(sunSphere(Math.min(1024, Math.ceil(2 * r * Math.max(dpr, 2))), P.basis), sunQ[0] - r, sunQ[1] - r, 2 * r, 2 * r);
       else circle(ctx, sunQ[0], sunQ[1], r, "rgb(255,249,108)");
       text(ctx, "☀ Sun ×15", sunQ[0], sunQ[1] + r * 1.25 + 11, `600 10px ${MONO}`, "#FFE08A");
+      sunHit = { q: sunQ, r: Math.max(r * 1.25, 12) };        // live: a click on the Sun opens SDO's images (o.sunClick)
       // Helios's heliocentric fleet on the day
       for (const h of S.solar.fleet) {
         const c = HELIO[h.name] ?? 0xC9B8FF, q = P.pt(world(h.pos));
@@ -1583,7 +1584,7 @@
         for (const m of stationMarks) if (Math.hypot(m.q[0] - x, m.q[1] - y) < 8) return { ring: { kind: "station", name: m.s.name, code: m.s.code, m } };
         return null;
       }
-      if (rung === "sun") return null;
+      if (rung === "sun") return o.sunClick && sunHit && Math.hypot(sunHit.q[0] - x, sunHit.q[1] - y) < sunHit.r ? { ring: { kind: "sun", name: "Sun" } } : null;
       for (const d of formDots) if (Math.hypot(d.q[0] - x, d.q[1] - y) < 6.5) return { dot: d };
       let best = null;
       for (const r of rings) { const d = Math.hypot(r.q[0] - x, r.q[1] - y); if (d < 14 && (!best || d < best.d)) best = { ring: r, d }; }
@@ -1652,7 +1653,7 @@
       cv.title = fh ? `${fh.c.label} · ${fh.hemi === "north" ? "northern" : "southern"} foot at 110 km: ${Math.abs(fh.f.lat).toFixed(1)}°${fh.f.lat >= 0 ? "N" : "S"} ${Math.abs(fh.f.lon).toFixed(1)}°${fh.f.lon >= 0 ? "E" : "W"} · ${fh.c.line.topology === "closed" ? "closed line" : "open line"} · ${feetNow ? feetNow.model : ""}`
         : h ? (h.earth ? "Earth · open the Geomagnetic indices window" : h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
         ? `${h.ring.name} · ${h.ring.m.s.nets.map(k => NET_NAME[k]).join(" + ")} · Sun ${h.ring.m.elev.toFixed(0)}° · ${h.ring.m.imaging ? "imaging" : "daylight"}`
-        : `Open ${h.ring.name} data window`) : "";
+        : h.ring.kind === "sun" ? "The Sun · open SDO's images" : `Open ${h.ring.name} data window`) : "";
       const prev = hover;
       hover = h && h.ring ? { ring: h.ring, station: h.ring.code } : null;
       showCard(h || rung === "leo" || rung === "sun" ? null : nearestOrbit(x, y));

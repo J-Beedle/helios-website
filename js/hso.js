@@ -793,6 +793,9 @@
     // GOES (Helios's GOES window): integral particle fluxes and the X-ray flux, each line set by the source (relabel)
     gP: { title: "Protons > E", label: "p^{+} > E", unit: "(cm⁻²s⁻¹sr⁻¹)", w: 1, log: true, lines: [] },
     gE: { title: "Electrons > E", label: "e^{−} > E", unit: "(cm⁻²s⁻¹sr⁻¹)", w: 0.9, log: true, lines: [] },
+    // SWPC's differential fluxes (SEISS SGPS protons, MPS-HI electrons): the last 7 days only, as in Helios
+    gDP: { title: "Protons (diff.)", label: "p^{+} diff.", unit: "(cm⁻²s⁻¹sr⁻¹keV⁻¹)", w: 1, log: true, lines: [] },
+    gDE: { title: "Electrons (diff.)", label: "e^{−} diff.", unit: "(cm⁻²s⁻¹sr⁻¹keV⁻¹)", w: 1, log: true, lines: [] },
     gX: { title: "X-rays (XRS)", label: "X-rays (XRS)", unit: "(W/m²)", w: 0.9, log: true, yRange: [-9, -3],
           guides: [[-6, "#008000", "C"], [-5, "#ff9900", "M"], [-4, "#d90d0d", "X"]],
           lines: [Sc("gxrs", "f", 0, COL.x, "1–8 Å"), Sc("gxrs", "f", 1, COL.z, "0.5–4 Å")] },
@@ -890,7 +893,7 @@
       relabel: { n: { title: "Proton density", lines: [Sc("dis", "n", 0, COL.ni, "N_{i}"), Sc("des", "n", 0, COL.ne, "N_{e}")] }, vi: { title: "Proton velocity  V (GSE)" } },
     },
   });
-  MISSIONS.goes = { sections: [["MAG", ["b"]], ["X-rays", ["gX"]], ["Particles", ["gP", "gE"]]], stack: ["b", "gX", "gP", "gE"],
+  MISSIONS.goes = { sections: [["MAG", ["b"]], ["X-rays", ["gX"]], ["Particles", ["gP", "gE", "gDP", "gDE"]]], stack: ["b", "gX", "gP", "gE", "gDP", "gDE"],
                     relabel: { b: { title: "B — magnetic field (GSE)" } } };
   MISSIONS.idx = { sections: [["Upstream", ["giMach", "giMach2"]], ["Ground", ["giKp", "giAeal", "giAu", "giSymh", "giDst"]]],
                    stack: ["giMach", "giKp", "giAeal", "giAu", "giSymh"] };          // Dst off: SYM-H is its 1-min counterpart
@@ -2118,11 +2121,12 @@
     dscovr: { name: "DSCOVR", col: "#7f33b3", mission: "l1", family: ["ace", "wind", "dscovr"] },
     g16: { name: "GOES-16", col: "#34d27b", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g17: { name: "GOES-17", col: "#2bb86a", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
     g18: { name: "GOES-18", col: "#5fe39a", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g19: { name: "GOES-19", col: "#1f9d57", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
+    sdo: { name: "SDO", col: "#ffe27a", mission: "sdo", family: ["sdo"] },        // its window is the Sun's images (SunWindow)
   });
   /** The craft a click on the view opens: the demo carries one probe of each other mission, and stands it in for the rest. */
   const representative = (name) => {
     if (LIVE) {
-      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr" }[name];
+      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr", SDO: "sdo", Sun: "sdo" }[name];
       if (art) return art;
       const g = /^GOES-(1[6-9])$/.exec(name);
       if (g) return `g${g[1]}`;
@@ -2134,7 +2138,9 @@
   const WINDOW_CHOICES = [5, 10, 30, 90, 180];             // ±minutes, as HSOScreen.windowChoices
   const NO_ANALYSIS = new Set(["l1", "omni", "idx"]);
   const IDX_CHOICES = [720, 1440, 2880, 4320];             // the indices window: ±12 h … ±3 d (GeoIndicesPanelView.halfWidths)
-  const rangeLabel = (m) => (m >= 1440 && m % 1440 === 0 ? `±${m / 1440}d` : m >= 60 && m % 60 === 0 ? `±${m / 60}h` : `±${m}m`);
+  const NOW_PAGE = LIVE && !!SRC.now;                      // ?t=now: a window ends at the present, so its range is "last …"
+  const rangeLabel = (m) => (NOW_PAGE && m < 720 ? `last ${2 * m >= 60 && (2 * m) % 60 === 0 ? `${2 * m / 60}h` : `${2 * m}m`}`
+    : m >= 1440 && m % 1440 === 0 ? `±${m / 1440}d` : m >= 60 && m % 60 === 0 ? `±${m / 60}h` : `±${m}m`);
   // VDFPresets: a preset sets every electron option it covers. "App default" is Helios's own; the crescent preset is this
   // demo's recipe for the perpendicular crescent of Burch et al. (2016), which Helios's list does not carry.
   const VDF_PRESETS = [
@@ -3083,8 +3089,216 @@
     $(".fw-sb", el).addEventListener("click", () => { W.sideOpen = !W.sideOpen; renderSide(); relayout(); });
     W.openTools = (tab) => { W.sideOpen = true; if (tab) W.tab = tab; renderSide(); relayout(); };
     new ResizeObserver(() => W.redraw()).observe($(".fw-main", el));
+    /** Fetch this window's data again and draw it (real time: GOES every two minutes); a range the viewer has not
+     *  trimmed moves with the present. */
+    W.reload = async () => {
+      const k = W.n;
+      if (k == null || !LIVE || CRAFT[k].mission === "mms") return;
+      const old = D.craft[k];
+      SRC.forget(k); delete D.craft[k];
+      try { await loadMission(D, k); } catch (e) { D.craft[k] = old; return; }
+      if (W.n !== k) return;
+      const data = D.craft[k], [h0, h1] = A.home || [];
+      Object.assign(W.view, { sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind, relabel: data.relabel || null });
+      const [a, b] = host.span();
+      if (!host.app && A.a === h0 && A.b === h1) { A.home = [a, b]; A.setFocus(a, b); } else W.redraw();
+    };
     W.rangeText();
     W.ready = W.setCraft(n0);
+    return W;
+  }
+
+  // ───────────────────────── the SDO window (Helios's SDOSunPanel) ─────────────────────────
+  // The Sun as SDO saw it, following the view's time: a film strip of frames across the view's track, fetched once and
+  // held, the one nearest the time bar on screen, and the exact instant fetched when a scrub settles. Frames are
+  // Helioviewer's renders of the AIA/HMI archive (takeScreenshot, 512 px); at the present, unscrubbed, the observatory's
+  // own latest 1024-px frame. Both are public. (Helios Live starts in 2015, so SDO covers every moment it shows.)
+  const SDO_CH = [
+    ["0193", "193", 11, "#c9a648", "AIA 193 Å — Fe XII, ~1.2 MK corona: loops, coronal holes, flare arcades"],
+    ["0304", "304", 13, "#d8663a", "AIA 304 Å — He II, ~50 000 K chromosphere and transition region: prominences, filaments"],
+    ["0171", "171", 10, "#e6c24d", "AIA 171 Å — Fe IX, ~0.6 MK quiet corona and upper transition region: fine loops"],
+    ["0211", "211", 12, "#b86ad8", "AIA 211 Å — Fe XIV, ~2 MK active-region corona"],
+    ["0131", "131", 9, "#5fc4d6", "AIA 131 Å — Fe VIII / XXI, flaring plasma to ~10 MK"],
+    ["0094", "94", 8, "#7ebb6a", "AIA 94 Å — Fe XVIII, ~6 MK flaring regions"],
+    ["HMIB", "HMI B", 19, "#bfbfbf", "HMI line-of-sight magnetogram — photospheric field, white toward you"],
+    ["HMIIC", "HMI IC", 18, "#e0a860", "HMI continuum — the visible photosphere: sunspots"],
+  ].map(([id, label, hv, tint, blurb]) => ({ id, label, hv, tint, blurb }));
+  const SDO_QUAD = ["0193", "0304", "0171", "HMIB"];
+  const SDO_BY = Object.fromEntries(SDO_CH.map(c => [c.id, c]));
+  const SDO_STRIP = { one: 20, quad: 8 };                  // frames per channel (Helios: 30 and 10; fewer on the web, where each is ~300 kB)
+  const isoS = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
+  // 4.8″/px × 512 px (or 2.4″ × 1024) = 2458″ across: the full disc (~1920″) with a margin
+  const hvURL = (ch, ms, px) => `https://api.helioviewer.org/v2/takeScreenshot/?date=${isoS(ms)}&imageScale=${px === 512 ? 4.8 : 2.4}&layers=%5B${ch.hv},1,100%5D&x0=0&y0=0&width=${px}&height=${px}&display=true&watermark=false`;
+  const sdoLatest = (ch, salt) => `https://sdo.gsfc.nasa.gov/assets/img/latest/latest_1024_${ch.id}.jpg?r=${Math.floor(Date.now() / 900e3)}${salt ? `-${salt}` : ""}`;
+  const RELOAD = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.6v2.6h-2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  /** An image, or null on an error or after 40 s. */
+  function loadImg(url) {
+    return new Promise((res) => {
+      const im = new Image(), timer = setTimeout(() => { im.onload = im.onerror = null; im.src = ""; res(null); }, 40000);
+      im.decoding = "async"; im.alt = "";
+      im.onload = () => { clearTimeout(timer); res(im); };
+      im.onerror = () => { clearTimeout(timer); res(null); };
+      im.src = url;
+    });
+  }
+  /** host: { el, pinned (s after T0, or null), now (the page is ?t=now), time() and scrubbed() (the view's clock),
+   *  span() (the view's track, s after T0) }. Returns the window the stage moves, minimizes and closes. */
+  function SunWindow(host) {
+    const el = host.el, pinned = host.pinned;
+    el.classList.add("fw", "sunw");
+    el.innerHTML = `<div class="fw-bar">
+        <span class="tl"><button class="tl-c" aria-label="Close"></button><button class="tl-m" aria-label="Minimize"></button><button class="tl-z" aria-label="Fill the screen"></button></span>
+        <span class="sun-name"><i class="sw" style="--c:${CRAFT.sdo.col}"></i>SDO<em>the Sun · AIA and HMI</em></span>
+        ${pinned != null ? `<span class="fw-pin" title="Pinned: opened while the time machine was at this moment">${clock(pinned)} UTC</span>` : ""}
+      </div>
+      <div class="sun-tools">
+        <span class="sun-chips">${SDO_CH.map(c => `<button data-ch="${c.id}" style="--tint:${c.tint}" title="${esc(c.blurb)}">${c.label}</button>`).join("")}</span>
+        <label class="sun-quad" title="193 · 304 · 171 · HMI magnetogram at once"><input type="checkbox">Quad</label>
+        <button class="fw-ic sun-re" aria-label="Reload the frames" title="Reload the frames">${RELOAD}</button>
+      </div>
+      <div class="sun-body"><div class="sun-grid"></div><p class="sun-bar" hidden></p></div>
+      <div class="sun-foot"><span class="sun-blurb"></span><span class="sun-src"></span></div>
+      <span class="fw-grip" aria-hidden="true"></span>`;
+    const grid = $(".sun-grid", el), barEl = $(".sun-bar", el), blurbEl = $(".sun-blurb", el), srcEl = $(".sun-src", el);
+    const st = { ch: "0193", quad: false, salt: 0 };
+    const W = { n: "sdo", el, host };
+    let dead = false, gen = 0, jobs = [], lanes = 0, refining = 0, refineTimer = null, lastKey = "";
+    const asked = new Set();                                  // exact instants already asked for, `${id}|${t}`
+    const strips = new Map();                                // `${id}|${count}` → { frames: [{ t, im }], refined, loaded, total }
+    const shown = () => (st.quad ? SDO_QUAD : [st.ch]).map(id => SDO_BY[id]);
+    const count = () => (st.quad ? SDO_STRIP.quad : SDO_STRIP.one);
+    const cur = () => T0 + (pinned ?? host.time()) * 1000;  // the instant on screen, ms
+    /** live: the present, unscrubbed (the latest frame); single: a pinned window (one frame at its moment); strip. */
+    const mode = () => (pinned != null ? "single" : host.now && !host.scrubbed() ? "live" : "strip");
+    const strip = (ch) => strips.get(`${ch.id}|${count()}`);
+    function nearest(ch, ms) {
+      const s = strip(ch);
+      if (!s) return null;
+      let best = null;
+      for (const f of s.frames.concat(s.refined)) if (!best || Math.abs(f.t - ms) < Math.abs(best.t - ms)) best = f;
+      return best;
+    }
+    // three at a time, nearest the time bar first (Helios's lanes), so the instant on screen fills before its neighbors
+    function pump() {
+      while (lanes < 3 && jobs.length && !dead) {
+        const j = jobs.shift();
+        lanes++;
+        loadImg(j.url).then((im) => {
+          lanes--;
+          if (dead || j.gen !== gen) return pump();
+          if (j.refine) refining--; else if (++j.s.loaded === j.s.total) setTimeout(refine, 0);   // filled: now sharpen the instant on screen
+          if (im) { const list = j.refine ? j.s.refined : j.s.frames; list.push({ t: j.t, im }); list.sort((p, q) => p.t - q.t); }
+          if (j.refine && j.s.refined.length > 12) {            // capped: drop the one furthest from where the viewer is looking
+            const c = cur();
+            j.s.refined.sort((p, q) => Math.abs(p.t - c) - Math.abs(q.t - c)); j.s.refined.length = 12; j.s.refined.sort((p, q) => p.t - q.t);
+          }
+          draw(); pump();
+        });
+      }
+    }
+    /** The strips of the channels on screen, started where they are missing: frames across the track, none past now. */
+    function ensureStrips() {
+      if (mode() !== "strip") return;
+      const [S0, S1] = host.span(), a = T0 + S0 * 1000, b = Math.min(T0 + S1 * 1000, Date.now()), n = count();
+      if (b - a < 600e3) return;
+      const fresh = [];
+      for (const ch of shown()) {
+        const k = `${ch.id}|${n}`;
+        if (strips.has(k)) continue;
+        const s = { frames: [], refined: [], loaded: 0, total: n };
+        strips.set(k, s);
+        for (let i = 0; i < n; i++) { const t = a + (b - a) * i / (n - 1); fresh.push({ gen, s, t, url: hvURL(ch, t, 512) }); }
+      }
+      if (!fresh.length) return;
+      const c = cur();
+      fresh.sort((p, q) => Math.abs(p.t - c) - Math.abs(q.t - c));
+      jobs = fresh.concat(jobs);
+      pump();
+    }
+    /** A settled scrub: the exposure at exactly that instant, where the strip's nearest frame is over a minute away. */
+    function refine() {
+      if (mode() !== "strip") return;
+      const t = Math.round(cur() / 10e3) * 10e3;               // a tick finer than 10 s asks for the same exposure
+      if (t > Date.now()) return;                             // no exposure from the future
+      for (const ch of shown()) {
+        const s = strip(ch), f = nearest(ch, t), k = `${ch.id}|${count()}|${t}`;
+        if (!s || !f || Math.abs(f.t - t) <= 60e3 || asked.has(k)) continue;
+        asked.add(k); refining++;
+        jobs.unshift({ gen, s, t, url: hvURL(ch, t, 512), refine: true });
+      }
+      pump(); draw();
+    }
+    const note = (text, busy) => `<p class="sun-note">${busy ? '<i class="sun-spin"></i>' : ""}${esc(text)}</p>`;
+    /** One channel's cell: the frame for the mode, or why there is none. */
+    function cell(ch, box) {
+      const m = mode();
+      box.dataset.ch = ch.id;
+      if (m === "strip") {
+        const f = nearest(ch, cur());
+        if (f) { if (box.firstChild !== f.im) box.replaceChildren(f.im); }
+        else if (!box.querySelector(".sun-note")) box.innerHTML = note("loading the Sun over this window…", true);
+        return;
+      }
+      const url = m === "live" ? sdoLatest(ch, st.salt) : hvURL(ch, cur(), 1024);
+      if (box.dataset.url === url) return;
+      box.dataset.url = url;
+      box.innerHTML = note(m === "live" ? "loading SDO's latest frame…" : "loading the Sun at this moment…", true);
+      loadImg(url).then((im) => {
+        if (dead || box.dataset.url !== url) return;
+        if (im) box.replaceChildren(im);
+        else box.innerHTML = note(m === "live" ? "No frame from sdo.gsfc.nasa.gov" : "No archive frame near this time");
+      });
+    }
+    function draw() {
+      if (dead) return;
+      const chans = shown(), m = mode(), c = cur();
+      ensureStrips();
+      grid.classList.toggle("quad", st.quad);
+      const key = `${m}|${chans.map(x => x.id).join(",")}`;
+      if (key !== lastKey) {                                   // a new layout: fresh cells
+        lastKey = key;
+        grid.innerHTML = chans.map(ch => `<div class="sun-cell">${st.quad ? `<b>${ch.label}</b>` : ""}<div class="sun-img"></div></div>`).join("");
+      }
+      [...grid.querySelectorAll(".sun-img")].forEach((box, i) => cell(chans[i], box));
+      $$(".sun-chips button", el).forEach(b => b.setAttribute("aria-pressed", String(!st.quad && b.dataset.ch === st.ch)));
+      $(".sun-quad input", el).checked = st.quad;
+      blurbEl.textContent = st.quad ? "AIA 193 · 304 · 171 Å and the HMI line-of-sight magnetogram" : SDO_BY[st.ch].blurb;
+      // where the pixels came from
+      let src;
+      if (m === "live") src = "latest frame · NASA/SDO";
+      else if (m === "single") src = `${isoS(c).slice(0, 16).replace("T", " ")} UTC · nearest exposure · Helioviewer`;
+      else {
+        const f = nearest(chans[0], c);
+        if (!f) src = `${isoS(c).slice(0, 16).replace("T", " ")} UTC · nearest exposure · Helioviewer`;
+        else {
+          const dt = (f.t - c) / 60e3;
+          src = `${isoS(f.t).slice(0, 16).replace("T", " ")} UTC${Math.abs(dt) * 60 < 90 ? "" : ` · ${dt > 0 ? "+" : "−"}${Math.abs(dt).toFixed(0)} min`}${refining > 0 ? " · sharpening…" : ""} · Helioviewer`;
+        }
+      }
+      srcEl.textContent = src;
+      // progress while a strip fills: the frames already in hand stay on screen
+      const ss = m === "strip" ? chans.map(strip).filter(Boolean) : [];
+      const done = ss.reduce((n, s) => n + s.loaded, 0), all = ss.reduce((n, s) => n + s.total, 0);
+      barEl.hidden = !(all > 0 && done < all);
+      if (!barEl.hidden) barEl.innerHTML = `<span style="--p:${(done / all * 100).toFixed(1)}%"></span>${done}/${all} frames`;
+    }
+    el.addEventListener("click", (e) => {
+      const b = e.target.closest(".sun-chips button");
+      if (b) { st.ch = b.dataset.ch; st.quad = false; draw(); return; }
+      if (e.target.closest(".sun-re")) { gen++; jobs = []; refining = 0; strips.clear(); asked.clear(); st.salt++; lastKey = ""; draw(); }
+    });
+    $(".sun-quad input", el).addEventListener("change", (e) => { st.quad = e.target.checked; draw(); });
+    W.redraw = draw;
+    /** The view's time moved: pick the frame, and sharpen it once the scrub settles. */
+    W.onTime = () => {
+      if (pinned != null) return;
+      draw();
+      clearTimeout(refineTimer);
+      refineTimer = setTimeout(refine, 700);
+    };
+    const tick = setInterval(() => { if (mode() === "live" && !el.hidden) draw(); }, 60e3);   // the latest frame, every 15 min
+    W.destroy = () => { dead = true; jobs = []; clearInterval(tick); clearTimeout(refineTimer); };
+    draw();
     return W;
   }
 
@@ -3166,11 +3380,11 @@
       ...liveClicks((k) => open(k, scrubbed ? scene.time : null), body, () => scene),
       onMMS: (n, t) => open(n, scrubbed ? t : null),
       onOther: (name, t) => {
-        if (NOWM) { nowNote(name); return true; }
+        if (NOWM) { const k = representative(name); if (k && nowOK(k)) open(k, scrubbed ? t : null); else nowNote(name); return true; }
         const key = representative(name);
         if (!key) return false;
         open(key, scrubbed ? t : null);
-        if (name !== CRAFT[key].name) scene.say(`${name}'s data are in Helios; the demo opens ${CRAFT[key].name}, its ${key === "tha" ? "THEMIS" : "Cluster"} example.`);
+        if (name !== CRAFT[key].name && key !== "sdo") scene.say(`${name}'s data are in Helios; the demo opens ${CRAFT[key].name}, its ${key === "tha" ? "THEMIS" : "Cluster"} example.`);
         return true;
       },
     });
@@ -3183,6 +3397,7 @@
       slider.value = t;
       const st = stamp(t), cut = st.lastIndexOf(" · ");
       stampEl.innerHTML = `<span class="d">${st.slice(0, cut + 3)}</span>${st.slice(cut + 3)}`;
+      for (const W of wins) if (W.onTime && !W.el.hidden) W.onTime(t, scrub);
     };
     let speed = 600, playing = null;
     const stop = () => { playing = null; playBtn.classList.remove("on"); playBtn.setAttribute("aria-label", "Play"); };
@@ -3225,6 +3440,10 @@
       W.redraw();
     }
     function spanOf(pinned, wm, S = ev.span) {              // a window's span: ±wm around its moment, inside the data
+      if (NOWM && pinned == null && (!S || S === ev.span)) {  // real time: the last 2·wm, ending at the present
+        const c = home(), w = Math.max(60, Math.min(2 * wm * 60, c - ev.span[0]));
+        return [c - w, c];
+      }
       const c = pinned ?? ev.crossing, [S0, S1] = S || ev.span, h = Math.min(wm * 60, (S1 - S0) / 2);
       const a = clamp(c - h, S0, S1 - 2 * h);
       return [a, a + 2 * h];
@@ -3237,6 +3456,7 @@
       history.replaceState(null, "", u);
     }
     function close(W) {
+      clearInterval(W.timer); if (W.destroy) W.destroy();
       W.el.remove(); W.pill?.remove();
       wins.splice(wins.indexOf(W), 1);
       if (LIVE) splitHandle();
@@ -3318,27 +3538,38 @@
       const nm = Object.hasOwn(CRAFT, n) ? CRAFT[n].name : String(n);
       scene.say(typeof n === "number" ? `${nm}: no science data exist for the present. MMS Level 2 files reach the archives weeks after the day; its position here is SSCWeb's predicted orbit. Pick a past moment for its data.`
         : n === "idx" ? "Geomagnetic indices: the real-time Kp and NOAA's scales are in the Now panel. OMNI's indices follow by days to weeks."
-        : `${nm}: its archive data are not available in real time. This mode shows positions and NOAA's real-time solar wind; pick a past moment for its data.`, 7000);
+        : `${nm}: its archive data are not available in real time. In this mode GOES and SDO open their data; the rest show positions. Pick a past moment for its data.`, 7000);
     }
+    /** Real time: GOES (SWPC's feeds through LaTiS, minutes behind) and SDO (its latest frames) have data for the present. */
+    const nowOK = (n) => n === "sdo" || (Object.hasOwn(CRAFT, n) && CRAFT[n].mission === "goes");
     function open(n, pinned = null, rect = null) {
-      if (NOWM) { nowNote(n); return null; }
+      if (NOWM && !nowOK(n)) { nowNote(n); return null; }
       const same = wins.find(w => (w.n || w.want) === n && w.pinned === pinned);
       if (same) { restore(same); front(same); if (rect) { place(same, rect); same.redraw(); } return same; }
       const el = document.createElement("div");
       el.setAttribute("role", "dialog");
       layer.appendChild(el);
       const st = { wm: 30 };
-      const W = DataWindow(D, n, {
-        el, S, pinned, span: () => spanOf(pinned, st.wm), moment: () => pinned ?? ev.crossing, widen: (w, dw) => widen(w, dw),
-        setRange: (w, m) => { if (!w.view.span) st.wm = m; const [a, b] = spanOf(pinned, m, w.view.span); w.app.fullBurst = false; w.app.home = [a, b]; w.app.setFocus(a, b); },
-      });
+      const W = n === "sdo"
+        ? SunWindow({ el, pinned, now: NOWM, time: () => scene.time, scrubbed: () => scrubbed, span: () => ev.span })
+        : DataWindow(D, n, {
+          el, S, pinned, span: () => spanOf(pinned, st.wm), moment: () => pinned ?? (NOWM ? home() : ev.crossing), widen: (w, dw) => widen(w, dw),
+          setRange: (w, m) => { if (!w.view.span) st.wm = m; const [a, b] = spanOf(pinned, m, w.view.span); w.app.fullBurst = false; w.app.home = [a, b]; w.app.setFocus(a, b); },
+        });
       Object.assign(W, { want: n, pinned, r: {}, max: null, pill: null });
+      // real time: a GOES window fetches again every two minutes while it is on screen (SWPC's feeds move by the minute)
+      if (NOWM && pinned == null && n !== "sdo") W.timer = setInterval(() => { if (!W.el.hidden && !document.hidden) W.reload(); }, 120e3);
       wins.push(W);
       syncURL();
       // where it opens: the app's cascade, inside the screen
       const [bw, bh] = bounds(), k = (wins.length - 1) % 6;
-      const w = Math.min(540, bw - 16), h = Math.min(752, bh - 16);
-      place(W, rect || { l: clamp(55 + 44 * k, 8, bw - w - 8), t: clamp(Math.max(430 + 44 * k - h / 2 - 36, 8), 8, bh - h - 8), w, h });
+      const w = Math.min(540, bw - 16), h = Math.min(n === "sdo" ? w + 104 : 752, bh - 16);
+      let l0 = 55 + 44 * k;
+      if (NOWM) {                                            // real time: beside the Now panel, which floats above the windows
+        const np = $(".now-panel", body), q = np && np.getBoundingClientRect();
+        if (q && q.width) l0 = Math.max(l0, q.right - layer.getBoundingClientRect().left + 10 + 44 * k);
+      }
+      place(W, rect || { l: clamp(l0, 8, bw - w - 8), t: clamp(Math.max(430 + 44 * k - h / 2 - 36, 8), 8, bh - h - 8), w, h });
       front(W);
       // drag the bar to move, the corner to resize; the traffic lights
       const bar = $(".fw-bar", el);
@@ -3385,9 +3616,10 @@
       });
       $(".tl-c", el).addEventListener("click", () => close(W));
       $(".tl-m", el).addEventListener("click", () => minimize(W));
-      if (LIVE) { const z_ = $(".tl-z", el); z_.setAttribute("aria-label", "Open in a new tab"); z_.title = "Open this window in a tab of its own (drag the bar to the top edge to fill the screen)"; }
+      const solo_ = LIVE && n !== "sdo";                      // the SDO window fills the screen instead (no tab of its own)
+      if (solo_) { const z_ = $(".tl-z", el); z_.setAttribute("aria-label", "Open in a new tab"); z_.title = "Open this window in a tab of its own (drag the bar to the top edge to fill the screen)"; }
       $(".tl-z", el).addEventListener("click", () => {
-        if (LIVE) return openSolo(W);
+        if (solo_) return openSolo(W);
         const [bw2, bh2] = bounds();
         if (W.max) { place(W, W.max); W.max = null; } else { W.max = { ...W.r }; place(W, { l: 8, t: 8, w: bw2 - 16, h: bh2 - 16 }); }
         W.redraw();
@@ -3456,7 +3688,7 @@
   /** What the HSO view needs beyond the scene: the live page has no SDO map yet, and its own day. */
   function viewOpts() {
     const d = new Date(T0 + 7200e3);
-    return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true, plainWheel: APP,
+    return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true, plainWheel: APP, sunClick: true,
                    ...(APP ? { onPreset: (k) => hashSet("view", k), onRung: (k) => hashSet("rung", k) } : {}),
                    feet: { epoch: (t) => T0 + t * 1000, worker: "js/fieldlines.js?v=39" } } : {};
   }
@@ -3510,7 +3742,7 @@
     const q = new URLSearchParams(location.search), key = /^\d$/.test(SOLO) ? +SOLO : SOLO;
     document.body.classList.add("solo");
     if (SOLO === "hso") { document.body.classList.add("solo-hso"); return false; }
-    if (!Object.hasOwn(CRAFT, key)) return false;            // a key from the URL: only the table's own
+    if (!Object.hasOwn(CRAFT, key) || key === "sdo") return false;   // a key from the URL: only the table's own data windows
     document.body.classList.add("solo-win");
     const el = document.createElement("div");
     el.setAttribute("role", "region");
@@ -3640,7 +3872,7 @@
           const key = representative(name);
           if (!key) return false;
           openPanel(); win.setCraft(key);
-          if (name !== CRAFT[key].name) scene.say(`${name}'s data are in Helios; the demo opens ${CRAFT[key].name}, its ${key === "tha" ? "THEMIS" : "Cluster"} example.`);
+          if (name !== CRAFT[key].name && key !== "sdo") scene.say(`${name}'s data are in Helios; the demo opens ${CRAFT[key].name}, its ${key === "tha" ? "THEMIS" : "Cluster"} example.`);
           return true;
         },
         onRung: (k) => { $("#win-hso .win-title").textContent = `HSO view · ${{ leo: "LEO", mag: "Magnetosphere", moon: "Moon", l1: "L1", sun: "Sun" }[k]}`; },
