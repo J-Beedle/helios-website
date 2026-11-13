@@ -199,6 +199,62 @@
     return both && any && any.t - both.t <= 10 * MIN ? both : any;
   };
 
+  /** A GOES flux file's rows as [{ t, v }] by time: the rows keep() picks, each value range-checked. */
+  const series = (list, keep, lo, hi) => {
+    const out = [];
+    for (const r of Array.isArray(list) ? list : []) {
+      if (!r || !keep(r)) continue;
+      const t = tagMs(r.time_tag), v = num(r.flux, lo, hi);
+      if (isFinite(t) && isFinite(v)) out.push({ t, v });
+    }
+    return out.sort((a, b) => a.t - b.t);
+  };
+  /** A flare class as NOAA writes it ("C1.0", "M5.2", "X12"), else null. */
+  const flareClass = (s) => (typeof s === "string" && /^[ABCMX]\d{1,3}(\.\d{1,2})?$/.test(s) ? s : null);
+  /** NOAA SWPC's messages (products/alerts.json, newest first) as what is in effect: a warning until its "Valid To" (or
+   *  "Now Valid Until"), a watch through the last day it names, an alert or summary for a day after it is issued. One per
+   *  product (the newest; an extension replaces what it extends), cancelled serial numbers left out. Text from the feed
+   *  is kept as text: one headline, cut to 120 characters, escaped when drawn. */
+  function takeAlerts(list) {
+    const now = Date.now(), H = 3600e3, out = [], cancelled = new Set(), seen = new Set();
+    const rowsA = (Array.isArray(list) ? list : []).filter(r => r && typeof r.message === "string" && r.message.length < 8000).slice(0, 120);
+    const when = (s) => {                                      // "2026 Nov 10 1200 UTC"
+      const m = /(\d{4}) ([A-Z][a-z]{2}) (\d{1,2}) (\d{2})(\d{2}) UTC/.exec(s || ""), mo = m ? M.indexOf(m[2]) : -1;
+      return mo < 0 ? NaN : Date.UTC(+m[1], mo, +m[3], +m[4], +m[5]);
+    };
+    for (const r of rowsA) { const c = /Cancel Serial Number:\s*(\d+)/i.exec(r.message); if (c) cancelled.add(c[1]); }
+    for (const r of rowsA) {
+      const msg = r.message, issued = tagMs(r.issue_datetime);
+      if (!isFinite(issued) || now - issued > 96 * H || issued > now + H) continue;
+      const head = /^(CANCEL )?((?:EXTENDED |CONTINUED )?(WARNING|ALERT|WATCH|SUMMARY)):[ \t]*(.{3,160})$/m.exec(msg);
+      if (!head || head[1]) continue;
+      const serial = (/^Serial Number:\s*(\d+)/m.exec(msg) || [])[1];
+      if (serial && cancelled.has(serial)) continue;
+      const kind = head[3].toLowerCase(), code = typeof r.product_id === "string" && /^[A-Z0-9]{2,8}$/.test(r.product_id) ? r.product_id : head[4].slice(0, 40);
+      if (seen.has(code)) continue;
+      seen.add(code);                                          // the newest of each product decides, in effect or not
+      const until = when((/^(?:Now Valid Until|Valid To|Valid Until):\s*(.+)$/m.exec(msg) || [])[1]);
+      let live = now - issued < 24 * H, days = "";
+      if (kind === "warning" && isFinite(until)) live = until > now;
+      if (kind === "watch") {                                  // "Nov 14:  G1 (Minor)   Nov 15:  None (Below G1)"
+        const y = new Date(issued).getUTCFullYear(), got = [];
+        for (const m of msg.matchAll(/([A-Z][a-z]{2}) (\d{1,2}):\s+(G[1-5]|None)/g)) {
+          const mo = M.indexOf(m[1]); if (mo < 0) continue;
+          let t = Date.UTC(y, mo, +m[2]); if (t < issued - 200 * 24 * H) t = Date.UTC(y + 1, mo, +m[2]);
+          got.push({ t, g: m[3] });
+        }
+        if (got.length) {
+          live = got.some(d => d.t + 24 * H > now);
+          days = got.filter(d => d.g !== "None" && d.t + 24 * H > now).map(d => `${d.g} on ${day(d.t)}`).join(", ");
+        } else live = now - issued < 48 * H;
+      }
+      if (!live) continue;
+      out.push({ kind, text: head[4].replace(/[^\x20-\x7E–−≥≤°µ]/g, "").trim().slice(0, 120), issued, until: kind === "warning" ? until : NaN, days });
+    }
+    const order = { warning: 0, watch: 1, alert: 2, summary: 3 };
+    return out.sort((a, b) => order[a.kind] - order[b.kind] || b.issued - a.issued);
+  }
+
   // ───────────────────────── the feeds ─────────────────────────
   const state = {};
   /** key: { label, every (ms), stale (ms, how old the newest sample may be), run () → newest sample time (ms) } */
@@ -247,14 +303,21 @@
     scales: { label: "NOAA scales", src: "NOAA SWPC space weather scales", every: 5 * MIN, stale: STALE,
       async run() {
         const s = await getJSON(`${SWPC}/products/noaa-scales.json`);
+        const sc = (x) => { const v = num(x && x.Scale, 0, 5); return isFinite(v) ? v : null; };
+        const pc = (x) => { const v = num(x, 0, 100); return isFinite(v) ? Math.round(v) : null; };
         const one = (o) => {
           if (!o || typeof o !== "object") return null;
-          const t = tagMs(`${o.DateStamp}T${o.TimeStamp}`), sc = (x) => { const v = num(x && x.Scale, 0, 5); return isFinite(v) ? v : null; };
-          return { t, R: sc(o.R), S: sc(o.S), G: sc(o.G) };
+          return { t: tagMs(`${o.DateStamp}T${o.TimeStamp}`), R: sc(o.R), S: sc(o.S), G: sc(o.G) };
         };
         const now = one(s && s["0"]), max = one(s && s["-1"]);
         if (!now || !isFinite(now.t)) throw new Error("no current scales");
-        data.scales = { now, max };
+        // the forecast for today and the two days after: the chance of R1–R2 and of R3 or more, of S1 or more, and the G expected
+        const fc = [];
+        for (const k of ["1", "2", "3"]) {
+          const o = s[k], t = o && typeof o === "object" ? tagMs(`${o.DateStamp}T00:00:00`) : NaN;
+          if (isFinite(t)) fc.push({ t, rMinor: pc(o.R && o.R.MinorProb), rMajor: pc(o.R && o.R.MajorProb), s: pc(o.S && o.S.Prob), g: sc(o.G) });
+        }
+        data.scales = { now, max, fc };
         return now.t;
       } },
     swmf: { label: "SWMF standoff", src: "CCMC ISWA, real-time SWMF run (a model)", every: 2 * MIN, stale: STALE,
@@ -277,8 +340,87 @@
         data.swmfAhead = got[got.length - 1].t > now ? got[got.length - 1].t : null;
         return data.swmf.t;
       } },
+    // ── what NOAA SWPC's dashboards lead with (2026-11-13): the Sun's X-rays and the particles at geosynchronous orbit,
+    //    the forecast, the alerts in effect, Dst and the aurora's power ──
+    xray: { label: "GOES X-ray flux", src: "NOAA SWPC, GOES primary, 0.1–0.8 nm, 1-min", every: 5 * MIN, stale: STALE,
+      async run() {
+        const pts = series(await getJSON(`${SWPC}/json/goes/primary/xrays-6-hour.json`), (r) => r.energy === "0.1-0.8nm", 1e-10, 1);
+        if (!pts.length) throw new Error("no long-channel rows");
+        data.xray = pts;
+        return pts[pts.length - 1].t;
+      } },
+    flare: { label: "Latest flare", src: "NOAA SWPC, GOES flare list", every: MIN, stale: STALE,
+      async run() {
+        const list = await getJSON(`${SWPC}/json/goes/primary/xray-flares-latest.json`), r = Array.isArray(list) ? list[0] : null;
+        const t = tagMs(r && r.time_tag);
+        if (!isFinite(t)) throw new Error("no flare row");
+        data.flare = { t, now: flareClass(r.current_class), max: flareClass(r.max_class), maxT: tagMs(r.max_time) };
+        return t;
+      } },
+    prot: { label: "GOES protons", src: "NOAA SWPC, GOES primary, ≥10 MeV, 5-min", every: 10 * MIN, stale: 30 * MIN,
+      async run() {
+        const pts = series(await getJSON(`${SWPC}/json/goes/primary/integral-protons-6-hour.json`), (r) => r.energy === ">=10 MeV", 1e-4, 1e8);
+        if (!pts.length) throw new Error("no ≥10 MeV rows");
+        data.prot = pts;
+        return pts[pts.length - 1].t;
+      } },
+    elec: { label: "GOES electrons", src: "NOAA SWPC, GOES primary, ≥2 MeV, 5-min", every: 10 * MIN, stale: 30 * MIN,
+      async run() {
+        const pts = series(await getJSON(`${SWPC}/json/goes/primary/integral-electrons-6-hour.json`), (r) => r.energy === ">=2 MeV", 1e-2, 1e9);
+        if (!pts.length) throw new Error("no ≥2 MeV rows");
+        data.elec = pts;
+        return pts[pts.length - 1].t;
+      } },
+    kpFc: { label: "Kp forecast", src: "NOAA SWPC, 3-day planetary K forecast", every: 30 * MIN, stale: 3 * 3600e3, asOf: "fetch",
+      async run() {
+        const out = [];
+        for (const r of await getJSON(`${SWPC}/products/noaa-planetary-k-index-forecast.json`)) {
+          const t = tagMs(r && r.time_tag), k = num(r && r.kp, 0, 9);
+          // today's blocks still to come are "estimated", the days after "predicted": both are NOAA's forecast
+          if (isFinite(t) && isFinite(k) && (r.observed === "predicted" || r.observed === "estimated")) out.push({ t, k });
+        }
+        if (!out.length) throw new Error("no predicted rows");
+        data.kpFc = out.sort((a, b) => a.t - b.t);
+        return Date.now();
+      } },
+    alerts: { label: "Alerts, watches and warnings", src: "NOAA SWPC", every: 5 * MIN, stale: 60 * MIN, asOf: "fetch",
+      async run() { data.alerts = takeAlerts(await getJSON(`${SWPC}/products/alerts.json`)); return Date.now(); } },
+    dst: { label: "Dst", src: "WDC Kyoto's quick-look Dst, via NOAA SWPC, hourly", every: 30 * MIN, stale: 3 * 3600e3,
+      async run() {
+        const out = [];
+        for (const r of await getJSON(`${SWPC}/products/kyoto-dst.json`)) {
+          const t = tagMs(r && r.time_tag), v = num(r && r.dst, -3000, 500);
+          if (isFinite(t) && isFinite(v)) out.push({ t, v });
+        }
+        if (!out.length) throw new Error("no Dst rows");
+        data.dst = out.sort((a, b) => a.t - b.t).slice(-96);
+        return data.dst[data.dst.length - 1].t;
+      } },
+    hp: { label: "Aurora hemispheric power", src: "NOAA SWPC, OVATION, a 30–90 min forecast", every: 5 * MIN, stale: 45 * MIN,
+      async run() {
+        const { status, text } = await getText(`${SWPC}/text/aurora-nowcast-hemi-power.txt`);
+        if (status === 404) throw new Error("HTTP 404");
+        let best = null;
+        for (const ln of text.split("\n")) {
+          const m = /^(\d{4}-\d\d-\d\d)_(\d\d:\d\d)\s+(\d{4}-\d\d-\d\d)_(\d\d:\d\d)\s+(\d+)\s+(\d+)$/.exec(ln.trim());
+          if (!m) continue;
+          const t = tagMs(`${m[1]}T${m[2]}:00`), tf = tagMs(`${m[3]}T${m[4]}:00`), n = num(m[5], 0, 2000), s = num(m[6], 0, 2000);
+          if (isFinite(t) && isFinite(n) && isFinite(s) && (!best || t > best.t)) best = { t, tf, n, s };
+        }
+        if (!best) throw new Error("no rows");
+        data.hp = best;
+        return best.t;
+      } },
+    f107: { label: "F10.7", src: "NOAA SWPC, 10.7 cm radio flux", every: 60 * MIN, stale: 36 * 3600e3,
+      async run() {
+        const list = await getJSON(`${SWPC}/products/summary/10cm-flux.json`), r = Array.isArray(list) ? list[0] : list;
+        const t = tagMs(r && r.time_tag), v = num(r && r.flux, 40, 1000);
+        if (!isFinite(t) || !isFinite(v)) throw new Error("no value");
+        data.f107 = { t, v };
+        return t;
+      } },
   };
-  const data = { kp: null, kpHist: [], kpEst: null, scales: null, swmf: null };
+  const data = { kp: null, kpHist: [], kpEst: null, scales: null, swmf: null, xray: [], flare: null, prot: [], elec: [], kpFc: [], alerts: null, dst: [], hp: null, f107: null };
   const timers = {};
   let busy = 0;
   async function runFeed(key) {
@@ -359,7 +501,43 @@
   }
 
   // ───────────────────────── the Now panel ─────────────────────────
-  try { open = localStorage.getItem("helios-now-panel") !== "closed"; } catch (e) { /* open */ }
+  // Laid out after what NOAA SWPC's dashboards lead with (read 2026-11-13: the enthusiasts', satellite and electric-power
+  // pages): the NOAA scales now, their 24-hour maximum and the 3-day forecast first, then the alerts in effect, then
+  // the solar wind, the magnetopause, Kp with its forecast, Dst and the aurora's power, the Sun's X-rays and the
+  // particles at geosynchronous orbit, and SWPC's latest images. Each section folds; the panel can go two columns wide.
+  const LS = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
+  const LSset = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* this visit only */ } };
+  open = LS("helios-now-panel", "open") !== "closed";
+  let wide = LS("helios-now-wide", "") === "1", imgBox = null, imgBucket = 0;
+  const secOpen = { cond: true, alerts: true, wind: true, mp: true, geo: true, sun: true, craft: true, images: false, more: false };
+  try { const saved = JSON.parse(LS("helios-now-sections", "{}")); for (const k of Object.keys(secOpen)) if (typeof saved[k] === "boolean") secOpen[k] = saved[k]; } catch (e) { /* the defaults */ }
+  /** A folding section: its heading is the handle, and whether it is open is kept in this browser. */
+  const sec = (k, title, em, body) => `<details class="np-sec" data-k="${k}"${secOpen[k] ? " open" : ""}><summary class="np-s"><span>${title}</span>${em ? `<em>${em}</em>` : ""}</summary>${body}</details>`;
+
+  // SWPC's latest images, in a section of its own that is built once and moved back in after each redraw, so a redraw
+  // never fetches a picture again. Nothing is fetched until the section is opened; then every 15 minutes while it is
+  // open and the tab is looked at (the four come to about 1 MB).
+  const IMAGES = [
+    { k: "sun", label: "Sun · 195 Å", src: "images/animations/suvi/primary/195/latest.png", href: "https://www.swpc.noaa.gov/products/goes-solar-ultraviolet-imager-suvi", alt: "The Sun in extreme ultraviolet, GOES SUVI 195 Å" },
+    { k: "c3", label: "Corona · C3", src: "images/animations/lasco-c3/latest.jpg", href: "https://www.swpc.noaa.gov/products/lasco-coronagraph", alt: "The outer corona, SOHO LASCO C3 coronagraph" },
+    { k: "aur", label: "Aurora forecast", src: "images/animations/ovation/north/latest.jpg", href: "https://www.swpc.noaa.gov/products/aurora-30-minute-forecast", alt: "OVATION's aurora forecast, northern hemisphere" },
+    { k: "enlil", label: "Solar wind forecast · WSA-Enlil", src: "images/animations/enlil/latest.jpg", href: "https://www.swpc.noaa.gov/products/wsa-enlil-solar-wind-prediction", alt: "WSA-Enlil's solar wind prediction", wide: true },
+  ];
+  function buildImages() {
+    const d = document.createElement("details");
+    d.className = "np-sec np-img"; d.dataset.k = "images"; d.open = secOpen.images;
+    d.innerHTML = `<summary class="np-s"><span>Sun and aurora</span><em>NOAA SWPC's latest images</em></summary><div class="np-imgs">`
+      + IMAGES.map(i => `<a class="${i.wide ? "w" : ""}" href="${i.href}" target="_blank" rel="noopener noreferrer" title="${esc(i.alt)}: open NOAA SWPC's page"><img data-k="${i.k}" alt="${esc(i.alt)}" decoding="async"><span>${esc(i.label)}</span></a>`).join("")
+      + `</div><p class="np-n">Refreshed every 15 minutes while this is open. Served by NOAA SWPC: GOES SUVI, SOHO LASCO (ESA and NASA), OVATION and WSA-Enlil.</p>`;
+    return d;
+  }
+  function loadImages() {
+    if (!imgBox || !open || !secOpen.images || document.visibilityState === "hidden") return;
+    const b = Math.floor(Date.now() / (15 * MIN));
+    if (b === imgBucket) return;
+    imgBucket = b;
+    for (const i of IMAGES) { const el = imgBox.querySelector(`img[data-k="${i.k}"]`); if (el) el.src = `${SWPC}/${i.src}?b=${b}`; }
+  }
   function build() {
     if (SOLO) return;
     const host = $("#stage-body");
@@ -371,11 +549,18 @@
     panel.addEventListener("click", (e) => {
       const b = e.target.closest("[data-now]");
       if (!b) return;
-      if (b.dataset.now === "fold") { open = !open; try { localStorage.setItem("helios-now-panel", open ? "open" : "closed"); } catch (er) { /* this visit */ } render(); }
+      if (b.dataset.now === "fold") { open = !open; LSset("helios-now-panel", open ? "open" : "closed"); render(); }
+      if (b.dataset.now === "wide") { wide = !wide; LSset("helios-now-wide", wide ? "1" : ""); render(); }
       if (b.dataset.now === "follow" && stage && stage.home) stage.home();
     });
     for (const ev of ["pointerdown", "wheel"]) panel.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
-    panel.addEventListener("toggle", (e) => { if (e.target.classList && e.target.classList.contains("np-more")) moreOpen = e.target.open; }, true);
+    panel.addEventListener("toggle", (e) => {                  // a section folded or opened by its heading
+      const k = e.target.dataset && e.target.dataset.k;
+      if (!k || !(k in secOpen) || secOpen[k] === e.target.open) return;
+      secOpen[k] = e.target.open; LSset("helios-now-sections", JSON.stringify(secOpen));
+      if (k === "images") loadImages();
+    }, true);
+    imgBox = buildImages();
     render();
   }
   /** A feed's status line: when it was fetched, how old its newest sample is, stale or failed. */
@@ -386,7 +571,8 @@
     else if (!s.fetched) { cls = "bad"; txt = `failed (${esc(s.error || "no answer")}) · retry ${age(now - s.next)}`; }
     else {
       const old = isFinite(s.newest) ? now - s.newest : Infinity;
-      if (!isFinite(s.newest)) { cls = "stale"; txt = `fetched ${hms(s.fetched)} · no rows in the last 90 min`; }
+      if (F.asOf === "fetch") { if (old > F.stale) cls = "stale"; txt = `fetched ${hms(s.fetched)}${old > F.stale ? " · STALE" : ""}`; }
+      else if (!isFinite(s.newest)) { cls = "stale"; txt = `fetched ${hms(s.fetched)} · no rows in the last 90 min`; }
       else {
         if (old > F.stale) cls = "stale";
         txt = `fetched ${hms(s.fetched)} · newest ${key === "kp" ? "block ended" : "sample"} ${hm(s.newest)} (${old >= 0 ? `${age(old)} old` : age(-old) + " ahead"})${old > F.stale ? " · STALE" : ""}`;
@@ -460,19 +646,6 @@
     g += `<path class="sun" d="M4 ${ey}h9m-3-3 3 3-3 3"/><text x="3" y="${ey - 6}">Sun</text><text class="gl" x="${ex}" y="${(ey + GEO_RE * s + 9).toFixed(1)}">GEO</text>`;
     return `<svg class="np-mps" viewBox="0 0 ${W} ${H}" role="img" aria-label="Magnetopause at ${f(R0, 1)} Earth radii, geosynchronous orbit at 6.6">${g}</svg>`;
   }
-  /** The last day's eight 3-hour Kp blocks as bars colored by NOAA's G scale, the estimate now as a lighter last bar,
-   *  and a line at Kp 5 (G1). */
-  function kpBars(hist, est) {
-    const W = 150, H = 40, list = (hist || []).slice(-8), n = list.length + (est ? 1 : 0);
-    if (!n) return `<svg class="np-kb" viewBox="0 0 ${W} ${H}" aria-hidden="true"></svg>`;
-    const bw = W / Math.max(n, 9), Y = (k) => H - 1 - (Math.min(9, Math.max(0, k)) / 9) * (H - 3);
-    let g = "";
-    for (let i = 0; i < Math.max(n, 9); i++) g += `<rect class="slot" x="${(i * bw + 1).toFixed(1)}" y="1" width="${(bw - 2).toFixed(1)}" height="${H - 2}"/>`;
-    g += `<line class="g1" x1="0" x2="${W}" y1="${Y(5).toFixed(1)}" y2="${Y(5).toFixed(1)}"/>`;
-    list.forEach((b, i) => { const y = Y(Math.max(b.k, 0.3)); g += `<rect x="${(i * bw + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(H - 1 - y).toFixed(1)}" fill="${kpColor(b.k)}"><title>Kp ${kpThirds(b.k)}, ${hm(b.t)}–${hm(b.t + 3 * 3600e3)} UTC</title></rect>`; });
-    if (est) { const i = list.length, y = Y(Math.max(est.k, 0.3)); g += `<rect class="est" x="${(i * bw + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(H - 1 - y).toFixed(1)}" fill="${kpColor(est.k)}"><title>Kp ${kpThirds(est.k)} estimated, ${hm(est.t)} UTC</title></rect>`; }
-    return `<svg class="np-kb" viewBox="0 0 ${W} ${H}" role="img" aria-label="Kp over the last day">${g}<text x="${W}" y="${(Y(5) - 2).toFixed(1)}">G1</text></svg>`;
-  }
   /** ok / warn / stale / bad / wait, as each feed's status line. */
   function feedClass(key) {
     const F = FEEDS[key], s = state[key], now = Date.now();
@@ -482,14 +655,132 @@
     return s.error ? "warn" : "ok";
   }
   const sw2 = (sw) => (sw ? ` CCMC's real-time SWMF run (a model): last closed field line at noon ${f(sw.noon, 1)} R<sub>E</sub>, closest ${f(sw.min, 1)} R<sub>E</sub> at ${f(sw.lt, 1)} h LT, model time ${hm(sw.t)} UTC${data.swmfAhead ? ` (run reached ${hm(data.swmfAhead)})` : ""}.` : "");
-  let moreOpen = false;
-  const scaleTxt = (o, k) => (o && o[k] !== null && o[k] !== undefined ? `${k}${o[k]}` : `${k}–`);
+  // ── the pictures added 2026-11-13 ──
+  const SCALE_NAME = { R: "Radio blackouts", S: "Solar radiation storms", G: "Geomagnetic storms" };
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayHm = (ms) => `${day(ms)} ${hm(ms)}`;
+  /** The NOAA scales as SWPC's dashboards head every page: now, the last 24 hours' highest, and the forecast for
+   *  today and the two days after (the chance of an R1–R2 blackout and of an S1 or stronger proton event, and the
+   *  geomagnetic storm level expected). */
+  function condGrid(sc) {
+    const s = state.scales;
+    if (!sc) return `<p class="np-n${s && s.fetched === undefined && !s.loading ? " bad" : ""}">${s && s.loading ? "Fetching NOAA's scales…" : "NOAA's scales did not load."}</p>`;
+    const lv = (k, v, what) => `<i class="np-lv${v ? " up" : ""}" style="--c:${scaleColor(v)}" title="${SCALE_NAME[k]}, ${what}: ${k}${v ?? "–"}">${k}${v ?? "–"}</i>`;
+    const pct = (p, title) => (p === null ? `<i class="np-pc" title="${title}">–</i>` : `<i class="np-pc" style="--a:${(Math.min(100, p) / 100 * 0.8).toFixed(2)}" title="${title}">${p}%</i>`);
+    const fc = sc.fc || [], gap = `<span class="gap"></span>`;
+    let g = `<div class="np-cond" style="--n:${fc.length}"><span></span><span class="hd">Now</span><span class="hd" title="The highest in the last 24 hours">24 h</span>${gap}`
+      + fc.map((d, i) => `<span class="hd" title="NOAA's forecast for ${day(d.t)}">${i ? DOW[new Date(d.t).getUTCDay()] : "Today"}</span>`).join("");
+    g += `<span class="lb" title="${SCALE_NAME.R}, from the X-rays of solar flares">Radio</span>${lv("R", sc.now.R, "now")}${lv("R", sc.max ? sc.max.R : null, "the last 24 hours' highest")}${gap}`
+      + fc.map(d => pct(d.rMinor, `${day(d.t)}: ${d.rMinor ?? "–"} % chance of R1–R2 (an M-class flare), ${d.rMajor ?? "–"} % of R3 or more (X-class)`)).join("");
+    g += `<span class="lb" title="${SCALE_NAME.S}, from energetic protons">Radiation</span>${lv("S", sc.now.S, "now")}${lv("S", sc.max ? sc.max.S : null, "the last 24 hours' highest")}${gap}`
+      + fc.map(d => pct(d.s, `${day(d.t)}: ${d.s ?? "–"} % chance of S1 or more (a solar proton event)`)).join("");
+    g += `<span class="lb" title="${SCALE_NAME.G}, from Kp">Geomagnetic</span>${lv("G", sc.now.G, "now")}${lv("G", sc.max ? sc.max.G : null, "the last 24 hours' highest")}${gap}`
+      + fc.map(d => lv("G", d.g, `forecast for ${day(d.t)}`)).join("") + `</div>`;
+    return g + (fc.length ? `<p class="np-key">Forecast: the chance of R1–R2 and of S1 or more, and the G level expected</p>` : "");
+  }
+  const ALERT_TAG = { warning: "Warning", watch: "Watch", alert: "Alert", summary: "Summary" };
+  function alertsBlock(now) {
+    const s = state.alerts, list = data.alerts;
+    if (!list) return `<p class="np-n${s && !s.loading ? " bad" : ""}">${s && !s.loading ? "NOAA's alerts did not load." : "Fetching NOAA's alerts…"}</p>`;
+    const link = `<a href="https://www.swpc.noaa.gov/products/alerts-watches-and-warnings" target="_blank" rel="noopener noreferrer">NOAA SWPC's alerts page</a>`;
+    if (!list.length) return `<p class="np-n">No watch or warning in effect, and no alert in the last 24 hours. ${link}</p>`;
+    return `<ul class="np-al">${list.slice(0, 4).map(a => `<li class="${a.kind}"><b>${ALERT_TAG[a.kind]}</b><span>${esc(a.text)}<small>${
+      a.kind === "warning" && isFinite(a.until) ? `in effect until ${dayHm(a.until)} UTC` : a.kind === "watch" && a.days ? esc(a.days) : `issued ${age(now - a.issued)} ago`}</small></span></li>`).join("")}</ul>`
+      + `<p class="np-n">${list.length > 4 ? `${list.length - 4} more on ` : ""}${link}</p>`;
+  }
+  /** Kp as bars: the last day's eight 3-hour blocks, NOAA's estimate for now (lighter), then NOAA's forecast for the
+   *  next two days (outlined), colored by the G scale, with a line at Kp 5 (G1) and the UTC days marked. */
+  function kpChart(hist, est, fcAll, now) {
+    const W = 312, H = 64, base = 50, H3 = 3 * 3600e3;
+    const past = (hist || []).slice(-8).map(b => ({ t: b.t, k: b.k, kind: "obs" }));
+    const lastEnd = past.length ? past[past.length - 1].t + H3 : now - H3;
+    const slots = past.slice();
+    if (est) slots.push({ t: Math.max(lastEnd, Math.floor(now / H3) * H3), k: est.k, kind: "est", at: est.t });
+    const after = slots.length ? slots[slots.length - 1].t : now - H3;
+    for (const b of (fcAll || []).filter(b => b.t > after && b.t + H3 > now).slice(0, 16)) slots.push({ t: b.t, k: b.k, kind: "fc" });
+    if (!slots.length) return `<svg class="np-kc" viewBox="0 0 ${W} ${H}" aria-hidden="true"></svg>`;
+    const bw = W / Math.max(slots.length, 12), Y = (k) => base - (Math.min(9, Math.max(0, k)) / 9) * (base - 3);
+    let g = `<line class="g1" x1="0" x2="${W}" y1="${Y(5).toFixed(1)}" y2="${Y(5).toFixed(1)}"/><text class="gl" x="${W}" y="${(Y(5) - 2).toFixed(1)}">G1</text>`;
+    slots.forEach((b, i) => {
+      const x = i * bw, y = Y(Math.max(b.k, 0.25)), d = new Date(b.t);
+      if (d.getUTCHours() === 0 && i) g += `<line class="dy" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="2" y2="${base + 4}"/><text x="${(x + 3).toFixed(1)}" y="${H - 3}">${DOW[d.getUTCDay()]}</text>`;
+      g += `<rect class="${b.kind}" x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(base - y).toFixed(1)}" rx="1.5" style="--c:${kpColor(b.k)}"><title>Kp ${kpThirds(b.k)}${
+        b.kind === "est" ? ` estimated, ${hm(b.at)} UTC` : `, ${day(b.t)} ${hm(b.t)}–${hm(b.t + H3)} UTC${b.kind === "fc" ? ", forecast" : ""}`}</title></rect>`;
+    });
+    const iNow = slots.findIndex(b => b.kind === "fc"), xn = (iNow < 0 ? slots.length : iNow) * bw;
+    g += `<line class="nowl" x1="${xn.toFixed(1)}" x2="${xn.toFixed(1)}" y1="0" y2="${base + 4}"/><text class="nl" x="${(xn + 3).toFixed(1)}" y="7">now</text>`;
+    return `<svg class="np-kc" viewBox="0 0 ${W} ${H}" role="img" aria-label="Kp over the last day and NOAA's forecast for the next two">${g}</svg>`;
+  }
+  /** A quantity against time as one line, on a linear or a log axis, with labeled threshold lines. */
+  function trend(pts, o) {
+    const W = o.W || 186, H = o.H || 30;
+    const list = pts.filter(p => p.t >= o.t0 && p.t <= o.t1 + MIN);
+    if (list.length < 2) return `<svg class="np-sp" viewBox="0 0 ${W} ${H}" aria-hidden="true"></svg>`;
+    const T = (v) => (o.log ? Math.log10(Math.max(v, 1e-30)) : v), lo = T(o.lo), hi = T(o.hi);
+    const X = (t) => (((t - o.t0) / (o.t1 - o.t0)) * W).toFixed(1), Y = (v) => (H - 2 - ((Math.min(hi, Math.max(lo, T(v))) - lo) / (hi - lo)) * (H - 4)).toFixed(1);
+    let d = "", prev = null;
+    for (const p of list) { d += `${!prev || p.t - prev.t > (o.gap || 20 * MIN) ? "M" : "L"}${X(p.t)} ${Y(p.v)}`; prev = p; }
+    const lines = (o.lines || []).filter(l => T(l.v) > lo && T(l.v) < hi).map(l => `<line class="${l.cls || "th"}" x1="0" x2="${W}" y1="${Y(l.v)}" y2="${Y(l.v)}"/>${l.label ? `<text x="${W - 1}" y="${(+Y(l.v) - 1.5).toFixed(1)}">${l.label}</text>` : ""}`).join("");
+    return `<svg class="np-sp" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${lines}<path class="p" d="${d}"/></svg>`;
+  }
+  const last = (a) => (a && a.length ? a[a.length - 1] : null);
+  /** A flux in W/m² as a flare class, and NOAA's R level for it (M1 is R1, M5 R2, X1 R3, X10 R4, X20 R5). */
+  const xrayClass = (fx) => { if (!(fx > 0)) return "—"; const [c, b] = fx >= 1e-4 ? ["X", 1e-4] : fx >= 1e-5 ? ["M", 1e-5] : fx >= 1e-6 ? ["C", 1e-6] : fx >= 1e-7 ? ["B", 1e-7] : ["A", 1e-8]; return `${c}${(fx / b).toFixed(1)}`; };
+  const xrayR = (fx) => (fx >= 2e-3 ? 5 : fx >= 1e-3 ? 4 : fx >= 1e-4 ? 3 : fx >= 5e-5 ? 2 : fx >= 1e-5 ? 1 : 0);
+  const protS = (v) => (v >= 1e5 ? 5 : v >= 1e4 ? 4 : v >= 1e3 ? 3 : v >= 100 ? 2 : v >= 10 ? 1 : 0);
+  /** The Sun's X-rays and the particles at geosynchronous orbit over six hours: SWPC's "overview" plot, drawn here. */
+  function sunRows(now) {
+    const t0 = now - 6 * 3600e3, x = last(data.xray), p = last(data.prot), e = last(data.elec), fl = data.flare;
+    const max = (a) => a.reduce((m, q) => (q.t >= t0 ? Math.max(m, q.v) : m), 0);
+    let h = `<div class="np-sw">`;
+    if (x) {
+      const cls = fl && fl.now && now - fl.t < STALE ? fl.now : xrayClass(x.v), r = xrayR(x.v);
+      const word = fl && fl.max && isFinite(fl.maxT) && now - fl.maxT < 24 * 3600e3 ? `last flare ${fl.max}, ${hm(fl.maxT)}` : "";
+      h += windRow("Solar X-rays", `<i style="color:${r ? scaleColor(r) : "inherit"}">${esc(cls)}</i>`, r ? `R${r}` : "", word, "long",
+        trend(data.xray, { t0, t1: now, log: true, lo: 1e-8, hi: Math.max(2e-4, max(data.xray) * 3), gap: 6 * MIN, lines: [{ v: 1e-6, label: "C" }, { v: 1e-5, label: "M" }, { v: 1e-4, label: "X" }] }));
+    }
+    if (p) {
+      const sL = protS(p.v);
+      h += windRow("Protons ≥10 MeV", `<i style="color:${sL ? scaleColor(sL) : "inherit"}">${f(p.v, p.v < 10 ? 2 : 0)}</i>`, "pfu", sL ? `S${sL} radiation storm` : "background", sL ? "long" : "",
+        trend(data.prot, { t0, t1: now, log: true, lo: 1e-2, hi: Math.max(100, max(data.prot) * 3), lines: [{ v: 10, label: "S1" }, { v: 100, label: "S2" }, { v: 1e3, label: "S3" }] }));
+    }
+    if (e) {
+      const hot = e.v >= 1000;
+      h += windRow("Electrons ≥2 MeV", `<i style="color:${hot ? "#ffc44d" : "inherit"}">${Math.round(e.v).toLocaleString("en-US")}</i>`, "pfu", hot ? "above the alert level" : "below the alert level", "long",
+        trend(data.elec, { t0, t1: now, log: true, lo: 10, hi: Math.max(1e4, max(data.elec) * 3), lines: [{ v: 1000, label: "alert" }] }));
+    }
+    if (!x && !p && !e) return `<p class="np-n">${["xray", "prot", "elec"].some(k => state[k] && state[k].loading) ? "Fetching GOES's X-rays and particles…" : "GOES's X-rays and particles did not load."}</p>`;
+    return h + `</div><p class="np-key">last 6 h · GOES at geosynchronous orbit · 1 pfu = 1 particle/(cm² s sr)</p>`;
+  }
+  /** Dst over three days, and the aurora's power in each hemisphere. */
+  function dstCell(now) {
+    const t0 = now - 72 * 3600e3, pts = (data.dst || []).filter(p => p.t >= t0), d = last(pts);
+    if (!d) return `<div class="np-mini"><p><span>Dst</span><b>—</b></p></div>`;
+    const lo = Math.min(-60, ...pts.map(p => p.v * 1.15)), hi = Math.max(25, ...pts.map(p => p.v + 10));
+    const word = d.v > -30 ? "quiet" : d.v > -50 ? "weak storm" : d.v > -100 ? "moderate storm" : d.v > -250 ? "intense storm" : "extreme storm";
+    return `<div class="np-mini"><p><span title="The ring current's index: WDC Kyoto's quick-look values, hourly, the newest for ${hm(d.t)} UTC">Dst · 3 days</span><b>${sg(d.v, 0)}</b><small>nT</small><em>${word}</em></p>`
+      + trend(pts, { t0, t1: now, lo, hi, W: 146, H: 26, gap: 2 * 3600e3, lines: [{ v: 0, cls: "z" }, { v: -50, label: "−50" }, { v: -100, label: "−100" }] }) + `</div>`;
+  }
+  function hpCell() {
+    const hp = data.hp;
+    if (!hp) return `<div class="np-mini"><p><span>Aurora power</span><b>—</b></p></div>`;
+    const bar = (label, v) => `<p class="np-hp"><span>${label}</span><i><u style="width:${Math.min(100, v / 150 * 100).toFixed(0)}%"></u></i><b>${f(v, 0)}</b></p>`;
+    return `<div class="np-mini"><p><span title="OVATION's hemispheric power, forecast for ${hm(hp.tf)} UTC from the wind measured at ${hm(hp.t)}. The marks are at 50 and 100 GW.">Aurora power</span><small>GW</small></p>${bar("N", hp.n)}${bar("S", hp.s)}</div>`;
+  }
+
   function render() {
     if (!panel) return;
     const now = Date.now(), st = state.rtsw, fresh = (k) => state[k] && state[k].fetched && isFinite(state[k].newest) && now - state[k].newest <= FEEDS[k].stale;
-    const nose = atNose(now), last = newestRow(), view = stage && stage.scene && stage.scene.boundaryAt ? stage.scene.boundaryAt((now - T0) / 1000) : null;
-    const scrubbed = stage && stage.scrubbed;
-    const head = `<div class="np-h"><b>NOW</b><span>${day(now)} · ${hm(now)} UTC</span>${scrubbed ? '<button data-now="follow" class="np-follow" title="The view was moved off the present: back to it">Follow the clock</button>' : '<i class="np-live" title="The view follows the clock">following the clock</i>'}<button data-now="fold" class="np-fold" aria-expanded="${open}" title="${open ? "Fold the panel" : "Open the panel"}">${open ? "–" : "+"}</button></div>`;
+    const nose = atNose(now), lastRow = newestRow(), view = stage && stage.scene && stage.scene.boundaryAt ? stage.scene.boundaryAt((now - T0) / 1000) : null;
+    const scrubbed = stage && stage.scrubbed, sc = data.scales;
+    // the header: the clock, and the three scales now, which stay in sight when the panel is folded
+    const chips = sc ? ["R", "S", "G"].map(k => `<i class="np-lv${sc.now[k] ? " up" : ""}" style="--c:${scaleColor(sc.now[k])}" title="${SCALE_NAME[k]} now: ${k}${sc.now[k] ?? "–"}">${k}${sc.now[k] ?? "–"}</i>`).join("") : "";
+    const head = `<div class="np-h"><b>NOW</b><span>${day(now)} · ${hm(now)} UTC</span>`
+      + (scrubbed ? '<button data-now="follow" class="np-follow" title="The view was moved off the present: back to it">Back to now</button>' : '<i class="np-live" title="The view follows the clock"></i>')
+      + `<span class="np-chips">${chips}</span>`
+      + (open ? `<button data-now="wide" class="np-fold" aria-pressed="${wide}" title="${wide ? "One column" : "Two columns, side by side"}"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="2.5" width="4.5" height="9" rx="1"/><rect x="8" y="2.5" width="4.5" height="9" rx="1"${wide ? "" : ' opacity="0.35"'}/></svg></button>` : "")
+      + `<button data-now="fold" class="np-fold" aria-expanded="${open}" title="${open ? "Fold the panel" : "Open the panel"}">${open ? "–" : "+"}</button></div>`;
+    panel.classList.toggle("wide", wide && open);
     // Folded, the panel is its header alone. What is drawn is recorded either way: a reopened panel compared itself with
     // the last open drawing, found it unchanged, and stayed a header with a "+" (user report, 2026-11-12).
     if (!open) { if (panel.dataset.html !== head) { panel.innerHTML = head; panel.dataset.html = head; } panel.classList.add("folded"); return; }
@@ -497,83 +788,113 @@
     let h = head;
     const swOK = fresh("rtsw"), bad = [];
     // ── what must not be missed: stale or missing wind, a boundary held on an old sample ──
-    if (last && !swOK) bad.push(`Solar wind is stale: the newest L1 sample is ${age(now - last.t)} old.`);
+    if (lastRow && !swOK) bad.push(`Solar wind is stale: the newest L1 sample is ${age(now - lastRow.t)} old.`);
     if (nose && nose.row.arr + 30e3 < now - 10 * MIN) bad.push(`No measured wind has reached Earth since ${hm(nose.row.arr)} UTC: the boundaries hold that sample.`);
     for (const b of bad) h += `<p class="np-warn">${b}</p>`;
+    h += `<div class="np-body">`;
 
-    // ── the solar wind reaching Earth: three trend lines, arrived (solid) and still on its way from L1 (faint) ──
-    const lag = last && isFinite(last.arr) ? (last.arr - last.t) / 60e3 : NaN;
-    h += `<p class="np-s">Solar wind <em title="Measured at L1 by ${esc(activeSrc || "the active monitor")}, via NOAA SWPC">reaching Earth${isFinite(lag) ? ` · ${f(lag, 0)} min from L1` : ""}</em></p>`;
-    if (!nose || !last) {
-      h += `<p class="np-n bad">${st && st.loading && !st.fetched ? "Fetching NOAA SWPC's real-time solar wind…" : "No real-time solar wind: the boundaries are drawn for Helios's default (2 nPa, B<sub>z</sub> 0)."}</p>`;
+    // ── the NOAA scales: now, the last day's highest, and the forecast ──
+    h += sec("cond", "Conditions", "NOAA scales · now and the outlook", condGrid(sc));
+    const nAl = data.alerts ? data.alerts.length : 0;
+    h += sec("alerts", "Alerts", data.alerts ? (nAl ? `${nAl} in effect or new · NOAA SWPC` : "none in effect") : "NOAA SWPC", alertsBlock(now));
+
+    // ── the solar wind reaching Earth: three trend lines, arrived (solid) and still on its way from L1 (dashed) ──
+    const lag = lastRow && isFinite(lastRow.arr) ? (lastRow.arr - lastRow.t) / 60e3 : NaN;
+    let w;
+    if (!nose || !lastRow) {
+      w = `<p class="np-n bad">${st && st.loading && !st.fetched ? "Fetching NOAA SWPC's real-time solar wind…" : "No real-time solar wind: the boundaries are drawn for Helios's default (2 nPa, B<sub>z</sub> 0)."}</p>`;
     } else {
       const speedWord = nose.v >= 600 ? "fast" : nose.v >= 450 ? "moderate" : "slow";
       const bzWord = !isFinite(nose.bz) ? "" : nose.bz < -0.5 ? "southward" : nose.bz > 0.5 ? "northward" : "near zero";
-      h += `<div class="np-sw">`
+      w = `<div class="np-sw">`
         + windRow("Speed", f(nose.v, 0), "km/s", speedWord, "", spark("v", now, rangeSpeed))
         + windRow("Density", f(nose.n, 1), "cm⁻³", "", "", spark("n", now, rangeDensity))
         + windRow("IMF B<sub>z</sub>", sg(nose.bz, 1), "nT", bzWord, nose.bz < -0.5 ? "south" : "", spark("bz", now, rangeBz))
         + `</div><p class="np-key"><i class="k past"></i>arrived · <i class="k ahead"></i>on its way from L1 · last 2 h</p>`;
     }
+    h += sec("wind", "Solar wind", `<span title="Measured at L1 by ${esc(activeSrc || "the active monitor")}, via NOAA SWPC">reaching Earth${isFinite(lag) ? ` · ${f(lag, 0)} min from L1` : ""}</span>`, w);
 
     // ── the magnetopause: a sketch of the dayside, and the standoff ──
-    if (nose && last) {
-      const dpN = flowPressure(nose.n, nose.v), dpL = flowPressure(last.n, last.v);
-      const bzN = isFinite(nose.bz) ? nose.bz : 0, bzL = isFinite(last.bz) ? last.bz : 0;
+    if (nose && lastRow) {
+      const dpN = flowPressure(nose.n, nose.v), dpL = flowPressure(lastRow.n, lastRow.v);
+      const bzN = isFinite(nose.bz) ? nose.bz : 0, bzL = isFinite(lastRow.bz) ? lastRow.bz : 0;
       const pN = isFinite(dpN) ? Math.max(dpN, 0.01) : NaN, pL = isFinite(dpL) ? Math.max(dpL, 0.01) : NaN;
       const R0 = isFinite(pN) ? shueR0(pN, bzN) : NaN, R0L = isFinite(pL) ? shueR0(pL, bzL) : NaN, RB = isFinite(pN) ? jelinekR0(pN) : NaN;
       const inside = R0 < GEO_RE, insideL = R0L < GEO_RE, sw = data.swmf;
-      h += `<p class="np-s">Magnetopause <em>model, for the wind reaching Earth</em></p>`;
-      h += `<div class="np-mp">${mpSketch(R0, pN, bzN, R0L, pL, bzL, RB, sw ? sw.noon : NaN)}<div>`
+      h += sec("mp", "Magnetopause", "model, for the wind reaching Earth", `<div class="np-mp">${mpSketch(R0, pN, bzN, R0L, pL, bzL, RB, sw ? sw.noon : NaN)}<div>`
         + `<p class="np-r0${inside ? " geo" : ""}"><b>${f(R0, 1)}</b> R<sub>E</sub></p><p class="np-sub">standoff · Shue et al. 1998</p>`
         + `<p class="np-chip ${inside ? "geo" : "ok"}">${inside ? "Inside geosynchronous orbit" : "Outside geosynchronous orbit"}</p>`
-        + (isFinite(R0L) ? `<p class="np-sub"><i class="k dash"></i>${f(R0L, 1)} R<sub>E</sub> by ${hm(last.arr)}${insideL ? ' <b class="geo">inside GEO</b>' : ""}</p>` : "")
+        + (isFinite(R0L) ? `<p class="np-sub"><i class="k dash"></i>${f(R0L, 1)} R<sub>E</sub> by ${hm(lastRow.arr)}${insideL ? ' <b class="geo">inside GEO</b>' : ""}</p>` : "")
         + (sw ? `<p class="np-sub"><i class="k tick"></i>SWMF model ${f(sw.noon, 1)} R<sub>E</sub>${fresh("swmf") ? "" : " · stale"}</p>` : "")
-        + `</div></div>`;
+        + `</div></div>`);
     }
 
-    // ── geomagnetic activity: the last day's Kp as bars, and NOAA's scales ──
-    const kp = data.kp, ke = data.kpEst, sc = data.scales, kNow = ke ? ke.k : kp ? kp.k : NaN;
-    h += `<p class="np-s">Geomagnetic activity <em>NOAA SWPC</em></p>`;
-    h += `<div class="np-kp">${kpBars(data.kpHist, ke)}<div><p class="np-kpv" style="--c:${kpColor(kNow)}"><b>${kpThirds(kNow).replace(/o$/, "")}</b> Kp</p><p class="np-sub">${esc(kpWord(kNow))}${ke ? " · estimated now" : ""}${fresh("kpEst") || fresh("kp") ? "" : " · stale"}</p></div></div>`;
-    if (sc) {
-      const pill = (k, word) => { const v = sc.now[k], m = sc.max && sc.max[k]; return `<span class="np-pill" style="--c:${scaleColor(v)}" title="${word}: ${k}${v ?? "–"} now${m !== null && m !== undefined ? `, ${k}${m} at most in the last 24 h` : ""}"><b>${k}${v ?? "–"}</b>${word}</span>`; };
-      h += `<p class="np-pills">${pill("R", "radio")}${pill("S", "radiation")}${pill("G", "storm")}</p>`;
-    }
+    // ── geomagnetic activity: Kp past and forecast, Dst, and the aurora's power ──
+    const kp = data.kp, ke = data.kpEst, kNow = ke ? ke.k : kp ? kp.k : NaN;
+    const ahead = (data.kpFc || []).filter(b => b.t > now && b.t < now + 48 * 3600e3);          // blocks still to begin
+    const peak = ahead.reduce((m, b) => (!m || b.k > m.k ? b : m), null);
+    h += sec("geo", "Geomagnetic activity", "Kp · Dst · aurora",
+      `<div class="np-kph"><p class="np-kpv" style="--c:${kpColor(kNow)}"><b>${kpThirds(kNow).replace(/o$/, "")}</b> Kp</p><p class="np-sub">${esc(kpWord(kNow))}${ke ? " · estimated now" : ""}${fresh("kpEst") || fresh("kp") ? "" : " · stale"}</p>`
+      + (peak ? `<p class="np-sub pk">forecast peak <b style="color:${kpColor(peak.k)}">Kp ${kpThirds(peak.k).replace(/o$/, "")}</b>${kpG(peak.k) ? ` (G${kpG(peak.k)})` : ""} in the next 2 days · ${DOW[new Date(peak.t).getUTCDay()]} ${hm(peak.t)} UTC</p>` : "") + `</div>`
+      + kpChart(data.kpHist, ke, data.kpFc, now)
+      + `<p class="np-key"><i class="k obs"></i>observed · <i class="k fcb"></i>NOAA's forecast, next 2 days</p>`
+      + `<div class="np-two">${dstCell(now)}${hpCell()}</div>`);
+
+    // ── the Sun's X-rays and the particles at geosynchronous orbit ──
+    h += sec("sun", "Sun and radiation", `GOES${data.f107 ? ` · F10.7 ${f(data.f107.v, 0)} sfu` : ""}`, sunRows(now));
 
     // ── the spacecraft, grouped by the model's region ──
-    h += `<p class="np-s">Spacecraft <em>model regions</em></p>`;
-    if (!stage || !stage.scene || !stage.scene.regionsAt) h += `<p class="np-n">${failed ? "The positions could not be loaded." : "Waiting for the positions…"}</p>`;
+    let cr;
+    if (!stage || !stage.scene || !stage.scene.regionsAt) cr = `<p class="np-n">${failed ? "The positions could not be loaded." : "Waiting for the positions…"}</p>`;
     else {
       const groups = new Map();
       for (const c of stage.scene.regionsAt((now - T0) / 1000)) {
         if (!groups.has(c.region)) groups.set(c.region, { color: c.color, list: [] });
         groups.get(c.region).list.push(c);
       }
-      h += `<ul class="np-reg">${[...groups].map(([reg, g]) => `<li><span class="np-rn" style="--c:${esc(g.color)}">${esc(reg)}</span><span class="np-rc">${g.list.map(c => `<i title="${esc(c.name)}: ${f(c.r, c.r >= 100 ? 0 : c.r < 2 ? 2 : 1)} R_E from Earth">${esc(c.name)}</i>`).join("")}</span></li>`).join("")}</ul>`;
+      cr = `<ul class="np-reg">${[...groups].map(([reg, g]) => `<li><span class="np-rn" style="--c:${esc(g.color)}">${esc(reg)}</span><span class="np-rc">${g.list.map(c => `<i title="${esc(c.name)}: ${f(c.r, c.r >= 100 ? 0 : c.r < 2 ? 2 : 1)} R_E from Earth">${esc(c.name)}</i>`).join("")}</span></li>`).join("")}</ul>`;
     }
+    h += sec("craft", "Spacecraft", "model regions", cr);
 
     // ── the numbers and the feeds, folded away: a dot per feed, and the details behind them ──
     const dots = Object.keys(FEEDS).map(k => `<i class="${feedClass(k)}" title="${esc(FEEDS[k].label)}"></i>`).join("");
     const nBad = Object.keys(FEEDS).filter(k => ["bad", "stale"].includes(feedClass(k))).length;
-    h += `<details class="np-more"${moreOpen ? " open" : ""}><summary><span>Numbers and sources</span><span class="np-dots">${dots}</span><em>${nBad ? `${nBad} feed${nBad > 1 ? "s" : ""} need${nBad > 1 ? "" : "s"} a look` : "all feeds current"}</em></summary>`;
-    if (nose && last) {
-      const dpN = flowPressure(nose.n, nose.v), dpL = flowPressure(last.n, last.v);
+    let m = "";
+    if (nose && lastRow) {
+      const dpN = flowPressure(nose.n, nose.v), dpL = flowPressure(lastRow.n, lastRow.v);
       const row = (k, a, b) => `<tr><th>${k}</th><td>${a}</td><td>${b}</td></tr>`;
-      h += `<table class="np-t"><thead><tr><th></th><td>Reaching Earth</td><td>Newest at L1</td></tr></thead><tbody>`
-        + row("Measured at L1", `${hm(nose.row.t)}`, `${hm(last.t)}`) + row("Reaches the nose", `${hm(nose.row.arr)}`, isFinite(last.arr) ? `${hm(last.arr)}` : "—")
-        + row("Speed, km/s", f(nose.v, 0), f(last.v, 0)) + row("Density, cm⁻³", f(nose.n, 2), f(last.n, 2)) + row("Pressure, nPa", f(dpN, 2), f(dpL, 2))
-        + row("B<sub>z</sub> GSM, nT", sg(nose.bz, 1), sg(last.bz, 1)) + row("B<sub>t</sub>, nT", f(nose.bt, 1), f(last.bt, 1)) + `</tbody></table>`;
-      h += `<p class="np-n">Each L1 minute is carried to the bow-shock nose (Jelínek et al. 2012, ${f(last.rbs, 1)} R<sub>E</sub>) as a flat front along GSE X at its measured V<sub>x</sub>, ${last.how === "eph" ? `from X = ${f(last.xL1, 0)} R<sub>E</sub> (SWPC's position)` : "from SWPC's propagation to 32 R<sub>E</sub>"}.${isFinite(last.tSwpc) ? ` SWPC's own propagation reaches 32 R<sub>E</sub> at ${hm(last.tSwpc)}.` : ""}${view ? ` The drawn surface (Lin et al. 2010) has its nose at ${f(view.linR0, 1)} R<sub>E</sub>.` : ""}</p>`;
+      m += `<table class="np-t"><thead><tr><th></th><td>Reaching Earth</td><td>Newest at L1</td></tr></thead><tbody>`
+        + row("Measured at L1", `${hm(nose.row.t)}`, `${hm(lastRow.t)}`) + row("Reaches the nose", `${hm(nose.row.arr)}`, isFinite(lastRow.arr) ? `${hm(lastRow.arr)}` : "—")
+        + row("Speed, km/s", f(nose.v, 0), f(lastRow.v, 0)) + row("Density, cm⁻³", f(nose.n, 2), f(lastRow.n, 2)) + row("Pressure, nPa", f(dpN, 2), f(dpL, 2))
+        + row("B<sub>z</sub> GSM, nT", sg(nose.bz, 1), sg(lastRow.bz, 1)) + row("B<sub>t</sub>, nT", f(nose.bt, 1), f(lastRow.bt, 1)) + `</tbody></table>`;
+      m += `<p class="np-n">Each L1 minute is carried to the bow-shock nose (Jelínek et al. 2012, ${f(lastRow.rbs, 1)} R<sub>E</sub>) as a flat front along GSE X at its measured V<sub>x</sub>, ${lastRow.how === "eph" ? `from X = ${f(lastRow.xL1, 0)} R<sub>E</sub> (SWPC's position)` : "from SWPC's propagation to 32 R<sub>E</sub>"}.${isFinite(lastRow.tSwpc) ? ` SWPC's own propagation reaches 32 R<sub>E</sub> at ${hm(lastRow.tSwpc)}.` : ""}${view ? ` The drawn surface (Lin et al. 2010) has its nose at ${f(view.linR0, 1)} R<sub>E</sub>.` : ""}</p>`;
     }
-    if (kp) h += `<p class="np-n">Kp, 3-hour: ${f(kp.k, 2)} for ${hm(kp.t)}–${hm(kp.t + 3 * 3600e3)} UTC${isFinite(kp.n) ? ` (${kp.n} stations)` : ""}${ke ? `; estimated ${f(ke.k, 2)} at ${hm(ke.t)} UTC` : ""}.${sw2(data.swmf)}</p>`;
+    if (kp) m += `<p class="np-n">Kp, 3-hour: ${f(kp.k, 2)} for ${hm(kp.t)}–${hm(kp.t + 3 * 3600e3)} UTC${isFinite(kp.n) ? ` (${kp.n} stations)` : ""}${ke ? `; estimated ${f(ke.k, 2)} at ${hm(ke.t)} UTC` : ""}.${sw2(data.swmf)}</p>`;
+    {
+      const x = last(data.xray), p = last(data.prot), e = last(data.elec), d = last(data.dst), hp = data.hp, bits = [];
+      if (x) bits.push(`X-rays (0.1–0.8 nm) ${x.v.toExponential(1)} W/m² at ${hm(x.t)}`);
+      if (p) bits.push(`protons ≥10 MeV ${f(p.v, 2)} pfu`);
+      if (e) bits.push(`electrons ≥2 MeV ${Math.round(e.v).toLocaleString("en-US")} pfu (NOAA's alert level is 1,000)`);
+      if (bits.length) m += `<p class="np-n">GOES, the primary satellite: ${bits.join("; ")}.</p>`;
+      const more = [];
+      if (d) more.push(`Dst ${sg(d.v, 0)} nT for ${hm(d.t)} UTC (WDC Kyoto's quick-look value, provisional)`);
+      if (hp) more.push(`aurora power ${f(hp.n, 0)} GW north and ${f(hp.s, 0)} GW south, OVATION's forecast for ${hm(hp.tf)} UTC`);
+      if (data.f107) more.push(`F10.7 ${f(data.f107.v, 0)} sfu`);
+      if (more.length) m += `<p class="np-n">${more.join("; ")}.</p>`;
+    }
     if (stage && stage.S) {
       const miss = stage.S.nowMissing || [];
-      h += `<p class="np-n">Positions are SSCWeb's ephemeris, for the present the missions' predicted orbits.${miss.length ? ` No position for the present: ${miss.map(esc).join(", ")}.` : ""} ${stage.S.kpSrcNow ? `Field lines and the oval use Kp ${f(stage.S.kp, 2)} (${esc(stage.S.kpSrcNow)}, set when the page opened).` : `Field lines and the oval use Kp ${f(stage.S.kp, 1)}, Helios's assumed value: NOAA's Kp did not load.`}</p>`;
+      m += `<p class="np-n">Positions are SSCWeb's ephemeris, for the present the missions' predicted orbits.${miss.length ? ` No position for the present: ${miss.map(esc).join(", ")}.` : ""} ${stage.S.kpSrcNow ? `Field lines and the oval use Kp ${f(stage.S.kp, 2)} (${esc(stage.S.kpSrcNow)}, set when the page opened).` : `Field lines and the oval use Kp ${f(stage.S.kp, 1)}, Helios's assumed value: NOAA's Kp did not load.`}</p>`;
     }
-    h += `<ul class="np-a"><li class="n">No MMS science data in real time: Level 2 files reach the archives weeks after the day.</li><li class="n">THEMIS, Cluster, GOES, ACE, Wind, DSCOVR and OMNI windows follow by days to weeks; pick a past moment for them.</li></ul>`;
-    h += `<p class="np-s">Feeds <em>${document.visibilityState === "hidden" ? "paused while the tab is hidden" : "refreshed while this tab is open"}</em></p><ul class="np-f">${Object.keys(FEEDS).map(feedLine).join("")}</ul></details>`;
+    m += `<ul class="np-a"><li class="n">No MMS science data in real time: Level 2 files reach the archives weeks after the day.</li><li class="n">THEMIS, Cluster, GOES, ACE, Wind, DSCOVR and OMNI windows follow by days to weeks; pick a past moment for them.</li></ul>`;
+    m += `<p class="np-s">Feeds <em>${document.visibilityState === "hidden" ? "paused while the tab is hidden" : "refreshed while this tab is open"}</em></p><ul class="np-f">${Object.keys(FEEDS).map(feedLine).join("")}</ul>`;
+    h += sec("more", "Numbers and sources", `<span class="np-dots">${dots}</span>${nBad ? `${nBad} feed${nBad > 1 ? "s" : ""} need${nBad > 1 ? "" : "s"} a look` : "all feeds current"}`, m);
+    h += `</div>`;
     if (panel.dataset.html !== h) { panel.innerHTML = h; panel.dataset.html = h; }
+    // SWPC's images go back in above "Numbers and sources": the same node, so its pictures are not fetched again
+    const body = panel.querySelector(".np-body"), moreEl = body && body.querySelector('[data-k="more"]');
+    if (body && imgBox && imgBox.parentNode !== body) body.insertBefore(imgBox, moreEl);
+    loadImages();
   }
   const boot = () => { build(); tickClock(); setInterval(() => { tickClock(); render(); }, 15000); };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
