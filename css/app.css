@@ -148,127 +148,136 @@ body.helios-app .rail .ri:hover { background: rgba(240, 240, 250, 0.14); color: 
 @media (prefers-reduced-motion: reduce) { .la-now[aria-pressed="true"] i { animation: none; } }
 body.now-mode .rail-ev b { color: #5fd08a; }
 
-.now-panel { position: absolute; z-index: 7; left: 14px; top: 84px; width: 336px; max-height: calc(100% - 196px); overflow: auto; padding: 10px 12px 10px; border: 1px solid rgba(240, 240, 250, 0.14); border-radius: 10px;
-  background: rgba(11, 11, 14, 0.93); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5); color: #d6d6de; font: 400 11.5px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-  -webkit-user-select: text; user-select: text; overscroll-behavior: contain; }
-.now-panel.folded { width: auto; padding-bottom: 8px; }
+.now-panel { position: absolute; z-index: 7; left: 14px; top: 84px; width: 336px; max-height: calc(100% - 196px); overflow: auto; box-sizing: border-box; padding: 0 12px 12px;
+  border: 1px solid rgba(240, 240, 250, 0.14); border-radius: 10px; background: rgba(14, 14, 17, 0.96); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  color: #e3e3eb; font: 400 12.5px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; -webkit-user-select: text; user-select: text; overscroll-behavior: contain; }
+/* The Now panel in the ToolsKit look of the windows' tools sidebar and the LMN panel (site.css .tk): system type,
+   sentence-case headings with a › disclosure, gray secondary text and hairlines; color only for NOAA's levels, the
+   figures' own keys and real cautions (an amber bar, as .tk-caution) — 2026-11-15, after the user's review. */
+.now-panel.folded { width: auto; padding-bottom: 0; }
+.now-panel.wide { width: min(704px, calc(100% - 28px)); }
+.now-panel.wide .np-body { columns: 2; column-gap: 24px; }
 .now-panel p, .now-panel ul { margin: 0; }
-.np-h { display: flex; align-items: center; gap: 7px; }
-.np-h > span:first-of-type { color: #f2f2fa; font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace; white-space: nowrap; }
-.np-live { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #5fd08a; box-shadow: 0 0 0 3px rgba(95, 208, 138, 0.18); }
+.now-panel a { color: #b4b4c4; font-weight: 600; text-decoration: none; }
+.now-panel a:hover { color: #f0f0fa; }
+/* the header, as .tk-ph: stays in sight while the panel scrolls */
+.np-h { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 7px; height: 38px; margin: 0 -12px; padding: 0 9px 0 12px; border-bottom: 1px solid rgba(240, 240, 250, 0.1); background: rgb(14, 14, 17); border-radius: 10px 10px 0 0; }
+.now-panel.folded .np-h { border-bottom: 0; border-radius: 10px; }
+.np-h b { color: #cdcdd5; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.np-h > span:first-of-type { color: #e3e3eb; font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.np-live { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #34d27b; }
 .np-chips { display: inline-flex; gap: 3px; margin-left: auto; }
-.np-chips .np-lv { min-width: 23px; font-size: 9.5px; }
-.np-fold svg { display: block; width: 12px; height: 12px; margin: 0 auto; fill: currentColor; }
-.np-fold[aria-pressed="true"] { background: rgba(255, 196, 77, 0.22); color: #ffc44d; }
-.np-h b { color: #5fd08a; font: 700 11px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.12em; }
-.np-follow { flex: none; padding: 0 8px; height: 22px; border: 1px solid rgba(255, 196, 77, 0.6); border-radius: 6px; background: rgba(255, 196, 77, 0.12); color: #ffc44d; font: 600 11px/1 inherit; cursor: pointer; }
-.np-fold { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: rgba(240, 240, 250, 0.08); color: #e3e3eb; font: 500 14px/1 inherit; cursor: pointer; }
-.np-fold:hover { background: rgba(240, 240, 250, 0.18); }
-.np-s { color: #ffc44d; font: 600 9.5px/1.3 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
-p.np-s { margin-top: 11px !important; padding-top: 9px; border-top: 1px solid rgba(240, 240, 250, 0.1); }
-.np-sec { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(240, 240, 250, 0.1); break-inside: avoid; }
+.np-chips .np-lv { min-width: 24px; font-size: 10px; }
+.np-fold { flex: none; width: 24px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; color: #a3a7b1; font: 500 15px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; cursor: pointer; }
+.np-fold:hover, .np-fold[aria-pressed="true"] { background: rgba(255, 255, 255, 0.1); color: #f2f3f5; }
+.np-fold svg { display: block; width: 13px; height: 13px; margin: 0 auto; fill: currentColor; }
+.np-follow { flex: none; height: 22px; padding: 0 9px; border: 1px solid rgba(240, 240, 250, 0.18); border-radius: 5px; background: #1e1e23; color: #e3e3eb; font: 600 11.5px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; cursor: pointer; }
+.np-follow:hover { background: #26262c; }
+.np-follow:focus-visible, .np-fold:focus-visible, .la-now:focus-visible { outline: 2px solid #b4b4c4; outline-offset: 1px; }
+/* a section: a hairline above, its heading a disclosure as .tk-dh, the › turning when open */
+.np-sec { padding: 11px 0 3px; border-top: 1px solid rgba(240, 240, 250, 0.1); break-inside: avoid; }
+.np-body > .np-sec:first-child { border-top: 0; }
 .np-sec > summary { display: flex; align-items: baseline; gap: 6px; cursor: pointer; list-style: none; -webkit-user-select: none; user-select: none; }
 .np-sec > summary::-webkit-details-marker { display: none; }
-.np-sec > summary::after { content: ""; flex: none; align-self: center; width: 5px; height: 5px; margin: -3px 2px 0 auto; border: solid #6c6c74; border-width: 0 1.4px 1.4px 0; transform: rotate(45deg); }
-.np-sec:not([open]) > summary::after { margin-top: 0; transform: rotate(-45deg); }
-.np-sec > summary:hover::after { border-color: #cdcdd5; }
-.np-sec > summary em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.now-panel.wide { width: min(704px, calc(100% - 28px)); }
-.now-panel.wide .np-body { columns: 2; column-gap: 22px; }
-.now-panel a { color: #9fc0ff; text-decoration: none; }
-.now-panel a:hover { text-decoration: underline; }
+.np-sec > summary::before { content: "›"; flex: none; width: 10px; color: #aeaeb6; font-size: 15px; line-height: 1; text-align: center; transition: transform 0.15s; }
+.np-sec[open] > summary::before { transform: rotate(90deg); }
+.np-sec > summary > span { flex: none; color: #e3e3eb; font-size: 13px; font-weight: 600; }
+.np-sec > summary:hover > span { color: #fff; }
+.np-sec > summary em { min-width: 0; overflow: hidden; color: #aeaeb6; font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+/* what must not be missed (stale wind, a boundary held on an old sample): a caution, as .tk-caution */
+.np-warn { margin-top: 10px !important; padding: 2px 0 2px 9px; border-left: 3px solid #ffc44d; color: #e3e3eb; font-size: 12px; }
 /* the NOAA scales: now, the last day's highest, and the 3-day forecast */
-.np-cond { display: grid; grid-template-columns: 1fr 36px 36px 6px repeat(var(--n, 3), 40px); gap: 4px; align-items: center; margin-top: 8px; }
-.np-cond .hd { color: #919199; font: 500 8.5px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.04em; text-align: center; text-transform: uppercase; }
-.np-cond .lb { color: #d6d6de; font-size: 11px; }
-.np-cond .gap { align-self: stretch; margin: -2px 0; border-left: 1px solid rgba(240, 240, 250, 0.12); }
-.np-lv, .np-pc { display: inline-block; padding: 2.5px 0; border-radius: 5px; font: 700 10.5px/1.2 ui-monospace, "SF Mono", Menlo, monospace; font-style: normal; text-align: center; }
-.np-lv { min-width: 26px; background: color-mix(in srgb, var(--c) 20%, transparent); color: var(--c); }
-.np-lv.up { background: var(--c); color: #14140f; }
-.np-pc { background: rgba(255, 170, 60, var(--a, 0)); box-shadow: inset 0 0 0 1px rgba(240, 240, 250, 0.1); color: #e8e9ed; font-weight: 500; }
+.np-cond { display: grid; grid-template-columns: 1fr 34px 34px 7px repeat(var(--n, 3), 40px); gap: 4px; align-items: center; margin-top: 9px; }
+.np-cond .hd { color: #aeaeb6; font-size: 11px; text-align: center; }
+.np-cond .lb { color: #cdcdd5; font-size: 12px; }
+.np-cond .gap { align-self: stretch; margin: -2px 0; border-left: 1px solid rgba(240, 240, 250, 0.1); }
+.np-lv, .np-pc { display: inline-block; padding: 2px 0; border-radius: 4px; font: 600 11px/1.25 ui-monospace, "SF Mono", Menlo, monospace; font-style: normal; text-align: center; }
+.np-lv { min-width: 26px; background: rgba(255, 255, 255, 0.07); color: #aeaeb6; }
+.np-lv.up { background: var(--c); color: #111114; }
+.np-pc { box-shadow: inset 0 0 0 1px rgba(240, 240, 250, 0.12); color: #cdcdd5; font-weight: 400; }
 /* alerts, watches and warnings in effect */
-.np-al { list-style: none; padding: 0; margin-top: 7px !important; display: grid; gap: 6px; }
-.np-al li { display: grid; grid-template-columns: 58px 1fr; gap: 8px; align-items: start; }
-.np-al li b { padding: 2.5px 0; border-radius: 5px; background: rgba(240, 240, 250, 0.1); color: #cdcdd5; font: 700 8.5px/1.3 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.05em; text-align: center; text-transform: uppercase; }
-.np-al li.warning b { background: rgba(255, 150, 0, 0.24); color: #ffc070; }
-.np-al li.watch b { background: rgba(246, 235, 20, 0.16); color: #efe56a; }
-.np-al li.alert b { background: rgba(255, 59, 48, 0.24); color: #ffa39b; }
-.np-al li span { color: #e8e9ed; font-size: 11px; line-height: 1.3; }
-.np-al li small { display: block; margin-top: 1px; color: #919199; font-size: 9.5px; }
-/* Kp past and forecast, Dst and the aurora's power */
-.np-kph { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 6px; }
-.np-kph .np-sub { margin: 0 !important; }
-.np-kph .pk { flex-basis: 100%; }
-/* thresholds on a trend line */
-/* SWPC's latest images */
-.np-imgs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
-.np-imgs a { position: relative; display: block; aspect-ratio: 1; overflow: hidden; border-radius: 7px; background: #000; color: #e8e9ed; }
-.np-imgs a.w { grid-column: 1 / -1; aspect-ratio: 960 / 600; }
-.np-imgs img { display: block; width: 100%; height: 100%; object-fit: cover; font-size: 9px; }
-.np-imgs span { position: absolute; inset: auto 0 0 0; padding: 12px 6px 4px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.82)); font: 500 9px/1.2 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-dots { display: inline-flex; gap: 3px; margin-right: 6px; vertical-align: middle; }
-.np-dots i { width: 5px; height: 5px; border-radius: 50%; background: #5fd08a; }
-.np-dots i.warn { background: #ffc44d; } .np-dots i.stale, .np-dots i.bad { background: #ff6b5e; } .np-dots i.wait { background: #6c6c74; }
-.np-s em { margin-left: 6px; color: #919199; font-style: normal; letter-spacing: 0.02em; text-transform: none; }
-/* the visual panel (2026-11-12): trend lines, a dayside sketch, Kp bars, NOAA scale pills, region groups */
-.np-warn { margin-top: 8px !important; padding: 6px 8px; border-radius: 7px; background: rgba(255, 107, 94, 0.14); color: #ffb3a8; font-size: 11px; }
+.np-al { list-style: none; padding: 0; margin-top: 9px !important; display: grid; gap: 8px; }
+.np-al li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: start; }
+.np-al li b { padding: 2px 0; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: #cdcdd5; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-align: center; text-transform: uppercase; }
+.np-al li.warning b { background: rgba(255, 107, 94, 0.22); color: #ffd0ca; }
+.np-al li.watch b { background: rgba(255, 196, 77, 0.16); color: #ece6d6; }
+.np-al li.alert b { background: rgba(255, 255, 255, 0.11); color: #e3e3eb; }
+.np-al li span { color: #e3e3eb; font-size: 12.5px; line-height: 1.3; }
+.np-al li small { display: block; margin-top: 1px; color: #aeaeb6; font-size: 11.5px; }
+/* values over their names, as .tk-big beside .tk-sub */
+.np-vals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 9px; }
+.np-v { display: flex; flex-wrap: wrap; align-items: baseline; align-content: flex-start; column-gap: 3px; min-width: 0; }
+.np-v span { flex-basis: 100%; color: #aeaeb6; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-v b { color: #f0f0fa; font-size: 17px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.np-v small { color: #aeaeb6; font-size: 11.5px; }
+.np-v em { flex-basis: 100%; color: #cdcdd5; font-size: 11.5px; font-style: normal; }
+.np-v em .np-lv { min-width: 22px; margin-right: 3px; font-size: 10px; }
+.np-dot { display: inline-block; width: 7px; height: 7px; margin: 0 5px 1px 0; border-radius: 50%; background: var(--c); vertical-align: middle; }
+.np-key { margin-top: 6px !important; color: #aeaeb6; font-size: 11.5px; line-height: 1.35; }
+.np-sub { margin-top: 3px !important; color: #aeaeb6; font-size: 11.5px; }
+.np-sub b, .np-gl b { color: #e3e3eb; font-weight: 600; }
+.np-sub .k { display: inline-block; width: 14px; height: 0; margin: 0 4px 3px 0; vertical-align: middle; border-top: 1.5px solid #e3e3eb; }
+.np-sub .k.dash { border-top: 1.5px dashed #6f86ff; }
+.np-sub .k.tick { width: 2px; height: 9px; border: 0; background: #b48bf0; }
 /* the figures (2026-11-15): white, black-framed, as the data windows draw theirs (hso.js's renderer) */
-.np-slot { margin-top: 7px; }
+.np-slot { margin-top: 8px; }
 .np-fig { position: relative; height: 200px; border-radius: 4px; overflow: hidden; background: #fff; }
 .np-fig-geo { height: 216px; }
 .np-fig-sun { height: 268px; }
 .np-fig-mp { width: 150px; height: 150px; }
 .np-fig canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.np-vals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
-.np-v { display: flex; flex-wrap: wrap; align-items: baseline; align-content: flex-start; column-gap: 3px; min-width: 0; }
-.np-v span { flex-basis: 100%; color: #919199; font-size: 10px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.np-v b { color: #fff; font: 600 16px/1.15 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-v b i { font-style: normal; }
-.np-v small { color: #aeaeb6; font-size: 10px; }
-.np-v em { flex-basis: 100%; color: #aeaeb6; font-style: normal; font-size: 10px; }
-.np-v.south b, .np-v.south em { color: #ffc44d; }
-.np-gl b { color: #e8e9ed; font-weight: 600; }
-.np-key { margin-top: 5px !important; color: #7c7d86; font-size: 9.5px; }
-.np-sub .k { display: inline-block; width: 14px; height: 0; margin: 0 4px 3px 0; vertical-align: middle; border-top: 1.5px solid #e6e7ee; }
-.np-sub .k.dash { border-top: 1.5px dashed #6f86ff; }
-.np-sub .k.tick { width: 2px; height: 9px; border: 0; background: #c98bff; }
-.np-mp { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; margin-top: 4px; }
-.np-r0 b { color: #fff; font: 600 26px/1 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-r0 { color: #cdcdd5; font-size: 12px; }
-.np-r0.geo b { color: #ff6b5e; }
-.np-sub { margin-top: 3px !important; color: #919199; font-size: 10px; }
-.np-sub b.geo { color: #ff6b5e; }
-.np-chip { display: inline-block; margin-top: 6px !important; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; }
-.np-chip.ok { background: rgba(95, 208, 138, 0.15); color: #9fe6b9; }
-.np-chip.geo { background: rgba(255, 107, 94, 0.2); color: #ffc0b8; }
-.np-kpv { color: #cdcdd5; font-size: 11px; }
-.np-kpv b { color: var(--c); font: 600 22px/1 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-reg { list-style: none; padding: 0; margin-top: 6px !important; display: grid; gap: 6px; }
-.np-rn { display: block; color: var(--c); font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
-.np-rn::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: var(--c); }
-.np-rc { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
-.np-rc i { padding: 1px 6px; border-radius: 5px; background: rgba(240, 240, 250, 0.07); color: #d6d6de; font: normal 400 10.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-t { width: 100%; margin-top: 8px; border-collapse: collapse; font: 400 10.5px/1.35 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-t th { padding: 1px 6px 1px 0; color: #919199; font-weight: 400; text-align: left; white-space: nowrap; }
-.np-t td { padding: 1px 0 1px 6px; color: #e8e9ed; text-align: right; white-space: nowrap; }
-.np-t thead td { color: #919199; font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; }
-.np-n { margin-top: 5px !important; color: #aeaeb6; font-size: 10.5px; }
-.np-n b { color: #e8e9ed; }
+/* the magnetopause: the standoff, and outside (a check, as .tk-good) or inside geosynchronous orbit (a caution) */
+.np-mp { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 12px; margin-top: 9px; }
+.np-r0 { color: #cdcdd5; font-size: 13px; }
+.np-r0 b { color: #f0f0fa; font-size: 26px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.np-good { display: flex; gap: 6px; margin-top: 7px !important; color: #e3e3eb; font-size: 12px; }
+.np-good i { color: #34d27b; font-style: normal; font-weight: 700; }
+.np-caution { display: grid; gap: 1px; margin-top: 7px !important; padding-left: 9px; border-left: 3px solid #ffc44d; color: #cdcdd5; font-size: 11.5px; }
+.np-caution b { color: #e3e3eb; font-size: 12px; font-weight: 600; }
+/* Kp now and the forecast peak, Dst and the aurora's power in words */
+.np-kph { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 9px; }
+.np-kph .np-sub { margin: 0 !important; }
+.np-kph .pk { flex-basis: 100%; }
+.np-kpv { color: #cdcdd5; font-size: 13px; }
+.np-kpv b { color: #f0f0fa; font-size: 24px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.np-gl { margin-top: 4px !important; }
+/* the spacecraft by the model's region, each region with its swatch (as .tk-region) */
+.np-reg { list-style: none; padding: 0; margin-top: 9px !important; display: grid; gap: 8px; }
+.np-rn { display: flex; align-items: center; gap: 7px; color: #e3e3eb; font-size: 12px; font-weight: 600; }
+.np-rn i { flex: none; width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
+.np-rc { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 0 17px; }
+.np-rc i { padding: 1px 7px; border: 1px solid rgba(240, 240, 250, 0.12); border-radius: 4px; color: #cdcdd5; font: normal 400 11.5px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; }
+/* SWPC's latest images */
+.np-imgs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 9px; }
+.np-imgs a { position: relative; display: block; aspect-ratio: 1; overflow: hidden; border-radius: 4px; background: #000; color: #e3e3eb; font-weight: 400; }
+.np-imgs a.w { grid-column: 1 / -1; aspect-ratio: 960 / 600; }
+.np-imgs img { display: block; width: 100%; height: 100%; object-fit: cover; font-size: 9px; }
+.np-imgs span { position: absolute; inset: auto 0 0 0; padding: 12px 6px 4px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.82)); font-size: 10.5px; line-height: 1.2; }
+/* numbers and sources: the feeds' status dots, the table, the notes, each feed's line */
+.np-dots { display: inline-flex; gap: 3px; margin-right: 6px; vertical-align: middle; }
+.np-dots i { width: 5px; height: 5px; border-radius: 50%; background: #34d27b; }
+.np-dots i.warn { background: #ffc44d; } .np-dots i.stale, .np-dots i.bad { background: #ff6b5e; } .np-dots i.wait { background: #6c6c74; }
+.np-h4 { margin-top: 12px !important; color: #e3e3eb; font-size: 13px; font-weight: 600; }
+.np-h4 em { margin-left: 6px; color: #aeaeb6; font-size: 12px; font-style: normal; font-weight: 400; }
+.np-t { width: 100%; margin-top: 9px; border-collapse: collapse; font: 400 12px/1.35 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+.np-t th { padding: 1px 8px 1px 0; color: #aeaeb6; font: 400 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; text-align: left; white-space: nowrap; }
+.np-t td { padding: 1px 0 1px 8px; color: #e3e3eb; text-align: right; white-space: nowrap; }
+.np-t thead td { color: #aeaeb6; font: 400 11.5px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; }
+.np-n { margin-top: 7px !important; color: #aeaeb6; font-size: 11.5px; line-height: 1.35; }
+.np-n b { color: #e3e3eb; }
 .np-n.bad, .np-n.stale { color: #ff9e8a; }
-.np-n.warn { color: #ffc44d; }
-.np-a { list-style: none; padding: 0; margin-top: 5px !important; display: grid; gap: 3px; font-size: 10.5px; color: #cdcdd5; }
-.np-a li { position: relative; padding-left: 15px; }
-.np-a li::before { position: absolute; left: 0; top: 0; font: 700 10.5px/1.4 ui-monospace, monospace; }
-.np-a li.y::before { content: "✓"; color: #5fd08a; }
+.np-n.warn { color: #cdcdd5; }
+.np-a { list-style: none; padding: 0; margin-top: 7px !important; display: grid; gap: 3px; color: #cdcdd5; font-size: 12px; }
+.np-a li { position: relative; padding-left: 16px; }
+.np-a li::before { position: absolute; left: 0; top: 0; font-weight: 700; }
+.np-a li.y::before { content: "✓"; color: #34d27b; }
 .np-a li.n::before { content: "✕"; color: #ff9e8a; }
-.np-f { list-style: none; padding: 0; margin-top: 5px !important; display: grid; gap: 4px; }
-.np-f li { display: grid; gap: 1px; padding-left: 10px; border-left: 2px solid #5fd08a; }
-.np-f li span { color: #e8e9ed; font-size: 11px; }
-.np-f li small { margin-left: 6px; color: #6c6c74; font-size: 10px; }
-.np-f li b { color: #919199; font: 400 10px/1.35 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-f li.wait { border-color: #ffc44d; }
-.np-f li.warn { border-color: #ffc44d; }
+.np-f { list-style: none; padding: 0; margin-top: 7px !important; display: grid; gap: 5px; }
+.np-f li { display: grid; gap: 1px; padding-left: 9px; border-left: 2px solid #34d27b; }
+.np-f li span { color: #e3e3eb; font-size: 12px; }
+.np-f li small { margin-left: 6px; color: #aeaeb6; font-size: 11px; }
+.np-f li b { color: #aeaeb6; font: 400 11px/1.35 ui-monospace, "SF Mono", Menlo, monospace; }
+.np-f li.wait, .np-f li.warn { border-color: #ffc44d; }
 .np-f li.stale, .np-f li.bad { border-color: #ff6b5e; }
 .np-f li.stale b, .np-f li.bad b { color: #ff9e8a; }
-.np-follow:focus-visible, .np-fold:focus-visible, .la-now:focus-visible { outline: 2px solid #ffc44d; outline-offset: 1px; }
 body.now-mode .hso-toast { z-index: 8; }   /* over the Now panel */

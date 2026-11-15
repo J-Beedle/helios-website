@@ -593,7 +593,11 @@
   const scaleColor = (v) => NOAA_COL[Math.max(0, Math.min(5, v ?? 0))];
   /** NOAA's G level for a Kp in thirds: 4.67 (5−) is G1, 8.67 (9−) still G4. */
   const kpG = (k) => (k >= 8.99 ? 5 : k >= 7.66 ? 4 : k >= 6.66 ? 3 : k >= 5.66 ? 2 : k >= 4.66 ? 1 : 0);
-  const kpColor = (k) => (!isFinite(k) ? "#6c6c74" : kpG(k) ? NOAA_COL[kpG(k)] : k >= 3.66 ? "#c9d65b" : "#5fd08a");
+  const kpColor = (k) => (!isFinite(k) ? "#6c6c74" : k >= 7 ? "#d11a1a" : k >= 5 ? "#e8720c" : k >= 4 ? "#d9a400" : "#2e9e4f");   // the Kp figure's bands
+  /** A small level dot, in the ToolsKit's way of marking a level beside text. */
+  const dot = (c, title) => `<i class="np-dot" style="--c:${c}"${title ? ` title="${esc(title)}"` : ""}></i>`;
+  /** A NOAA scale level as a pill: plain at level 0, NOAA's color from level 1. */
+  const lvPill = (k, v, title) => `<i class="np-lv${v ? " up" : ""}"${v ? ` style="--c:${scaleColor(v)}"` : ""}${title ? ` title="${esc(title)}"` : ""}>${k}${v ?? "–"}</i>`;
   const kpWord = (k) => (!isFinite(k) ? "no Kp" : kpG(k) ? `G${kpG(k)} geomagnetic storm` : k >= 3.66 ? "active" : k >= 2.66 ? "unsettled" : "quiet");
   // ── the figures (2026-11-15): drawn by the data windows' own renderer (hso.js's HSO_FIGURE), white with black axes,
   //    tick marks inside the frame and the legend to the right, as every figure in Helios is. Each is a node built once
@@ -727,7 +731,7 @@
     ctx.beginPath(); ctx.arc(ex, ey, er, 0, 2 * Math.PI); ctx.fillStyle = "#fff"; ctx.fill();
     ctx.beginPath(); ctx.arc(ex, ey, er, -Math.PI / 2, Math.PI / 2); ctx.closePath(); ctx.fillStyle = "#000"; ctx.fill();   // the night side, away from the Sun
     ctx.beginPath(); ctx.arc(ex, ey, er, 0, 2 * Math.PI); ctx.strokeStyle = "#000"; ctx.lineWidth = 0.8; ctx.stroke();
-    rich(ctx, "← Sun", L + 4, ey - 9, { size: 9, weight: 600, color: "#b07d00" });   // on the Sun–Earth line, sunward of the bow shock
+    rich(ctx, "← Sun", L + 4, ey - 9, { size: 9, color: "#000" });   // on the Sun–Earth line, sunward of the bow shock
     rich(ctx, "GEO", ex, ey + GEO_RE * k + 7, { size: 8, align: "center", color: "rgba(0,0,0,0.55)" });
     ctx.restore();
     // the frame and the axes, as Helios draws them: ticks inside the frame, numbers outside
@@ -758,8 +762,8 @@
   function condGrid(sc) {
     const s = state.scales;
     if (!sc) return `<p class="np-n${s && s.fetched === undefined && !s.loading ? " bad" : ""}">${s && s.loading ? "Fetching NOAA's scales…" : "NOAA's scales did not load."}</p>`;
-    const lv = (k, v, what) => `<i class="np-lv${v ? " up" : ""}" style="--c:${scaleColor(v)}" title="${SCALE_NAME[k]}, ${what}: ${k}${v ?? "–"}">${k}${v ?? "–"}</i>`;
-    const pct = (p, title) => (p === null ? `<i class="np-pc" title="${title}">–</i>` : `<i class="np-pc" style="--a:${(Math.min(100, p) / 100 * 0.8).toFixed(2)}" title="${title}">${p}%</i>`);
+    const lv = (k, v, what) => lvPill(k, v, `${SCALE_NAME[k]}, ${what}: ${k}${v ?? "–"}`);
+    const pct = (p, title) => `<i class="np-pc" title="${title}">${p === null ? "–" : `${p}%`}</i>`;
     const fc = sc.fc || [], gap = `<span class="gap"></span>`;
     let g = `<div class="np-cond" style="--n:${fc.length}"><span></span><span class="hd">Now</span><span class="hd" title="The highest in the last 24 hours">24 h</span>${gap}`
       + fc.map((d, i) => `<span class="hd" title="NOAA's forecast for ${day(d.t)}">${i ? DOW[new Date(d.t).getUTCDay()] : "Today"}</span>`).join("");
@@ -791,11 +795,11 @@
     const x = last(data.xray), p = last(data.prot), e = last(data.elec), fl = data.flare;
     if (!x && !p && !e) return `<p class="np-n">${["xray", "prot", "elec"].some(k => state[k] && state[k].loading) ? "Fetching GOES's X-rays and particles…" : "GOES's X-rays and particles did not load."}</p>`;
     let h = `<div class="np-vals">`;
-    if (x) { const cls = fl && fl.now && now - fl.t < STALE ? fl.now : xrayClass(x.v), r = xrayR(x.v); h += val("X-rays", `<i style="color:${r ? scaleColor(r) : "inherit"}">${esc(cls)}</i>`, r ? `R${r}` : "", r ? "radio blackout" : "class now"); }
+    if (x) { const cls = fl && fl.now && now - fl.t < STALE ? fl.now : xrayClass(x.v), r = xrayR(x.v); h += val("X-rays", esc(cls), "", r ? `${lvPill("R", r, `${SCALE_NAME.R}: R${r}`)} radio blackout` : "class now"); }
     else h += val("X-rays", "—", "", "");
-    if (p) { const sL = protS(p.v); h += val("Protons ≥10 MeV", `<i style="color:${sL ? scaleColor(sL) : "inherit"}">${f(p.v, p.v < 10 ? 2 : 0)}</i>`, "pfu", sL ? `S${sL} storm` : "background"); }
+    if (p) { const sL = protS(p.v); h += val("Protons ≥10 MeV", f(p.v, p.v < 10 ? 2 : 0), "pfu", sL ? `${lvPill("S", sL, `${SCALE_NAME.S}: S${sL}`)} radiation storm` : "background"); }
     else h += val("Protons ≥10 MeV", "—", "", "");
-    if (e) { const hot = e.v >= 1000; h += val("Electrons ≥2 MeV", `<i style="color:${hot ? "#ffc44d" : "inherit"}">${Math.round(e.v).toLocaleString("en-US")}</i>`, "pfu", hot ? "above alert level" : "below alert level"); }
+    if (e) { const hot = e.v >= 1000; h += val("Electrons ≥2 MeV", Math.round(e.v).toLocaleString("en-US"), "pfu", hot ? `${dot("#ffc44d", "Above NOAA's alert level of 1,000 pfu")}above alert level` : "below alert level"); }
     else h += val("Electrons ≥2 MeV", "—", "", "");
     h += `</div>`;
     if (fl && fl.max && isFinite(fl.maxT) && now - fl.maxT < 24 * 3600e3) h += `<p class="np-sub">Latest flare ${esc(fl.max)}, peaking ${hm(fl.maxT)} UTC</p>`;
@@ -815,7 +819,7 @@
     const nose = atNose(now), lastRow = newestRow(), view = stage && stage.scene && stage.scene.boundaryAt ? stage.scene.boundaryAt((now - T0) / 1000) : null;
     const scrubbed = stage && stage.scrubbed, sc = data.scales;
     // the header: the clock, and the three scales now, which stay in sight when the panel is folded
-    const chips = sc ? ["R", "S", "G"].map(k => `<i class="np-lv${sc.now[k] ? " up" : ""}" style="--c:${scaleColor(sc.now[k])}" title="${SCALE_NAME[k]} now: ${k}${sc.now[k] ?? "–"}">${k}${sc.now[k] ?? "–"}</i>`).join("") : "";
+    const chips = sc ? ["R", "S", "G"].map(k => lvPill(k, sc.now[k], `${SCALE_NAME[k]} now: ${k}${sc.now[k] ?? "–"}`)).join("") : "";
     const head = `<div class="np-h"><b>NOW</b><span>${day(now)} · ${hm(now)} UTC</span>`
       + (scrubbed ? '<button data-now="follow" class="np-follow" title="The view was moved off the present: back to it">Back to now</button>' : '<i class="np-live" title="The view follows the clock"></i>')
       + `<span class="np-chips">${chips}</span>`
@@ -848,7 +852,7 @@
       const speedWord = nose.v >= 600 ? "fast" : nose.v >= 450 ? "moderate" : "slow";
       const bzWord = !isFinite(nose.bz) ? "" : nose.bz < -0.5 ? "southward" : nose.bz > 0.5 ? "northward" : "near zero";
       w = `<div class="np-vals">${val("Speed", f(nose.v, 0), "km/s", speedWord)}${val("Density", f(nose.n, 1), "cm⁻³", "")}`
-        + `${val("IMF B<sub>z</sub>", sg(nose.bz, 1), "nT", bzWord, nose.bz < -0.5 ? "south" : "")}</div>${figSlot("wind")}`
+        + `${val("IMF B<sub>z</sub>", sg(nose.bz, 1), "nT", nose.bz < -0.5 ? `${dot("#d90d0d", "Southward: red in the figure")}${bzWord}` : bzWord)}</div>${figSlot("wind")}`
         + `<p class="np-key">Black: arrived at Earth · gray: on its way from L1 · B<sub>z</sub> red when southward</p>`;
     }
     h += sec("wind", "Solar wind", `<span title="Measured at L1 by ${esc(activeSrc || "the active monitor")}, via NOAA SWPC">reaching Earth${isFinite(lag) ? ` · ${f(lag, 0)} min from L1` : ""}</span>`, w);
@@ -863,9 +867,9 @@
       const inside = R0 < GEO_RE, insideL = R0L < GEO_RE, sw = data.swmf;
       mpArgs = { R0, p: pN, bz: bzN, R0L, pL, bzL, RB, swmf: sw ? sw.noon : NaN };
       h += sec("mp", "Magnetopause", "model, for the wind reaching Earth", `<div class="np-mp">${figSlot("mp")}<div>`
-        + `<p class="np-r0${inside ? " geo" : ""}"><b>${f(R0, 1)}</b> R<sub>E</sub></p><p class="np-sub">standoff · Shue et al. 1998</p>`
-        + `<p class="np-chip ${inside ? "geo" : "ok"}">${inside ? "Inside geosynchronous orbit" : "Outside geosynchronous orbit"}</p>`
-        + (isFinite(R0L) ? `<p class="np-sub"><i class="k dash"></i>${f(R0L, 1)} R<sub>E</sub> by ${hm(lastRow.arr)}${insideL ? ' <b class="geo">inside GEO</b>' : ""}</p>` : "")
+        + `<p class="np-r0"><b>${f(R0, 1)}</b> R<sub>E</sub></p><p class="np-sub">standoff · Shue et al. 1998</p>`
+        + (inside ? `<p class="np-caution"><b>Inside geosynchronous orbit</b>GEO satellites may be in the magnetosheath</p>` : `<p class="np-good"><i>✓</i>Outside geosynchronous orbit</p>`)
+        + (isFinite(R0L) ? `<p class="np-sub"><i class="k dash"></i>${f(R0L, 1)} R<sub>E</sub> by ${hm(lastRow.arr)}${insideL ? " · inside GEO" : ""}</p>` : "")
         + (sw ? `<p class="np-sub"><i class="k tick"></i>SWMF model ${f(sw.noon, 1)} R<sub>E</sub>${fresh("swmf") ? "" : " · stale"}</p>` : "")
         + `</div></div>`);
     }
@@ -875,8 +879,8 @@
     const ahead = (data.kpFc || []).filter(b => b.t > now && b.t < now + 48 * 3600e3);          // blocks still to begin
     const peak = ahead.reduce((m, b) => (!m || b.k > m.k ? b : m), null);
     h += sec("geo", "Geomagnetic activity", "Kp · Dst · aurora",
-      `<div class="np-kph"><p class="np-kpv" style="--c:${kpColor(kNow)}"><b>${kpThirds(kNow).replace(/o$/, "")}</b> Kp</p><p class="np-sub">${esc(kpWord(kNow))}${ke ? " · estimated now" : ""}${fresh("kpEst") || fresh("kp") ? "" : " · stale"}</p>`
-      + (peak ? `<p class="np-sub pk">forecast peak <b style="color:${kpColor(peak.k)}">Kp ${kpThirds(peak.k).replace(/o$/, "")}</b>${kpG(peak.k) ? ` (G${kpG(peak.k)})` : ""} in the next 2 days · ${DOW[new Date(peak.t).getUTCDay()]} ${hm(peak.t)} UTC</p>` : "") + `</div>`
+      `<div class="np-kph"><p class="np-kpv"><b>${kpThirds(kNow).replace(/o$/, "")}</b> Kp</p><p class="np-sub">${dot(kpColor(kNow))}${esc(kpWord(kNow))}${ke ? " · estimated now" : ""}${fresh("kpEst") || fresh("kp") ? "" : " · stale"}</p>`
+      + (peak ? `<p class="np-sub pk">forecast peak ${dot(kpColor(peak.k))}<b>Kp ${kpThirds(peak.k).replace(/o$/, "")}</b>${kpG(peak.k) ? ` (G${kpG(peak.k)})` : ""} in the next 2 days · ${DOW[new Date(peak.t).getUTCDay()]} ${hm(peak.t)} UTC</p>` : "") + `</div>`
       + geoLine() + figSlot("geo")
       + `<p class="np-key">Kp colored by the G scale (green, yellow, orange G1, red G3) · gray: NOAA's forecast · aurora power is OVATION's, at the time it forecasts</p>`);
 
@@ -893,7 +897,7 @@
         if (!groups.has(c.region)) groups.set(c.region, { color: c.color, list: [] });
         groups.get(c.region).list.push(c);
       }
-      cr = `<ul class="np-reg">${[...groups].map(([reg, g]) => `<li><span class="np-rn" style="--c:${esc(g.color)}">${esc(reg)}</span><span class="np-rc">${g.list.map(c => `<i title="${esc(c.name)}: ${f(c.r, c.r >= 100 ? 0 : c.r < 2 ? 2 : 1)} R_E from Earth">${esc(c.name)}</i>`).join("")}</span></li>`).join("")}</ul>`;
+      cr = `<ul class="np-reg">${[...groups].map(([reg, g]) => `<li><span class="np-rn"><i style="--c:${esc(g.color)}"></i>${esc(reg)}</span><span class="np-rc">${g.list.map(c => `<i title="${esc(c.name)}: ${f(c.r, c.r >= 100 ? 0 : c.r < 2 ? 2 : 1)} R_E from Earth">${esc(c.name)}</i>`).join("")}</span></li>`).join("")}</ul>`;
     }
     h += sec("craft", "Spacecraft", "model regions", cr);
 
@@ -928,7 +932,7 @@
       m += `<p class="np-n">Positions are SSCWeb's ephemeris, for the present the missions' predicted orbits.${miss.length ? ` No position for the present: ${miss.map(esc).join(", ")}.` : ""} ${stage.S.kpSrcNow ? `Field lines and the oval use Kp ${f(stage.S.kp, 2)} (${esc(stage.S.kpSrcNow)}, set when the page opened).` : `Field lines and the oval use Kp ${f(stage.S.kp, 1)}, Helios's assumed value: NOAA's Kp did not load.`}</p>`;
     }
     m += `<ul class="np-a"><li class="n">No MMS science data in real time: Level 2 files reach the archives weeks after the day.</li><li class="n">GOES and SDO windows open in real time; THEMIS, Cluster, ACE, Wind, DSCOVR and OMNI follow by days to weeks, so pick a past moment for them.</li></ul>`;
-    m += `<p class="np-s">Feeds <em>${document.visibilityState === "hidden" ? "paused while the tab is hidden" : "refreshed while this tab is open"}</em></p><ul class="np-f">${Object.keys(FEEDS).map(feedLine).join("")}</ul>`;
+    m += `<p class="np-h4">Feeds <em>${document.visibilityState === "hidden" ? "paused while the tab is hidden" : "refreshed while this tab is open"}</em></p><ul class="np-f">${Object.keys(FEEDS).map(feedLine).join("")}</ul>`;
     h += sec("more", "Numbers and sources", `<span class="np-dots">${dots}</span>${nBad ? `${nBad} feed${nBad > 1 ? "s" : ""} need${nBad > 1 ? "" : "s"} a look` : "all feeds current"}`, m);
     h += `</div>`;
     // Rebuilding the panel's contents put its scroll back at the top on every update (user report, 2026-11-15): the
