@@ -974,6 +974,135 @@
              notes: `${name} at L1 via CDAWeb HAPI, live, at the spacecraft's own time (not shifted to Earth). ${key === "dscovr" ? (spot ? "Partly from NOAA/NCEI's Space Weather Portal (1-min MAG / Faraday cup), which runs to within days of now — CDAWeb's 1-s MAG lags about a month and its Faraday-cup plasma stops 2019-06-27. Quality-flagged samples are dropped." : "CDAWeb's 1-s MAG and, for 2016-06 to 2019-06, its Faraday-cup plasma; NCEI's 1-min products where those stop.") : key === "ace" ? "SWE H0 plasma ends 2024-07-09; the K0 browse products cover 2017-07 onward." : "SWE H1 non-linear proton fits, K0 where they stop."}` };
   }
 
+  // ───────────────────────── SOLAR-1 and IMAP, the newest L1 monitors ─────────────────────────
+  const SOLAR1_SINCE = Date.UTC(2026, 0, 8), IMAP_SINCE = Date.UTC(2025, 8, 26);   // SSCWeb's first positions for each
+  const SWPC_J = "https://services.swpc.noaa.gov";
+  /** One of NOAA SWPC's JSON files (the polite client's queue; nothing cached across visits: the file moves by the minute). */
+  const swpcJSON = (path) => slot(async () => {
+    const r = await get(`${SWPC_J}/${path}`);
+    if (!r.ok) return [];
+    const body = await bodyOf(r); bytes += body.length; emit();
+    const j = JSON.parse(textOf(body));
+    return Array.isArray(j) ? j : [];
+  });
+  /** NOAA's real-time 1-minute L1 feed (json/rtsw, the last ~24 h, each row tagged with its monitor — SOLAR1, IMAP or
+   *  ACE): one monitor's field and plasma in GSE over [a, b] ms, rows SWPC flags and −9999 fills left out.
+   *  Returns { B: [[t, bx, by, bz]], P: [[t, n, vx, vy, vz, |V|, T eV]] }. */
+  async function rtswFor(source, a, b) {
+    const [mag, wind] = await Promise.all([swpcJSON("json/rtsw/rtsw_mag_1m.json"), swpcJSON("json/rtsw/rtsw_wind_1m.json")]);
+    const at = (o) => (o && o.source === source && (o.overall_quality ?? 0) === 0 && typeof o.time_tag === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?$/.test(o.time_tag) ? Date.parse(o.time_tag + "Z") : NaN);
+    const v = (x, lo, hi) => (typeof x === "number" && isFinite(x) && x > -9990 && x >= lo && x <= hi ? x : NaN);
+    const B = [], P = [];
+    for (const o of mag) {
+      const t = at(o), xyz = [v(o && o.bx_gse, -500, 500), v(o && o.by_gse, -500, 500), v(o && o.bz_gse, -500, 500)];
+      if (t >= a && t <= b && xyz.every(isFinite)) B.push([sec(t), ...xyz]);
+    }
+    for (const o of wind) {
+      const t = at(o);
+      if (!(t >= a && t <= b)) continue;
+      const tK = v(o.proton_temperature, 1, 1e8);
+      P.push([sec(t), v(o.proton_density, 0, 500), v(o.proton_vx_gse, -3000, 3000), v(o.proton_vy_gse, -3000, 3000), v(o.proton_vz_gse, -3000, 3000), v(o.proton_speed, 50, 3000), isFinite(tK) ? tK * KELVIN_EV : NaN]);
+    }
+    B.sort((p, q) => p[0] - q[0]); P.sort((p, q) => p[0] - q[0]);
+    return { B, P };
+  }
+  /** An L1 window from field rows [t, bx, by, bz] and plasma rows [t, n, v1, v2, v3, |V|, T eV], as l1Window builds one. */
+  function l1Sets(Bv, P) {
+    const sv = {};
+    if (Bv.length) {
+      const n = Bv.length, b4 = new Float32Array(n * 4);
+      for (let i = 0; i < n; i++) { const r = Bv[i]; b4[i * 4] = r[1]; b4[i * 4 + 1] = r[2]; b4[i * 4 + 2] = r[3]; b4[i * 4 + 3] = Math.hypot(r[1], r[2], r[3]); }
+      sv.fgm = set({ t: [Float64Array.from(Bv, r => r[0]), 1], b: [b4, 4] });
+    }
+    if (P.length) {
+      const n = P.length, col = (k) => Float32Array.from(P, r => (isFinite(r[k]) ? r[k] : NaN)), vv = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) vv[i * 3 + c] = isFinite(P[i][2 + c]) ? P[i][2 + c] : NaN;
+      sv.dis = set({ t: [col(0), 1], n: [col(1), 1], v: [vv, 3], speed: [col(5), 1], tp: [col(6), 1] });
+    }
+    return sv;
+  }
+  const vRows = (frame, names) => ({ title: `Proton velocity  V (${frame})`, lines: names.map((nm, c) => ({ ds: "dis", name: "v", c, color: ["#001af2", "#008000", "#d90d0d"][c], label: nm, vec: true })) });
+  /** SOLAR-1 (SWFO-L1), as Helios's fetchSolar1: NOAA's real-time feed for the last day (its own rows, GSE); else the
+   *  MAG L3 1-minute field from NOAA/NCEI's Space Weather Portal (from April 2026; SWiPS plasma is not archived yet);
+   *  else, within a week, SWPC's propagated product (L1 times, GSM, from SWPC's active monitor). */
+  async function solar1Window() {
+    const [a, b] = window_, nil = { t: [], cols: [], n: 0 }, relabel = {};
+    let Bv = [], P = [], note = "";
+    if (b > Date.now() - 26 * 3600e3) {
+      ({ B: Bv, P } = await track("SOLAR-1, NOAA's real-time feed", rtswFor("SOLAR1", a, b)).catch(() => ({ B: [], P: [] })));
+      if (Bv.length || P.length) note = "NOAA SWPC's real-time 1-minute feed (the last day), SOLAR-1's own rows: field and velocity in GSE.";
+    }
+    if (!Bv.length) {
+      for (const id of ["sci_mag-l3_solar1", "mag-l3_solar1"]) {           // science quality first, operational second
+        const r = await track("SOLAR-1 MAG (NOAA/NCEI)", ncei(id, ["b_gse_min_x", "b_gse_min_y", "b_gse_min_z"], a, b)).catch(() => nil);
+        for (let i = 0; i < r.n; i++) { const xyz = [0, 1, 2].map(c => r.cols[c][i]); if (xyz.every(x => isFinite(x) && Math.abs(x) < 1e4)) Bv.push([r.t[i], ...xyz]); }
+        if (Bv.length) break;
+      }
+      if (Bv.length) note = `MAG L3 1-minute field (GSE) from NOAA/NCEI's Space Weather Portal, the mission archive (April 2026 on). SWiPS plasma is not archived yet${P.length ? "" : ", so density, velocity and temperature appear only for the last day, from NOAA's real-time feed"}.`;
+    }
+    if (!Bv.length && !P.length && b > Date.now() - 7 * 864e5) {
+      // columns: time, speed, density, temperature, bx, by, bz, bt, vx, vy, vz (GSM), propagated time
+      const list = await track("SWPC's propagated solar wind", swpcJSON("products/geospace/propagated-solar-wind.json")).catch(() => []);
+      const v = (x, lo, hi) => { const y = +x; return isFinite(y) && y > -9990 && y >= lo && y <= hi ? y : NaN; };
+      for (const r of list.slice(1)) {
+        const t = Array.isArray(r) && typeof r[0] === "string" && /^\d{4}-\d\d-\d\d[ T]\d\d:\d\d/.test(r[0]) ? Date.parse(r[0].replace(" ", "T").replace(/(\.\d+)?Z?$/, "Z")) : NaN;
+        if (!(t >= a && t <= b)) continue;
+        const xyz = [v(r[4], -500, 500), v(r[5], -500, 500), v(r[6], -500, 500)], tK = v(r[3], 1, 1e8);
+        if (xyz.every(isFinite)) Bv.push([sec(t), ...xyz]);
+        P.push([sec(t), v(r[2], 0, 500), v(r[8], -3000, 3000), v(r[9], -3000, 3000), v(r[10], -3000, 3000), v(r[1], 50, 3000), isFinite(tK) ? tK * KELVIN_EV : NaN]);
+      }
+      if (Bv.length || P.length) {
+        relabel.b = { title: "B — magnetic field (GSM)" }; relabel.vi = vRows("GSM", ["X", "Y", "Z"]);
+        note = "SWPC's propagated product: L1 observation times, field and velocity in GSM, from whichever monitor SWPC had active (SOLAR-1 since its 2026 handover).";
+      }
+    }
+    const sv = l1Sets(Bv, P);
+    return { sv, bu: null, kind: "l1", label: "SOLAR-1", relabel, empty: !sv.fgm && !sv.dis,
+             banner: !sv.fgm && !sv.dis ? "No SOLAR-1 data for this moment: NOAA/NCEI's archive starts 2026-04-01 and NOAA's live feeds reach back a day (1-minute) and a week (propagated)."
+               : !sv.dis ? "Field only: SOLAR-1's plasma (SWiPS) is not archived yet. NOAA's real-time feed carries it for the last day." : null,
+             notes: `SOLAR-1 (formerly SWFO-L1, NOAA) at L1, at the spacecraft's own time (not shifted to Earth). ${note || "No SOLAR-1 data for this interval: NOAA/NCEI's archive starts 2026-04-01, NOAA's live feeds reach back a day (1-minute) and a week (propagated), and CDAWeb carries only its position."}` };
+  }
+  /** IMAP at L1: CDAWeb's science data first — MAG L2 (GSE, 2 Hz, quality 0) and SWAPI L3a solar-wind protons (1 min,
+   *  flags 0; velocity in RTN) — then IMAP's I-ALiRT real-time stream as CDAWeb archives it (field in GSE; SWAPI's
+   *  pseudo-moments, no velocity vector), then NOAA's real-time feed for the last day (IMAP's rows, GSE). */
+  async function imapWindow() {
+    const [a, b] = window_, nil = { t: [], cols: [], n: 0 }, relabel = {}, used = [];
+    let Bv = [], P = [], vFrame = "GSE";
+    const [m, sw] = await Promise.all([
+      track("IMAP MAG L2", hapi("IMAP_MAG_L2_NORM-GSE", ["b_gse", "quality_flags"], a, b, true)).catch(() => nil),
+      track("IMAP SWAPI L3a protons", hapi("IMAP_SWAPI_L3A_PROTON-SW", ["proton_sw_speed", "proton_sw_temperature", "proton_sw_density", "proton_sw_velocity_rtn", "swp_flags"], a, b, true)).catch(() => nil),
+    ]);
+    const ok = (x, lo, hi) => (isFinite(x) && x >= lo && x <= hi ? x : NaN);
+    for (let i = 0; i < m.n; i++) { if (m.cols[3][i] !== 0) continue; const xyz = [0, 1, 2].map(c => m.cols[c][i]); if (xyz.every(x => isFinite(x) && Math.abs(x) < 1e4)) Bv.push([m.t[i], ...xyz]); }
+    for (let i = 0; i < sw.n; i++) {
+      if (sw.cols[6][i] !== 0) continue;
+      const tK = ok(sw.cols[1][i], 1, 1e8);
+      P.push([sw.t[i], ok(sw.cols[2][i], 0, 500), ok(sw.cols[3][i], -3000, 3000), ok(sw.cols[4][i], -3000, 3000), ok(sw.cols[5][i], -3000, 3000), ok(sw.cols[0][i], 50, 3000), isFinite(tK) ? tK * KELVIN_EV : NaN]);
+    }
+    if (Bv.length) used.push("MAG L2 (GSE)");
+    if (P.length) { used.push("SWAPI L3a protons (velocity in RTN)"); vFrame = "RTN"; }
+    if (!Bv.length || !P.length) {
+      const [im, ip] = await Promise.all([
+        Bv.length ? nil : track("IMAP I-ALiRT field", hapi("IMAP_IALIRT_L1_REALTIME@1", ["mag_B_GSE"], a, b, true)).catch(() => nil),
+        P.length ? nil : track("IMAP I-ALiRT SWAPI", hapi("IMAP_IALIRT_L1_REALTIME@2", ["swapi_pseudo_proton_density", "swapi_pseudo_proton_speed", "swapi_pseudo_proton_temperature"], a, b, true)).catch(() => nil),
+      ]);
+      for (let i = 0; i < im.n; i++) { const xyz = [0, 1, 2].map(c => im.cols[c][i]); if (xyz.every(x => isFinite(x) && Math.abs(x) < 1e4)) Bv.push([im.t[i], ...xyz]); }
+      for (let i = 0; i < ip.n; i++) { const tK = ok(ip.cols[2][i], 1, 1e8); P.push([ip.t[i], ok(ip.cols[0][i], 0, 500), NaN, NaN, NaN, ok(ip.cols[1][i], 50, 3000), isFinite(tK) ? tK * KELVIN_EV : NaN]); }
+      if (im.n) used.push("I-ALiRT field (GSE)");
+      if (ip.n) used.push("I-ALiRT SWAPI pseudo-moments (density, speed, temperature)");
+    }
+    if ((!Bv.length || !P.length) && b > Date.now() - 26 * 3600e3) {
+      const r = await track("IMAP, NOAA's real-time feed", rtswFor("IMAP", a, b)).catch(() => ({ B: [], P: [] }));
+      if (!Bv.length && r.B.length) { Bv = r.B; used.push("NOAA's real-time field (GSE)"); }
+      if (!P.length && r.P.length) { P = r.P; vFrame = "GSE"; used.push("NOAA's real-time plasma (GSE)"); }
+    }
+    if (vFrame === "RTN") relabel.vi = vRows("RTN", ["R", "T", "N"]);
+    const sv = l1Sets(Bv, P);
+    return { sv, bu: null, kind: "l1", label: "IMAP", relabel, empty: !sv.fgm && !sv.dis,
+             banner: !sv.fgm && !sv.dis ? "No IMAP data for this moment yet: CDAWeb's science files run to the end of July 2026 so far, its copy of IMAP's I-ALiRT real-time stream lags a few days, and NOAA's live feed reaches back a day." : null,
+             notes: `IMAP (NASA) at L1, at the spacecraft's own time (not shifted to Earth). ${used.length ? `From ${used.join("; ")}, via ${used.some(u => /NOAA/.test(u)) ? "CDAWeb HAPI and NOAA SWPC" : "CDAWeb HAPI"}.` : "No IMAP data for this interval: CDAWeb's science files run to the end of July 2026 so far, its copy of the I-ALiRT real-time stream lags a few days, and NOAA's live feed reaches back a day."}${vFrame === "RTN" ? " SWAPI's velocity is in RTN (R from the Sun, about −X GSE)." : ""}${used.some(u => /I-ALiRT SWAPI|NOAA's real-time plasma/.test(u)) ? " The real-time plasma values are SWAPI's pseudo-moments from IMAP's I-ALiRT stream, not the calibrated science moments: the density in particular can differ several-fold from other monitors'." : ""}` };
+  }
+
   // ───────────────────────── GOES (Helios's GOES adapter: LASP's Space Weather Portal LaTiS) ─────────────────────────
   const LATIS = "https://lasp.colorado.edu/space-weather-portal/latis/dap";
   /** One LaTiS dataset over [a, b] as rows of numbers (time first, s after T0); fill (≤ −99999) as NaN. */
@@ -1401,6 +1530,20 @@
     }
     return out;
   }
+  // SSCWeb's definitive THEMIS and ARTEMIS files end days to weeks before today (2026-11-15: ARTEMIS P1 on Nov 7, P2 and
+  // THEMIS A/D/E on Nov 10), so a recent moment drew none of them (user report: ARTEMIS missing on 2026-11-12). As
+  // Helios's FleetClient: the definitive file where it spans the window, SSCWeb's predicted one where it does not.
+  const SSC_PRED = { themisa: "themisapred", themisd: "themisdpred", themise: "themisepred", artemisp1: "artemisp1pred", artemisp2: "artemisp2pred" };
+  async function sscBest(ids, a, b) {
+    const got = await ssc(ids.concat(ids.filter(id => SSC_PRED[id]).map(id => SSC_PRED[id])), a, b), out = {};
+    const spans = (o) => o && o.t.length && o.t[0] <= sec(a) + 900 && o.t[o.t.length - 1] >= sec(b) - 900;
+    for (const id of ids) {
+      const d = got[id], pr = SSC_PRED[id] && got[SSC_PRED[id]];
+      const use = spans(d) || !(pr && pr.t.length) ? d : pr;
+      if (use) out[id] = Object.assign(use, { predicted: use === pr });
+    }
+    return out;
+  }
   const r3 = (p, d = 3) => p.map(x => +x.toFixed(d));
   function posAt(o, t) {
     const n = o.t.length;
@@ -1600,12 +1743,12 @@
       mec(),
       fetch("assets/data/live/asi-sites.json").then(r => r.json()),
       fetch("assets/data/hso/stars.bin").then(r => r.arrayBuffer()),
-      track("Fleet: THEMIS, SDO, Van Allen Probes, Arase, TRACERS", ssc(["themisa", "themisd", "themise", "sdo", "rbspa", "rbspb",
+      track("Fleet: THEMIS, SDO, Van Allen Probes, Arase, TRACERS", sscBest(["themisa", "themisd", "themise", "sdo", "rbspa", "rbspb",
         ...(AT >= Date.UTC(2017, 0, 1) ? ["arase"] : []), ...(AT >= Date.UTC(2025, 6, 23) ? ["tracers1", "tracers2"] : [])], AT - 13 * 3600e3, AT + 13 * 3600e3)).catch(() => ({})),
       // the Moon and ARTEMIS to 31 h ahead: ARTEMIS's loop is drawn over the 30 h from the moment, about the Moon
-      track("Fleet: the Moon and ARTEMIS", ssc(["moon", ...(AT >= Date.UTC(2011, 6, 1) ? ["artemisp1", "artemisp2"] : [])], AT - 13 * 3600e3, AT + 31 * 3600e3)).catch(() => ({})),
+      track("Fleet: the Moon and ARTEMIS", sscBest(["moon", ...(AT >= Date.UTC(2011, 6, 1) ? ["artemisp1", "artemisp2"] : [])], AT - 13 * 3600e3, AT + 31 * 3600e3)).catch(() => ({})),
       track("Fleet: Cluster", ssc(["cluster1", "cluster2", "cluster3", "cluster4"], AT - 27 * 3600e3, AT + 27 * 3600e3)).catch(() => ({})),
-      track("Fleet: Geotail and the L1 monitors", ssc(["geotail", "ace", "dscovr", "wind", ...(NOW ? ["solar1", "imap"] : [])], AT - 62 * 3600e3, AT + 62 * 3600e3)).catch(() => ({})),
+      track("Fleet: Geotail and the L1 monitors", ssc(["geotail", "ace", "dscovr", "wind", ...(AT >= SOLAR1_SINCE ? ["solar1"] : []), ...(AT >= IMAP_SINCE ? ["imap"] : [])], AT - 62 * 3600e3, AT + 62 * 3600e3)).catch(() => ({})),
     ]);
     const GOES_SINCE = { goes16: Date.UTC(2017, 0, 1), goes17: Date.UTC(2018, 2, 1), goes18: Date.UTC(2022, 2, 1), goes19: Date.UTC(2024, 5, 1) };
     const goes = await track("Fleet: GOES-16 to 19", Promise.all(Object.entries(GOES_SINCE).filter(([, t]) => AT >= t)
@@ -1654,7 +1797,7 @@
                    ["cluster4", "Cluster-4", "cluster", 240], ["rbspa", "RBSP-A", "rbsp", 114], ["rbspb", "RBSP-B", "rbsp", 114], ["geotail", "Geotail", "geotail", 209],
                    ["goes16", "GOES-16", "goes", 97], ["goes17", "GOES-17", "goes", 97], ["goes18", "GOES-18", "goes", 97], ["goes19", "GOES-19", "goes", 97],
                    ["arase", "Arase", "arase", 114], ["tracers1", "TRACERS-1", "tracers", 30], ["tracers2", "TRACERS-2", "tracers", 30],
-                   ...(NOW ? [["solar1", "SOLAR-1", "l1", 0], ["imap", "IMAP", "l1", 0]] : [])];
+                   ...(AT >= SOLAR1_SINCE ? [["solar1", "SOLAR-1", "l1", 0]] : []), ...(AT >= IMAP_SINCE ? [["imap", "IMAP", "l1", 0]] : [])];
     const span_ = { artemis: 13, sdo: 12, cluster: 27, rbsp: 4.5, geotail: 62, arase: 4.8, tracers: 0.8 };
     const fleet = [];
     for (const [id, name, cat, m] of FLEET) {
@@ -2124,7 +2267,7 @@
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
     /** Drops a window's fetched data, so the next ask fetches again (the present's GOES windows, every few minutes). */
     forget: (key) => { delete craftCache[key]; },
-    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : key === "idx" ? indicesWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
+    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : key === "idx" ? indicesWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : key === "solar1" ? solar1Window() : key === "imap" ? imapWindow() : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
       .catch((e) => { delete craftCache[key]; throw e; })),
     scene,
     vdf: (n, sp) => vdfStore(n, sp),

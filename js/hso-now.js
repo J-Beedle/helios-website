@@ -931,7 +931,7 @@
       const miss = stage.S.nowMissing || [];
       m += `<p class="np-n">Positions are SSCWeb's ephemeris, for the present the missions' predicted orbits.${miss.length ? ` No position for the present: ${miss.map(esc).join(", ")}.` : ""} ${stage.S.kpSrcNow ? `Field lines and the oval use Kp ${f(stage.S.kp, 2)} (${esc(stage.S.kpSrcNow)}, set when the page opened).` : `Field lines and the oval use Kp ${f(stage.S.kp, 1)}, Helios's assumed value: NOAA's Kp did not load.`}</p>`;
     }
-    m += `<ul class="np-a"><li class="n">No MMS science data in real time: Level 2 files reach the archives weeks after the day.</li><li class="n">GOES and SDO windows open in real time; THEMIS, Cluster, ACE, Wind, DSCOVR and OMNI follow by days to weeks, so pick a past moment for them.</li></ul>`;
+    m += `<ul class="np-a"><li class="n">No MMS science data in real time: Level 2 files reach the archives weeks after the day.</li><li class="n">GOES, SDO, SOLAR-1 and IMAP windows open in real time; THEMIS, Cluster, ACE, Wind, DSCOVR and OMNI follow by days to weeks, so pick a past moment for them.</li></ul>`;
     m += `<p class="np-h4">Feeds <em>${document.visibilityState === "hidden" ? "paused while the tab is hidden" : "refreshed while this tab is open"}</em></p><ul class="np-f">${Object.keys(FEEDS).map(feedLine).join("")}</ul>`;
     h += sec("more", "Numbers and sources", `<span class="np-dots">${dots}</span>${nBad ? `${nBad} feed${nBad > 1 ? "s" : ""} need${nBad > 1 ? "" : "s"} a look` : "all feeds current"}`, m);
     h += `</div>`;

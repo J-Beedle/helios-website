@@ -2148,6 +2148,7 @@
   const PROBE_COL = { 1: "#ebebeb", 2: "#ed7821", 3: "#128c66", 4: "#4fa8ed" };
   const MMS_FAM = [1, 2, 3, 4], THM_FAM = LIVE ? ["tha", "thd", "the", "thb", "thc"] : ["tha", "THEMIS-D", "THEMIS-E"];
   const CL_FAM = LIVE ? ["c1", "c2", "c3", "c4"] : ["Cluster-1", "Cluster-2", "Cluster-3", "c4"];
+  const L1_FAM = ["ace", "wind", "dscovr", "solar1", "imap"];
   const CRAFT = {
     1: { name: "MMS1", col: PROBE_COL[1], mission: "mms", family: MMS_FAM }, 2: { name: "MMS2", col: PROBE_COL[2], mission: "mms", family: MMS_FAM },
     3: { name: "MMS3", col: PROBE_COL[3], mission: "mms", family: MMS_FAM }, 4: { name: "MMS4", col: PROBE_COL[4], mission: "mms", family: MMS_FAM },
@@ -2161,9 +2162,11 @@
     c3: { name: "Cluster-3", col: "#3fbf86", mission: "c4", family: CL_FAM },
     omni: { name: "OMNI", col: "#f7c55c", mission: "omni", family: ["omni", "idx"] },
     idx: { name: "Geomagnetic indices", col: "#8fb4ff", mission: "idx", family: ["omni", "idx"] },
-    ace: { name: "ACE", col: "#e07b00", mission: "l1", family: ["ace", "wind", "dscovr"] },
-    wind: { name: "Wind", col: "#008c8c", mission: "l1", family: ["ace", "wind", "dscovr"] },
-    dscovr: { name: "DSCOVR", col: "#7f33b3", mission: "l1", family: ["ace", "wind", "dscovr"] },
+    ace: { name: "ACE", col: "#e07b00", mission: "l1", family: L1_FAM },
+    wind: { name: "Wind", col: "#008c8c", mission: "l1", family: L1_FAM },
+    dscovr: { name: "DSCOVR", col: "#7f33b3", mission: "l1", family: L1_FAM },
+    solar1: { name: "SOLAR-1", col: "#c0399f", mission: "l1", family: L1_FAM },      // Helios's SOLAR-1 color
+    imap: { name: "IMAP", col: "#2f74c0", mission: "l1", family: L1_FAM },
     g16: { name: "GOES-16", col: "#34d27b", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g17: { name: "GOES-17", col: "#2bb86a", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
     g18: { name: "GOES-18", col: "#5fe39a", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g19: { name: "GOES-19", col: "#1f9d57", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
     sdo: { name: "SDO", col: "#ffe27a", mission: "sdo", family: ["sdo"] },        // its window is the Sun's images (SunWindow)
@@ -2171,7 +2174,7 @@
   /** The craft a click on the view opens: the demo carries one probe of each other mission, and stands it in for the rest. */
   const representative = (name) => {
     if (LIVE) {
-      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr", SDO: "sdo", Sun: "sdo" }[name];
+      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr", "SOLAR-1": "solar1", IMAP: "imap", SDO: "sdo", Sun: "sdo" }[name];
       if (art) return art;
       const g = /^GOES-(1[6-9])$/.exec(name);
       if (g) return `g${g[1]}`;
@@ -3647,10 +3650,11 @@
       const nm = Object.hasOwn(CRAFT, n) ? CRAFT[n].name : String(n);
       scene.say(typeof n === "number" ? `${nm}: no science data exist for the present. MMS Level 2 files reach the archives weeks after the day; its position here is SSCWeb's predicted orbit. Pick a past moment for its data.`
         : n === "idx" ? "Geomagnetic indices: the real-time Kp and NOAA's scales are in the Now panel. OMNI's indices follow by days to weeks."
-        : `${nm}: its archive data are not available in real time. In this mode GOES and SDO open their data; the rest show positions. Pick a past moment for its data.`, 7000);
+        : `${nm}: its archive data are not available in real time. In this mode GOES, SDO, SOLAR-1 and IMAP open their data; the rest show positions. Pick a past moment for its data.`, 7000);
     }
-    /** Real time: GOES (SWPC's feeds through LaTiS, minutes behind) and SDO (its latest frames) have data for the present. */
-    const nowOK = (n) => n === "sdo" || (Object.hasOwn(CRAFT, n) && CRAFT[n].mission === "goes");
+    /** Real time: GOES (SWPC's feeds through LaTiS, minutes behind), SDO (its latest frames), and SOLAR-1 and IMAP (NOAA's
+     *  real-time feed) have data for the present. */
+    const nowOK = (n) => n === "sdo" || n === "solar1" || n === "imap" || (Object.hasOwn(CRAFT, n) && CRAFT[n].mission === "goes");
     function open(n, pinned = null, rect = null) {
       if (NOWM && !nowOK(n)) { nowNote(n); return null; }
       const same = wins.find(w => (w.n || w.want) === n && w.pinned === pinned);
@@ -3666,8 +3670,9 @@
           setRange: (w, m) => { if (!w.view.span) st.wm = m; const [a, b] = spanOf(pinned, m, w.view.span); w.app.fullBurst = false; w.app.home = [a, b]; w.app.setFocus(a, b); },
         });
       Object.assign(W, { want: n, pinned, r: {}, max: null, pill: null });
-      // real time: a GOES window fetches again every two minutes while it is on screen (SWPC's feeds move by the minute)
-      if (NOWM && pinned == null && n !== "sdo") W.timer = setInterval(() => { if (!W.el.hidden && !document.hidden) W.reload(); }, 120e3);
+      // real time: a window fetches again while it is on screen — GOES every two minutes (SWPC's feeds move by the minute),
+      // SOLAR-1 and IMAP every ten (NOAA's day-long real-time files are 2–3 MB each)
+      if (NOWM && pinned == null && n !== "sdo") W.timer = setInterval(() => { if (!W.el.hidden && !document.hidden) W.reload(); }, CRAFT[n].mission === "l1" ? 600e3 : 120e3);
       wins.push(W);
       syncURL();
       // where it opens: the app's cascade, inside the screen
