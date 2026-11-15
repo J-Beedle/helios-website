@@ -1466,6 +1466,7 @@
         const x = Math.round(xOf(m.t)) + 0.5;
         ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = m.color; ctx.lineWidth = 1.2;
         ctx.beginPath(); ctx.moveTo(x, Pl.y); ctx.lineTo(x, Pl.y + Pl.h); ctx.stroke(); ctx.restore();
+        if (m.plain) { if (m.label) rich(ctx, m.label, x + 3, Pl.y + 7, { size: 8.5, weight: 600, color: m.color }); continue; }   // the Now panel's "now"
         ctx.beginPath(); ctx.arc(x, Pl.y - 1, 7, 0, Math.PI * 2); ctx.fillStyle = m.color; ctx.fill();
         rich(ctx, m.label || String(k + 1), x, Pl.y - 1, { size: 9.5, weight: 700, align: "center", color: "#fff" });
       }
@@ -1585,6 +1586,43 @@
     /** The subplot under a y on the figure (for the editor), with its letter. */
     const rowAt = (y) => { const R = L && L.rows.find(R => y >= R.y && y <= R.y + R.h); return R ? Object.assign({ letter: "abcdefghijklmnopqrst"[R.k] }, R.row) : null; };
     return { draw, overlay, cfg, rowAt, get info() { return info; }, get rows() { return L ? L.rows.length : 0; } };
+  }
+
+  // ───────────────────────── the Now panel's figures (hso-now.js): drawn by the data windows' own renderer ─────────────────────────
+  /** A still figure in `host`, as a data window draws its stack. draw(spec) with spec { a, b (ms), rows: [{ key, title,
+   *  label, short, unit, log, yRange, zero, guides, lines: [{ color, label, bands, data: [{ t (ms), v }] }] }],
+   *  marks: [{ t (ms), color, label }] }. A row with nothing between a and b is left out, as in a data window. */
+  function nowFigure(host) {
+    host.innerHTML = `<canvas class="np-fc"></canvas><canvas class="np-fo" aria-hidden="true"></canvas>`;
+    const [cv, over] = host.querySelectorAll("canvas");
+    const app = { a: 0, b: 1, home: [0, 1], hover: null, hoverY: null, sel: null, setHover() {}, setFocus() {} };
+    const view = { sv: {}, bu: null, segs: {}, erange: {}, relabel: {} };
+    let panel = null, spec = null;
+    const sec = (ms) => (ms - T0) / 1000;
+    function draw(s) {
+      if (s) spec = s;
+      if (!spec || !host.isConnected || !cv.clientWidth) return;
+      const sv = {}, relabel = {};
+      for (const r of spec.rows) relabel[r.key] = Object.assign({}, r, { lines: r.lines.map((ln, i) => {
+        const ds = `${r.key}_${i}`, pts = (ln.data || []).filter(q => isFinite(q.t) && isFinite(q.v));
+        const S = { t: Float64Array.from(pts, q => sec(q.t)), v: Float32Array.from(pts, q => q.v), cols: { t: 1, v: 1 } };
+        cadence(S); sv[ds] = S;
+        return { ds, name: "v", c: 0, color: ln.color, label: ln.label, bands: ln.bands };
+      }) });
+      Object.assign(view, { sv, relabel });
+      app.a = sec(spec.a); app.b = sec(spec.b); app.home = [app.a, app.b];
+      const marks = (spec.marks || []).map(m => ({ t: sec(m.t), color: m.color, label: m.label, plain: true }));
+      if (!panel) panel = Panel(view, app, cv, over, { mission: "now", stack: [], still: true, tracker: false, coverage: false, spintone: false });
+      Object.assign(panel.cfg, { stack: spec.rows.map(r => r.key), marks });
+      panel.draw();
+    }
+    new ResizeObserver(() => draw()).observe(host);
+    return { draw };
+  }
+  if (LIVE && SRC.now) {
+    MISSIONS.now = { sections: [], stack: [], presets: [] };
+    window.HSO_FIGURE = { figure: nowFigure, rich, sizeCanvas, KP_BANDS, COL };
+    window.dispatchEvent(new CustomEvent("hso-figure"));
   }
 
   // ───────────────────────── the VDF cuts, as Helios draws them ─────────────────────────

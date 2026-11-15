@@ -285,7 +285,7 @@
         }
         if (!best) throw new Error("no Kp");
         data.kp = best;
-        data.kpHist = all.sort((a, b) => a.t - b.t).slice(-8);       // the last day's eight 3-hour blocks, for the bars
+        data.kpHist = all.sort((a, b) => a.t - b.t).slice(-16);      // the last two days' 3-hour blocks, for the figure
         return best.t + 3 * 3600e3;                                    // a block's value describes its three hours
       } },
     kpEst: { label: "Kp, estimated", src: "NOAA SWPC 1-min estimated Kp", every: 5 * MIN, stale: STALE,
@@ -344,9 +344,11 @@
     //    the forecast, the alerts in effect, Dst and the aurora's power ──
     xray: { label: "GOES X-ray flux", src: "NOAA SWPC, GOES primary, 0.1–0.8 nm, 1-min", every: 5 * MIN, stale: STALE,
       async run() {
-        const pts = series(await getJSON(`${SWPC}/json/goes/primary/xrays-6-hour.json`), (r) => r.energy === "0.1-0.8nm", 1e-10, 1);
+        const list = await getJSON(`${SWPC}/json/goes/primary/xrays-6-hour.json`);
+        const pts = series(list, (r) => r.energy === "0.1-0.8nm", 1e-10, 1);
         if (!pts.length) throw new Error("no long-channel rows");
         data.xray = pts;
+        data.xrayS = series(list, (r) => r.energy === "0.05-0.4nm", 1e-10, 1);   // the short band, beside it in the figure
         return pts[pts.length - 1].t;
       } },
     flare: { label: "Latest flare", src: "NOAA SWPC, GOES flare list", every: MIN, stale: STALE,
@@ -401,14 +403,18 @@
         const { status, text } = await getText(`${SWPC}/text/aurora-nowcast-hemi-power.txt`);
         if (status === 404) throw new Error("HTTP 404");
         let best = null;
+        const all = [];                                             // the UTC day's rows, at their forecast times, for the figure
         for (const ln of text.split("\n")) {
           const m = /^(\d{4}-\d\d-\d\d)_(\d\d:\d\d)\s+(\d{4}-\d\d-\d\d)_(\d\d:\d\d)\s+(\d+)\s+(\d+)$/.exec(ln.trim());
           if (!m) continue;
           const t = tagMs(`${m[1]}T${m[2]}:00`), tf = tagMs(`${m[3]}T${m[4]}:00`), n = num(m[5], 0, 2000), s = num(m[6], 0, 2000);
-          if (isFinite(t) && isFinite(n) && isFinite(s) && (!best || t > best.t)) best = { t, tf, n, s };
+          if (!isFinite(t) || !isFinite(n) || !isFinite(s)) continue;
+          if (isFinite(tf)) all.push({ t: tf, n, s });
+          if (!best || t > best.t) best = { t, tf, n, s };
         }
         if (!best) throw new Error("no rows");
         data.hp = best;
+        data.hpS = all.sort((a, b) => a.t - b.t);
         return best.t;
       } },
     f107: { label: "F10.7", src: "NOAA SWPC, 10.7 cm radio flux", every: 60 * MIN, stale: 36 * 3600e3,
@@ -420,7 +426,7 @@
         return t;
       } },
   };
-  const data = { kp: null, kpHist: [], kpEst: null, scales: null, swmf: null, xray: [], flare: null, prot: [], elec: [], kpFc: [], alerts: null, dst: [], hp: null, f107: null };
+  const data = { kp: null, kpHist: [], kpEst: null, scales: null, swmf: null, xray: [], xrayS: [], flare: null, prot: [], elec: [], kpFc: [], alerts: null, dst: [], hp: null, hpS: [], f107: null };
   const timers = {};
   let busy = 0;
   async function runFeed(key) {
@@ -589,62 +595,149 @@
   const kpG = (k) => (k >= 8.99 ? 5 : k >= 7.66 ? 4 : k >= 6.66 ? 3 : k >= 5.66 ? 2 : k >= 4.66 ? 1 : 0);
   const kpColor = (k) => (!isFinite(k) ? "#6c6c74" : kpG(k) ? NOAA_COL[kpG(k)] : k >= 3.66 ? "#c9d65b" : "#5fd08a");
   const kpWord = (k) => (!isFinite(k) ? "no Kp" : kpG(k) ? `G${kpG(k)} geomagnetic storm` : k >= 3.66 ? "active" : k >= 2.66 ? "unsettled" : "quiet");
-  const rangeSpeed = (lo, hi) => { const m = (lo + hi) / 2, s = Math.max(hi - lo, 80) * 1.2; return [m - s / 2, m + s / 2]; };
-  const rangeDensity = (lo, hi) => [0, Math.max(4, hi * 1.15)];
-  const rangeBz = (lo, hi) => { const a = Math.max(5, Math.abs(lo), Math.abs(hi)) * 1.1; return [-a, a]; };
-  /** One quantity against the time it reaches the bow-shock nose, from two hours ago to the newest minute still on its
-   *  way from L1: what has arrived solid, what is on its way faint and dashed, a line at now; for B_z, a zero line and
-   *  the southward minutes shaded. */
-  function spark(key, now, range) {
-    const W = 186, H = 30, t0 = now - 2 * 3600e3;
-    const list = [...rows.values()].filter(r => isFinite(r.arr) && r.arr >= t0 && isFinite(r[key])).sort((a, b) => a.arr - b.arr);
-    if (list.length < 2) return `<svg class="np-sp" viewBox="0 0 ${W} ${H}" aria-hidden="true"></svg>`;
-    const t1 = Math.max(now + 5 * MIN, list[list.length - 1].arr);
-    let lo = Infinity, hi = -Infinity;
-    for (const r of list) { lo = Math.min(lo, r[key]); hi = Math.max(hi, r[key]); }
-    [lo, hi] = range(lo, hi);
-    const X = (t) => (((t - t0) / (t1 - t0)) * W).toFixed(1), Y = (v) => (H - 2 - ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * (H - 4)).toFixed(1);
-    let past = "", ahead = "", south = "", prev = null;
-    for (const r of list) {
-      const x = X(r.arr), y = Y(r[key]), gap = !prev || r.arr - prev.arr > 4 * MIN;
-      if (r.arr <= now) past += `${gap ? "M" : "L"}${x} ${y}`;
-      else ahead += gap ? `M${x} ${y}` : prev.arr <= now ? `M${X(prev.arr)} ${Y(prev[key])}L${x} ${y}` : `L${x} ${y}`;
-      if (key === "bz" && r[key] < 0) south += `M${x} ${Y(0)}V${y}`;
-      prev = r;
-    }
-    const xn = X(now);
-    return `<svg class="np-sp" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">`
-      + (key === "bz" ? `<path class="s" d="${south}"/><line class="z" x1="0" x2="${W}" y1="${Y(0)}" y2="${Y(0)}"/>` : "")
-      + `<line class="now" x1="${xn}" x2="${xn}" y1="0" y2="${H}"/><path class="a" d="${ahead}"/><path class="p" d="${past}"/></svg>`;
-  }
-  /** A row of the solar-wind block: the name, the value reaching Earth now with a word for it, and the trend line. */
-  const windRow = (label, value, unit, word, cls, svg) =>
-    `<div class="np-w ${cls}"><p><span>${label}</span><b>${value}</b><small>${unit}</small>${word ? `<em>${word}</em>` : ""}</p>${svg}</div>`;
-  /** The dayside in the noon–midnight plane, the Sun to the left (4.2 px per R_E): Earth, geosynchronous orbit (dashed
-   *  circle), the Shue (1998) magnetopause for the wind reaching Earth (solid) and for the newest L1 minute (dashed), the
-   *  Jelínek (2012) bow shock (dotted), and CCMC's SWMF standoff (a tick on the Sun–Earth line). */
-  function mpSketch(R0, p, bz, R0L, pL, bzL, RB, swmf) {
-    const W = 120, H = 92, ex = 104, ey = 46, s = 4.2;
-    const alpha = (b, q) => Math.max((0.58 - 0.007 * b) * (1 + 0.024 * Math.log(q)), 0.05);
-    const path = (rOf) => {
-      let d = "";
-      for (let th = -150; th <= 150; th += 5) {
-        const t = th * Math.PI / 180, r = rOf(t);
-        if (!isFinite(r) || r > 60) { continue; }
-        d += `${d ? "L" : "M"}${(ex - s * r * Math.cos(t)).toFixed(1)} ${(ey - s * r * Math.sin(t)).toFixed(1)}`;
+  // ── the figures (2026-11-15): drawn by the data windows' own renderer (hso.js's HSO_FIGURE), white with black axes,
+  //    tick marks inside the frame and the legend to the right, as every figure in Helios is. Each is a node built once
+  //    and put back after a redraw of the panel, so a redraw neither flickers it nor loses its drawing. ──
+  const BZ_BANDS = [[-1e9, "#d90d0d"], [0, "#000000"]];      // B_z drawn red where it is southward
+  const LVL = ["#d9a400", "#e8720c", "#d11a1a"];              // guide colors for levels 1–3, as the Kp bands
+  const NOW_COL = "#2e9e4f";
+  const figs = {};
+  /** The figure for slot k, made on first use; null until hso.js has loaded. */
+  function figNode(k) {
+    const K = window.HSO_FIGURE;
+    if (!K) return null;
+    if (!figs[k]) {
+      const el = document.createElement("div");
+      el.className = `np-fig np-fig-${k}`;
+      if (k === "mp") {
+        el.innerHTML = '<canvas class="np-fc" role="img" aria-label="The dayside: the magnetopause, the bow shock and geosynchronous orbit"></canvas>';
+        const cv = el.firstChild, F = figs[k] = { el, o: null, draw: (o) => { if (o) F.o = o; mpFigure(cv, F.o); } };
+        new ResizeObserver(() => F.draw()).observe(el);
+      } else {
+        const f = K.figure(el);
+        figs[k] = { el, draw: (spec) => f.draw(spec) };
       }
-      return d;
+    }
+    return figs[k];
+  }
+  const figSlot = (k) => `<div class="np-slot np-slot-${k}" data-fig="${k}"></div>`;
+  window.addEventListener("hso-figure", () => render());
+  /** A value over its name, with its unit and a word for it. */
+  const val = (label, value, unit, word, cls = "") => `<p class="np-v ${cls}"><span>${label}</span><b>${value}</b><small>${unit}</small>${word ? `<em>${word}</em>` : ""}</p>`;
+  /** The solar wind against the time it reaches the bow-shock nose, from two hours ago to the newest minute still on its
+   *  way from L1: what has arrived in black, what is on its way in gray, a line at now; B_z red where southward. */
+  function windSpec(now) {
+    const a = now - 2 * 3600e3, list = [...rows.values()].filter(r => isFinite(r.arr) && r.arr >= a - 5 * MIN).sort((p, q) => p.arr - q.arr);
+    const b = Math.max(now + 5 * MIN, list.length ? list[list.length - 1].arr : now);
+    const split = (key) => {
+      const past = [], ahead = [];
+      for (const r of list) if (isFinite(r[key])) (r.arr <= now ? past : ahead).push({ t: r.arr, v: r[key] });
+      if (past.length && ahead.length) ahead.unshift(past[past.length - 1]);   // the gray line goes on from the black
+      return [past, ahead];
     };
-    const shue = (r0, a) => (t) => r0 * Math.pow(2 / (1 + Math.cos(t)), a);
-    const bow = (R) => (t) => { const c = Math.cos(t), sn = Math.sin(t), d = c + Math.sqrt(c * c + 1.17 * 1.17 * sn * sn); return d > 1e-6 ? 2 * R / d : NaN; };
-    let g = `<circle class="geo" cx="${ex}" cy="${ey}" r="${(GEO_RE * s).toFixed(1)}"/>`;
-    if (isFinite(RB)) g += `<path class="bs" d="${path(bow(RB))}"/>`;
-    if (isFinite(R0L)) g += `<path class="mpl" d="${path(shue(R0L, alpha(bzL, pL)))}"/>`;
-    if (isFinite(R0)) g += `<path class="mp${R0 < GEO_RE ? " in" : ""}" d="${path(shue(R0, alpha(bz, p)))}"/>`;
-    if (isFinite(swmf)) { const x = (ex - s * swmf).toFixed(1); g += `<line class="swmf" x1="${x}" x2="${x}" y1="${ey - 5}" y2="${ey + 5}"/>`; }
-    g += `<circle class="earth" cx="${ex}" cy="${ey}" r="${(s * 1.15).toFixed(1)}"/><path class="night" d="M${ex} ${(ey - s * 1.15).toFixed(1)}A${(s * 1.15).toFixed(1)} ${(s * 1.15).toFixed(1)} 0 0 1 ${ex} ${(ey + s * 1.15).toFixed(1)}Z"/>`;
-    g += `<path class="sun" d="M4 ${ey}h9m-3-3 3 3-3 3"/><text x="3" y="${ey - 6}">Sun</text><text class="gl" x="${ex}" y="${(ey + GEO_RE * s + 9).toFixed(1)}">GEO</text>`;
-    return `<svg class="np-mps" viewBox="0 0 ${W} ${H}" role="img" aria-label="Magnetopause at ${f(R0, 1)} Earth radii, geosynchronous orbit at 6.6">${g}</svg>`;
+    const row = (key, title, label, unit, more = {}) => {
+      const [p, q] = split(key);
+      return Object.assign({ key: `nw_${key}`, title, label, short: label, unit,
+        lines: [Object.assign({ color: "#000000", label, data: p }, more.line), { color: "#9a9ca3", label: "ahead", data: q }] }, more.row);
+    };
+    return { a, b, marks: [{ t: now, color: NOW_COL, label: "now" }],
+             rows: [row("v", "Flow speed", "V", "(km/s)"), row("n", "Proton density", "N_{p}", "(cm⁻³)"),
+                    row("bz", "IMF Bz (GSM)", "B_{z}", "(nT)", { row: { zero: true }, line: { bands: BZ_BANDS } })] };
+  }
+  /** Kp over the last two days and NOAA's forecast past now (3-hour steps; observed colored by the G scale as Helios's
+   *  indices window colors Kp, the forecast gray), Dst, and OVATION's hemispheric power at its forecast times. */
+  function geoSpec(now) {
+    const K = window.HSO_FIGURE, H3 = 3 * 3600e3, a = now - 48 * 3600e3;
+    const steps = (blocks) => {
+      const out = [];
+      for (const k of blocks) { for (let t = k.a; t < k.b; t += 5 * MIN) out.push({ t, v: k.k }); out.push({ t: k.b - 1000, v: k.k }); }
+      return out;
+    };
+    const obs = (data.kpHist || []).map(k => ({ a: Math.max(k.t, a), b: Math.min(k.t + H3, now), k: k.k })).filter(k => k.b > k.a);
+    const lastEnd = obs.length ? obs[obs.length - 1].b : a;
+    if (data.kpEst && now - lastEnd > MIN) obs.push({ a: lastEnd, b: now, k: data.kpEst.k });   // NOAA's 1-minute estimate since the last block
+    const fc = (data.kpFc || []).filter(k => k.t + H3 > now).map(k => ({ a: Math.max(k.t, now), b: k.t + H3, k: k.k }));
+    const b = Math.min(now + 72 * 3600e3, Math.max(now + 6 * 3600e3, fc.length ? fc[fc.length - 1].b : now));
+    const hp = (data.hpS || []).filter(q => q.t >= a);
+    return { a, b, marks: [{ t: now, color: NOW_COL, label: "now" }], rows: [
+      { key: "nw_kp", title: "Kp", label: "Kp", short: "Kp", unit: "", yRange: [0, 9],
+        lines: [{ color: "#000000", label: "Kp", data: steps(obs), bands: K.KP_BANDS }, { color: "#8a8c94", label: "forecast", data: steps(fc) }] },
+      { key: "nw_dst", title: "Dst", label: "Dst", short: "Dst", unit: "(nT)", zero: true, guides: [[-50, LVL[1], "−50"], [-100, LVL[2], "−100"]],
+        lines: [{ color: K.COL.x, label: "Dst", data: (data.dst || []).filter(q => q.t >= a - 3600e3) }] },
+      { key: "nw_hp", title: "Aurora power", label: "Aurora", short: "HP", unit: "(GW)",
+        lines: [{ color: K.COL.x, label: "N", data: hp.map(q => ({ t: q.t, v: q.n })) }, { color: K.COL.z, label: "S", data: hp.map(q => ({ t: q.t, v: q.s })) }] },
+    ] };
+  }
+  /** GOES's X-rays (both bands, the flare classes marked) and its ≥10 MeV protons and ≥2 MeV electrons over six hours,
+   *  NOAA's levels marked: SWPC's "overview" plot, drawn as Helios draws a GOES window. */
+  function sunSpec(now) {
+    const K = window.HSO_FIGURE, a = now - 6 * 3600e3, inW = (pts) => (pts || []).filter(q => q.t >= a - 10 * MIN);
+    /** A log axis from a whole decade under the data to a little over its top, reaching at least minHi (so a NOAA level
+     *  shows with room for its label) and `span` decades tall. A level at the frame's edge would label the row above. */
+    const decades = (pts, minHi, span) => {
+      const v = inW(pts).map(q => q.v).filter(x => x > 0);
+      if (!v.length) return null;
+      const hi = Math.max(Math.log10(Math.max(...v)) + 0.35, minHi);
+      return [Math.min(Math.floor(Math.log10(Math.min(...v)) + 1e-9), Math.floor(hi - span)), hi];
+    };
+    return { a, b: now, rows: [
+      { key: "nw_x", title: "X-rays (XRS)", label: "X-rays", short: "X-rays", unit: "(W/m²)", log: true, yRange: [-9, -3],
+        guides: [[-6, "#008000", "C"], [-5, "#ff9900", "M"], [-4, "#d90d0d", "X"]],
+        lines: [{ color: K.COL.x, label: "1–8 Å", data: inW(data.xray) }, { color: K.COL.z, label: "0.5–4 Å", data: inW(data.xrayS) }] },
+      { key: "nw_p", title: "Protons ≥10 MeV", label: "p^{+} ≥10 MeV", short: "p^{+}", unit: "(pfu)", log: true, yRange: decades(data.prot, 1.5, 2.5),
+        guides: [[1, LVL[0], "S1"], [2, LVL[1], "S2"], [3, LVL[2], "S3"]], lines: [{ color: "#000000", label: "≥10 MeV", data: inW(data.prot) }] },
+      { key: "nw_e", title: "Electrons ≥2 MeV", label: "e^{−} ≥2 MeV", short: "e^{−}", unit: "(pfu)", log: true, yRange: decades(data.elec, 3.5, 2.5),
+        guides: [[3, LVL[1], "alert"]], lines: [{ color: "#000000", label: "≥2 MeV", data: inW(data.elec) }] },
+    ] };
+  }
+  /** The dayside in the ecliptic (GSE X and Y, R_E, the Sun to the left), as a Helios figure: geosynchronous orbit
+   *  (dashed), the Shue et al. (1998) magnetopause for the wind reaching Earth (solid; red inside GEO) and for the
+   *  newest L1 minute (dashed), the Jelínek et al. (2012) bow shock (dotted), CCMC's SWMF standoff (a violet tick on
+   *  the Sun–Earth line) and Earth, its night side dark. */
+  function mpFigure(cv, o) {
+    const K = window.HSO_FIGURE;
+    if (!K || !o || !cv.clientWidth) return;
+    const { ctx, w, h } = K.sizeCanvas(cv), rich = K.rich, C = K.COL;
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    const L = 30, R = 5, T = 5, B = 27, pw = w - L - R, ph = h - T - B, X0 = 22, X1 = -6, k = pw / (X0 - X1), Yh = ph / 2 / k;
+    const px = (x) => L + (X0 - x) * k, py = (y) => T + ph / 2 - y * k;
+    const alpha = (bz, q) => Math.max((0.58 - 0.007 * bz) * (1 + 0.024 * Math.log(q)), 0.05);
+    const shue = (r0, al) => (t) => r0 * Math.pow(2 / (1 + Math.cos(t)), al);
+    const bow = (Rb) => (t) => { const c = Math.cos(t), sn = Math.sin(t), d = c + Math.sqrt(c * c + 1.17 * 1.17 * sn * sn); return d > 1e-6 ? 2 * Rb / d : NaN; };
+    const curve = (rOf, color, width, dash) => {
+      ctx.beginPath();
+      let on = false;
+      for (let th = -170; th <= 170; th += 2) {
+        const t = th * Math.PI / 180, r = rOf(t);
+        if (!isFinite(r) || r > 80) { on = false; continue; }
+        const x = px(r * Math.cos(t)), y = py(r * Math.sin(t));
+        if (on) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        on = true;
+      }
+      ctx.save(); ctx.setLineDash(dash || []); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke(); ctx.restore();
+    };
+    ctx.save(); ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+    ctx.save(); ctx.setLineDash([2, 3]); ctx.strokeStyle = "rgba(0,0,0,0.45)"; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.arc(px(0), py(0), GEO_RE * k, 0, 2 * Math.PI); ctx.stroke(); ctx.restore();
+    if (isFinite(o.RB)) curve(bow(o.RB), "#008000", 1.1, [1.5, 2.5]);
+    if (isFinite(o.R0L)) curve(shue(o.R0L, alpha(o.bzL, o.pL)), o.R0L < GEO_RE ? "rgba(217,13,13,0.6)" : "rgba(0,26,242,0.55)", 1, [4, 3]);
+    if (isFinite(o.R0)) curve(shue(o.R0, alpha(o.bz, o.p)), o.R0 < GEO_RE ? C.z : C.x, 1.6);
+    if (isFinite(o.swmf)) { const x = px(o.swmf); ctx.strokeStyle = "#7f33b3"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, py(0) - 5); ctx.lineTo(x, py(0) + 5); ctx.stroke(); }
+    const er = Math.max(2.5, k), ex = px(0), ey = py(0);
+    ctx.beginPath(); ctx.arc(ex, ey, er, 0, 2 * Math.PI); ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.beginPath(); ctx.arc(ex, ey, er, -Math.PI / 2, Math.PI / 2); ctx.closePath(); ctx.fillStyle = "#000"; ctx.fill();   // the night side, away from the Sun
+    ctx.beginPath(); ctx.arc(ex, ey, er, 0, 2 * Math.PI); ctx.strokeStyle = "#000"; ctx.lineWidth = 0.8; ctx.stroke();
+    rich(ctx, "← Sun", L + 4, ey - 9, { size: 9, weight: 600, color: "#b07d00" });   // on the Sun–Earth line, sunward of the bow shock
+    rich(ctx, "GEO", ex, ey + GEO_RE * k + 7, { size: 8, align: "center", color: "rgba(0,0,0,0.55)" });
+    ctx.restore();
+    // the frame and the axes, as Helios draws them: ticks inside the frame, numbers outside
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.strokeRect(L + 0.5, T + 0.5, pw, ph);
+    ctx.fillStyle = "#000";
+    const num = (v) => String(v).replace("-", "−");
+    for (let x = 20; x >= X1; x -= 5) { const X = px(x); ctx.fillRect(X - 0.3, T + ph - 3, 0.6, 3); rich(ctx, num(x), X, T + ph + 9, { size: 9, align: "center", color: "#000" }); }
+    for (let y = -Math.floor(Yh / 5) * 5; y <= Yh; y += 5) { const Y = py(y); ctx.fillRect(L, Y - 0.3, 3, 0.6); rich(ctx, num(y), L - 3, Y, { size: 9, align: "right", color: "#000" }); }
+    rich(ctx, "X_{GSE} (R_{E})", L + pw / 2, h - 6, { size: 9, align: "center", color: "#000" });
+    ctx.save(); ctx.translate(8, T + ph / 2); ctx.rotate(-Math.PI / 2); rich(ctx, "Y_{GSE} (R_{E})", 0, 0, { size: 9, align: "center", color: "#000" }); ctx.restore();
   }
   /** ok / warn / stale / bad / wait, as each feed's status line. */
   function feedClass(key) {
@@ -688,84 +781,32 @@
       a.kind === "warning" && isFinite(a.until) ? `in effect until ${dayHm(a.until)} UTC` : a.kind === "watch" && a.days ? esc(a.days) : `issued ${age(now - a.issued)} ago`}</small></span></li>`).join("")}</ul>`
       + `<p class="np-n">${list.length > 4 ? `${list.length - 4} more on ` : ""}${link}</p>`;
   }
-  /** Kp as bars: the last day's eight 3-hour blocks, NOAA's estimate for now (lighter), then NOAA's forecast for the
-   *  next two days (outlined), colored by the G scale, with a line at Kp 5 (G1) and the UTC days marked. */
-  function kpChart(hist, est, fcAll, now) {
-    const W = 312, H = 64, base = 50, H3 = 3 * 3600e3;
-    const past = (hist || []).slice(-8).map(b => ({ t: b.t, k: b.k, kind: "obs" }));
-    const lastEnd = past.length ? past[past.length - 1].t + H3 : now - H3;
-    const slots = past.slice();
-    if (est) slots.push({ t: Math.max(lastEnd, Math.floor(now / H3) * H3), k: est.k, kind: "est", at: est.t });
-    const after = slots.length ? slots[slots.length - 1].t : now - H3;
-    for (const b of (fcAll || []).filter(b => b.t > after && b.t + H3 > now).slice(0, 16)) slots.push({ t: b.t, k: b.k, kind: "fc" });
-    if (!slots.length) return `<svg class="np-kc" viewBox="0 0 ${W} ${H}" aria-hidden="true"></svg>`;
-    const bw = W / Math.max(slots.length, 12), Y = (k) => base - (Math.min(9, Math.max(0, k)) / 9) * (base - 3);
-    let g = `<line class="g1" x1="0" x2="${W}" y1="${Y(5).toFixed(1)}" y2="${Y(5).toFixed(1)}"/><text class="gl" x="${W}" y="${(Y(5) - 2).toFixed(1)}">G1</text>`;
-    slots.forEach((b, i) => {
-      const x = i * bw, y = Y(Math.max(b.k, 0.25)), d = new Date(b.t);
-      if (d.getUTCHours() === 0 && i) g += `<line class="dy" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="2" y2="${base + 4}"/><text x="${(x + 3).toFixed(1)}" y="${H - 3}">${DOW[d.getUTCDay()]}</text>`;
-      g += `<rect class="${b.kind}" x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(base - y).toFixed(1)}" rx="1.5" style="--c:${kpColor(b.k)}"><title>Kp ${kpThirds(b.k)}${
-        b.kind === "est" ? ` estimated, ${hm(b.at)} UTC` : `, ${day(b.t)} ${hm(b.t)}–${hm(b.t + H3)} UTC${b.kind === "fc" ? ", forecast" : ""}`}</title></rect>`;
-    });
-    const iNow = slots.findIndex(b => b.kind === "fc"), xn = (iNow < 0 ? slots.length : iNow) * bw;
-    g += `<line class="nowl" x1="${xn.toFixed(1)}" x2="${xn.toFixed(1)}" y1="0" y2="${base + 4}"/><text class="nl" x="${(xn + 3).toFixed(1)}" y="7">now</text>`;
-    return `<svg class="np-kc" viewBox="0 0 ${W} ${H}" role="img" aria-label="Kp over the last day and NOAA's forecast for the next two">${g}</svg>`;
-  }
-  /** A quantity against time as one line, on a linear or a log axis, with labeled threshold lines. */
-  function trend(pts, o) {
-    const W = o.W || 186, H = o.H || 30;
-    const list = pts.filter(p => p.t >= o.t0 && p.t <= o.t1 + MIN);
-    if (list.length < 2) return `<svg class="np-sp" viewBox="0 0 ${W} ${H}" aria-hidden="true"></svg>`;
-    const T = (v) => (o.log ? Math.log10(Math.max(v, 1e-30)) : v), lo = T(o.lo), hi = T(o.hi);
-    const X = (t) => (((t - o.t0) / (o.t1 - o.t0)) * W).toFixed(1), Y = (v) => (H - 2 - ((Math.min(hi, Math.max(lo, T(v))) - lo) / (hi - lo)) * (H - 4)).toFixed(1);
-    let d = "", prev = null;
-    for (const p of list) { d += `${!prev || p.t - prev.t > (o.gap || 20 * MIN) ? "M" : "L"}${X(p.t)} ${Y(p.v)}`; prev = p; }
-    const lines = (o.lines || []).filter(l => T(l.v) > lo && T(l.v) < hi).map(l => `<line class="${l.cls || "th"}" x1="0" x2="${W}" y1="${Y(l.v)}" y2="${Y(l.v)}"/>${l.label ? `<text x="${W - 1}" y="${(+Y(l.v) - 1.5).toFixed(1)}">${l.label}</text>` : ""}`).join("");
-    return `<svg class="np-sp" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${lines}<path class="p" d="${d}"/></svg>`;
-  }
   const last = (a) => (a && a.length ? a[a.length - 1] : null);
   /** A flux in W/m² as a flare class, and NOAA's R level for it (M1 is R1, M5 R2, X1 R3, X10 R4, X20 R5). */
   const xrayClass = (fx) => { if (!(fx > 0)) return "—"; const [c, b] = fx >= 1e-4 ? ["X", 1e-4] : fx >= 1e-5 ? ["M", 1e-5] : fx >= 1e-6 ? ["C", 1e-6] : fx >= 1e-7 ? ["B", 1e-7] : ["A", 1e-8]; return `${c}${(fx / b).toFixed(1)}`; };
   const xrayR = (fx) => (fx >= 2e-3 ? 5 : fx >= 1e-3 ? 4 : fx >= 1e-4 ? 3 : fx >= 5e-5 ? 2 : fx >= 1e-5 ? 1 : 0);
   const protS = (v) => (v >= 1e5 ? 5 : v >= 1e4 ? 4 : v >= 1e3 ? 3 : v >= 100 ? 2 : v >= 10 ? 1 : 0);
-  /** The Sun's X-rays and the particles at geosynchronous orbit over six hours: SWPC's "overview" plot, drawn here. */
-  function sunRows(now) {
-    const t0 = now - 6 * 3600e3, x = last(data.xray), p = last(data.prot), e = last(data.elec), fl = data.flare;
-    const max = (a) => a.reduce((m, q) => (q.t >= t0 ? Math.max(m, q.v) : m), 0);
-    let h = `<div class="np-sw">`;
-    if (x) {
-      const cls = fl && fl.now && now - fl.t < STALE ? fl.now : xrayClass(x.v), r = xrayR(x.v);
-      const word = fl && fl.max && isFinite(fl.maxT) && now - fl.maxT < 24 * 3600e3 ? `last flare ${fl.max}, ${hm(fl.maxT)}` : "";
-      h += windRow("Solar X-rays", `<i style="color:${r ? scaleColor(r) : "inherit"}">${esc(cls)}</i>`, r ? `R${r}` : "", word, "long",
-        trend(data.xray, { t0, t1: now, log: true, lo: 1e-8, hi: Math.max(2e-4, max(data.xray) * 3), gap: 6 * MIN, lines: [{ v: 1e-6, label: "C" }, { v: 1e-5, label: "M" }, { v: 1e-4, label: "X" }] }));
-    }
-    if (p) {
-      const sL = protS(p.v);
-      h += windRow("Protons ≥10 MeV", `<i style="color:${sL ? scaleColor(sL) : "inherit"}">${f(p.v, p.v < 10 ? 2 : 0)}</i>`, "pfu", sL ? `S${sL} radiation storm` : "background", sL ? "long" : "",
-        trend(data.prot, { t0, t1: now, log: true, lo: 1e-2, hi: Math.max(100, max(data.prot) * 3), lines: [{ v: 10, label: "S1" }, { v: 100, label: "S2" }, { v: 1e3, label: "S3" }] }));
-    }
-    if (e) {
-      const hot = e.v >= 1000;
-      h += windRow("Electrons ≥2 MeV", `<i style="color:${hot ? "#ffc44d" : "inherit"}">${Math.round(e.v).toLocaleString("en-US")}</i>`, "pfu", hot ? "above the alert level" : "below the alert level", "long",
-        trend(data.elec, { t0, t1: now, log: true, lo: 10, hi: Math.max(1e4, max(data.elec) * 3), lines: [{ v: 1000, label: "alert" }] }));
-    }
+  /** The newest X-ray class, ≥10 MeV protons and ≥2 MeV electrons, each with NOAA's level for it. */
+  function sunVals(now) {
+    const x = last(data.xray), p = last(data.prot), e = last(data.elec), fl = data.flare;
     if (!x && !p && !e) return `<p class="np-n">${["xray", "prot", "elec"].some(k => state[k] && state[k].loading) ? "Fetching GOES's X-rays and particles…" : "GOES's X-rays and particles did not load."}</p>`;
-    return h + `</div><p class="np-key">last 6 h · GOES at geosynchronous orbit · 1 pfu = 1 particle/(cm² s sr)</p>`;
+    let h = `<div class="np-vals">`;
+    if (x) { const cls = fl && fl.now && now - fl.t < STALE ? fl.now : xrayClass(x.v), r = xrayR(x.v); h += val("X-rays", `<i style="color:${r ? scaleColor(r) : "inherit"}">${esc(cls)}</i>`, r ? `R${r}` : "", r ? "radio blackout" : "class now"); }
+    else h += val("X-rays", "—", "", "");
+    if (p) { const sL = protS(p.v); h += val("Protons ≥10 MeV", `<i style="color:${sL ? scaleColor(sL) : "inherit"}">${f(p.v, p.v < 10 ? 2 : 0)}</i>`, "pfu", sL ? `S${sL} storm` : "background"); }
+    else h += val("Protons ≥10 MeV", "—", "", "");
+    if (e) { const hot = e.v >= 1000; h += val("Electrons ≥2 MeV", `<i style="color:${hot ? "#ffc44d" : "inherit"}">${Math.round(e.v).toLocaleString("en-US")}</i>`, "pfu", hot ? "above alert level" : "below alert level"); }
+    else h += val("Electrons ≥2 MeV", "—", "", "");
+    h += `</div>`;
+    if (fl && fl.max && isFinite(fl.maxT) && now - fl.maxT < 24 * 3600e3) h += `<p class="np-sub">Latest flare ${esc(fl.max)}, peaking ${hm(fl.maxT)} UTC</p>`;
+    return h;
   }
-  /** Dst over three days, and the aurora's power in each hemisphere. */
-  function dstCell(now) {
-    const t0 = now - 72 * 3600e3, pts = (data.dst || []).filter(p => p.t >= t0), d = last(pts);
-    if (!d) return `<div class="np-mini"><p><span>Dst</span><b>—</b></p></div>`;
-    const lo = Math.min(-60, ...pts.map(p => p.v * 1.15)), hi = Math.max(25, ...pts.map(p => p.v + 10));
-    const word = d.v > -30 ? "quiet" : d.v > -50 ? "weak storm" : d.v > -100 ? "moderate storm" : d.v > -250 ? "intense storm" : "extreme storm";
-    return `<div class="np-mini"><p><span title="The ring current's index: WDC Kyoto's quick-look values, hourly, the newest for ${hm(d.t)} UTC">Dst · 3 days</span><b>${sg(d.v, 0)}</b><small>nT</small><em>${word}</em></p>`
-      + trend(pts, { t0, t1: now, lo, hi, W: 146, H: 26, gap: 2 * 3600e3, lines: [{ v: 0, cls: "z" }, { v: -50, label: "−50" }, { v: -100, label: "−100" }] }) + `</div>`;
-  }
-  function hpCell() {
-    const hp = data.hp;
-    if (!hp) return `<div class="np-mini"><p><span>Aurora power</span><b>—</b></p></div>`;
-    const bar = (label, v) => `<p class="np-hp"><span>${label}</span><i><u style="width:${Math.min(100, v / 150 * 100).toFixed(0)}%"></u></i><b>${f(v, 0)}</b></p>`;
-    return `<div class="np-mini"><p><span title="OVATION's hemispheric power, forecast for ${hm(hp.tf)} UTC from the wind measured at ${hm(hp.t)}. The marks are at 50 and 100 GW.">Aurora power</span><small>GW</small></p>${bar("N", hp.n)}${bar("S", hp.s)}</div>`;
+  /** Dst and the aurora's power now, in words. */
+  function geoLine() {
+    const d = last(data.dst), hp = data.hp, bits = [];
+    if (d) bits.push(`Dst <b>${sg(d.v, 0)}</b> nT, ${d.v > -30 ? "quiet" : d.v > -50 ? "weak storm" : d.v > -100 ? "moderate storm" : d.v > -250 ? "intense storm" : "extreme storm"}`);
+    if (hp) bits.push(`<span title="OVATION's hemispheric power, forecast for ${hm(hp.tf)} UTC from the wind measured at ${hm(hp.t)}">aurora <b>${f(hp.n, 0)}</b> GW north, <b>${f(hp.s, 0)}</b> south</span>`);
+    return bits.length ? `<p class="np-sub np-gl">${bits.join(" · ")}</p>` : "";
   }
 
   function render() {
@@ -806,22 +847,22 @@
     } else {
       const speedWord = nose.v >= 600 ? "fast" : nose.v >= 450 ? "moderate" : "slow";
       const bzWord = !isFinite(nose.bz) ? "" : nose.bz < -0.5 ? "southward" : nose.bz > 0.5 ? "northward" : "near zero";
-      w = `<div class="np-sw">`
-        + windRow("Speed", f(nose.v, 0), "km/s", speedWord, "", spark("v", now, rangeSpeed))
-        + windRow("Density", f(nose.n, 1), "cm⁻³", "", "", spark("n", now, rangeDensity))
-        + windRow("IMF B<sub>z</sub>", sg(nose.bz, 1), "nT", bzWord, nose.bz < -0.5 ? "south" : "", spark("bz", now, rangeBz))
-        + `</div><p class="np-key"><i class="k past"></i>arrived · <i class="k ahead"></i>on its way from L1 · last 2 h</p>`;
+      w = `<div class="np-vals">${val("Speed", f(nose.v, 0), "km/s", speedWord)}${val("Density", f(nose.n, 1), "cm⁻³", "")}`
+        + `${val("IMF B<sub>z</sub>", sg(nose.bz, 1), "nT", bzWord, nose.bz < -0.5 ? "south" : "")}</div>${figSlot("wind")}`
+        + `<p class="np-key">Black: arrived at Earth · gray: on its way from L1 · B<sub>z</sub> red when southward</p>`;
     }
     h += sec("wind", "Solar wind", `<span title="Measured at L1 by ${esc(activeSrc || "the active monitor")}, via NOAA SWPC">reaching Earth${isFinite(lag) ? ` · ${f(lag, 0)} min from L1` : ""}</span>`, w);
 
-    // ── the magnetopause: a sketch of the dayside, and the standoff ──
+    // ── the magnetopause: the dayside as a figure, and the standoff ──
+    let mpArgs = null;
     if (nose && lastRow) {
       const dpN = flowPressure(nose.n, nose.v), dpL = flowPressure(lastRow.n, lastRow.v);
       const bzN = isFinite(nose.bz) ? nose.bz : 0, bzL = isFinite(lastRow.bz) ? lastRow.bz : 0;
       const pN = isFinite(dpN) ? Math.max(dpN, 0.01) : NaN, pL = isFinite(dpL) ? Math.max(dpL, 0.01) : NaN;
       const R0 = isFinite(pN) ? shueR0(pN, bzN) : NaN, R0L = isFinite(pL) ? shueR0(pL, bzL) : NaN, RB = isFinite(pN) ? jelinekR0(pN) : NaN;
       const inside = R0 < GEO_RE, insideL = R0L < GEO_RE, sw = data.swmf;
-      h += sec("mp", "Magnetopause", "model, for the wind reaching Earth", `<div class="np-mp">${mpSketch(R0, pN, bzN, R0L, pL, bzL, RB, sw ? sw.noon : NaN)}<div>`
+      mpArgs = { R0, p: pN, bz: bzN, R0L, pL, bzL, RB, swmf: sw ? sw.noon : NaN };
+      h += sec("mp", "Magnetopause", "model, for the wind reaching Earth", `<div class="np-mp">${figSlot("mp")}<div>`
         + `<p class="np-r0${inside ? " geo" : ""}"><b>${f(R0, 1)}</b> R<sub>E</sub></p><p class="np-sub">standoff · Shue et al. 1998</p>`
         + `<p class="np-chip ${inside ? "geo" : "ok"}">${inside ? "Inside geosynchronous orbit" : "Outside geosynchronous orbit"}</p>`
         + (isFinite(R0L) ? `<p class="np-sub"><i class="k dash"></i>${f(R0L, 1)} R<sub>E</sub> by ${hm(lastRow.arr)}${insideL ? ' <b class="geo">inside GEO</b>' : ""}</p>` : "")
@@ -836,12 +877,12 @@
     h += sec("geo", "Geomagnetic activity", "Kp · Dst · aurora",
       `<div class="np-kph"><p class="np-kpv" style="--c:${kpColor(kNow)}"><b>${kpThirds(kNow).replace(/o$/, "")}</b> Kp</p><p class="np-sub">${esc(kpWord(kNow))}${ke ? " · estimated now" : ""}${fresh("kpEst") || fresh("kp") ? "" : " · stale"}</p>`
       + (peak ? `<p class="np-sub pk">forecast peak <b style="color:${kpColor(peak.k)}">Kp ${kpThirds(peak.k).replace(/o$/, "")}</b>${kpG(peak.k) ? ` (G${kpG(peak.k)})` : ""} in the next 2 days · ${DOW[new Date(peak.t).getUTCDay()]} ${hm(peak.t)} UTC</p>` : "") + `</div>`
-      + kpChart(data.kpHist, ke, data.kpFc, now)
-      + `<p class="np-key"><i class="k obs"></i>observed · <i class="k fcb"></i>NOAA's forecast, next 2 days</p>`
-      + `<div class="np-two">${dstCell(now)}${hpCell()}</div>`);
+      + geoLine() + figSlot("geo")
+      + `<p class="np-key">Kp colored by the G scale (green, yellow, orange G1, red G3) · gray: NOAA's forecast · aurora power is OVATION's, at the time it forecasts</p>`);
 
     // ── the Sun's X-rays and the particles at geosynchronous orbit ──
-    h += sec("sun", "Sun and radiation", `GOES${data.f107 ? ` · F10.7 ${f(data.f107.v, 0)} sfu` : ""}`, sunRows(now));
+    h += sec("sun", "Sun and radiation", `GOES${data.f107 ? ` · F10.7 ${f(data.f107.v, 0)} sfu` : ""}`,
+      sunVals(now) + (last(data.xray) || last(data.prot) || last(data.elec) ? figSlot("sun") + `<p class="np-key">GOES at geosynchronous orbit, last 6 h · 1 pfu = 1 particle/(cm² s sr) · S1–S3: NOAA's radiation storm levels</p>` : ""));
 
     // ── the spacecraft, grouped by the model's region ──
     let cr;
@@ -886,14 +927,28 @@
       const miss = stage.S.nowMissing || [];
       m += `<p class="np-n">Positions are SSCWeb's ephemeris, for the present the missions' predicted orbits.${miss.length ? ` No position for the present: ${miss.map(esc).join(", ")}.` : ""} ${stage.S.kpSrcNow ? `Field lines and the oval use Kp ${f(stage.S.kp, 2)} (${esc(stage.S.kpSrcNow)}, set when the page opened).` : `Field lines and the oval use Kp ${f(stage.S.kp, 1)}, Helios's assumed value: NOAA's Kp did not load.`}</p>`;
     }
-    m += `<ul class="np-a"><li class="n">No MMS science data in real time: Level 2 files reach the archives weeks after the day.</li><li class="n">THEMIS, Cluster, GOES, ACE, Wind, DSCOVR and OMNI windows follow by days to weeks; pick a past moment for them.</li></ul>`;
+    m += `<ul class="np-a"><li class="n">No MMS science data in real time: Level 2 files reach the archives weeks after the day.</li><li class="n">GOES and SDO windows open in real time; THEMIS, Cluster, ACE, Wind, DSCOVR and OMNI follow by days to weeks, so pick a past moment for them.</li></ul>`;
     m += `<p class="np-s">Feeds <em>${document.visibilityState === "hidden" ? "paused while the tab is hidden" : "refreshed while this tab is open"}</em></p><ul class="np-f">${Object.keys(FEEDS).map(feedLine).join("")}</ul>`;
     h += sec("more", "Numbers and sources", `<span class="np-dots">${dots}</span>${nBad ? `${nBad} feed${nBad > 1 ? "s" : ""} need${nBad > 1 ? "" : "s"} a look` : "all feeds current"}`, m);
     h += `</div>`;
+    // Rebuilding the panel's contents put its scroll back at the top on every update (user report, 2026-11-15): the
+    // position is kept across the rebuild.
+    const scroll = panel.scrollTop;
     if (panel.dataset.html !== h) { panel.innerHTML = h; panel.dataset.html = h; }
     // SWPC's images go back in above "Numbers and sources": the same node, so its pictures are not fetched again
     const body = panel.querySelector(".np-body"), moreEl = body && body.querySelector('[data-k="more"]');
     if (body && imgBox && imgBox.parentNode !== body) body.insertBefore(imgBox, moreEl);
+    // the figures: the same nodes, drawn again with the newest data
+    if (window.HSO_FIGURE) {
+      const specs = { wind: nose && lastRow ? windSpec(now) : null, mp: mpArgs, geo: geoSpec(now), sun: sunSpec(now) };
+      for (const sl of panel.querySelectorAll(".np-slot")) {
+        const F = figNode(sl.dataset.fig);
+        if (!F) continue;
+        if (sl.firstChild !== F.el) sl.replaceChildren(F.el);
+        if (specs[sl.dataset.fig]) F.draw(specs[sl.dataset.fig]);
+      }
+    }
+    if (panel.scrollTop !== scroll) panel.scrollTop = scroll;
     loadImages();
   }
   const boot = () => { build(); tickClock(); setInterval(() => { tickClock(); render(); }, 15000); };

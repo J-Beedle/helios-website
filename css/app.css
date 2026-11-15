@@ -199,36 +199,7 @@ p.np-s { margin-top: 11px !important; padding-top: 9px; border-top: 1px solid rg
 .np-kph { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 6px; }
 .np-kph .np-sub { margin: 0 !important; }
 .np-kph .pk { flex-basis: 100%; }
-.np-kc { display: block; width: 100%; height: auto; margin-top: 5px; overflow: visible; }
-.np-kc rect { fill: var(--c); }
-.np-kc rect.est { opacity: 0.55; }
-.np-kc rect.fc { fill: color-mix(in srgb, var(--c) 30%, transparent); stroke: var(--c); stroke-width: 0.8; }
-.np-kc .g1 { stroke: rgba(246, 235, 20, 0.45); stroke-width: 1; stroke-dasharray: 2 2; }
-.np-kc .dy { stroke: rgba(240, 240, 250, 0.14); stroke-width: 1; }
-.np-kc .nowl { stroke: #5fd08a; stroke-width: 1.2; }
-.np-kc text { fill: #919199; font: 500 8px ui-monospace, "SF Mono", Menlo, monospace; }
-.np-kc text.gl { fill: #a99f2a; text-anchor: end; }
-.np-kc text.nl { fill: #5fd08a; }
-.np-key .k.obs, .np-key .k.fcb { width: 8px; height: 8px; margin-bottom: 0; border: 0; border-radius: 2px; background: #5fd08a; }
-.np-key .k.fcb { background: rgba(95, 208, 138, 0.3); box-shadow: inset 0 0 0 1px #5fd08a; }
-.np-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 9px; }
-.np-mini > p:first-child { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-.np-mini > p:first-child span { color: #919199; font-size: 10px; }
-.np-mini > p:first-child b { margin-left: 4px; color: #fff; font: 600 14px/1.1 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-mini > p:first-child small { color: #aeaeb6; font-size: 10px; }
-.np-mini > p:first-child em { color: #aeaeb6; font-style: normal; font-size: 10px; }
-.np-mini .np-sp { height: 26px; margin-top: 3px; }
-.np-hp { display: grid; grid-template-columns: 10px 1fr 22px; align-items: center; gap: 6px; margin-top: 6px !important; font: 500 10px/1 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-hp span { color: #919199; }
-.np-hp b { color: #e8e9ed; text-align: right; }
-.np-hp i { position: relative; height: 7px; border-radius: 4px; background: rgba(240, 240, 250, 0.1);
-  background-image: linear-gradient(90deg, transparent calc(33.3% - 0.5px), rgba(240, 240, 250, 0.35) calc(33.3% - 0.5px), rgba(240, 240, 250, 0.35) calc(33.3% + 0.5px), transparent calc(33.3% + 0.5px), transparent calc(66.7% - 0.5px), rgba(240, 240, 250, 0.35) calc(66.7% - 0.5px), rgba(240, 240, 250, 0.35) calc(66.7% + 0.5px), transparent calc(66.7% + 0.5px)); }
-.np-hp u { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: #57d98a; opacity: 0.85; }
 /* thresholds on a trend line */
-.np-sp .th { stroke: rgba(255, 196, 77, 0.4); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
-.np-sp text { fill: #a08a4a; font: 500 7px ui-monospace, "SF Mono", Menlo, monospace; text-anchor: end; }
-.np-w p b i { font-style: normal; }
-.np-w.long p em { grid-column: 1 / -1; margin-left: 0; white-space: normal; }
 /* SWPC's latest images */
 .np-imgs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
 .np-imgs a { position: relative; display: block; aspect-ratio: 1; overflow: hidden; border-radius: 7px; background: #000; color: #e8e9ed; }
@@ -241,38 +212,27 @@ p.np-s { margin-top: 11px !important; padding-top: 9px; border-top: 1px solid rg
 .np-s em { margin-left: 6px; color: #919199; font-style: normal; letter-spacing: 0.02em; text-transform: none; }
 /* the visual panel (2026-11-12): trend lines, a dayside sketch, Kp bars, NOAA scale pills, region groups */
 .np-warn { margin-top: 8px !important; padding: 6px 8px; border-radius: 7px; background: rgba(255, 107, 94, 0.14); color: #ffb3a8; font-size: 11px; }
-.np-sw { display: grid; gap: 4px; margin-top: 6px; }
-.np-w { display: grid; grid-template-columns: 118px 1fr; align-items: center; gap: 8px; }
-.np-w p { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; column-gap: 3px; white-space: nowrap; }
-.np-w p span { grid-column: 1 / -1; color: #919199; font-size: 10px; letter-spacing: 0.02em; }
-.np-w p b { color: #fff; font: 600 17px/1.1 ui-monospace, "SF Mono", Menlo, monospace; }
-.np-w p small { color: #aeaeb6; font-size: 10px; }
-.np-w p em { margin-left: 3px; color: #aeaeb6; font-style: normal; font-size: 10px; }
-.np-w.south p b, .np-w.south p em { color: #ffc44d; }
-.np-sp { width: 100%; height: 30px; overflow: visible; }
-.np-sp .p { fill: none; stroke: #e6e7ee; stroke-width: 1.3; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.np-sp .a { fill: none; stroke: #8a8d97; stroke-width: 1.1; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
-.np-sp .now { stroke: #5fd08a; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.np-sp .z { stroke: rgba(240, 240, 250, 0.22); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.np-sp .s { stroke: rgba(255, 196, 77, 0.45); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+/* the figures (2026-11-15): white, black-framed, as the data windows draw theirs (hso.js's renderer) */
+.np-slot { margin-top: 7px; }
+.np-fig { position: relative; height: 200px; border-radius: 4px; overflow: hidden; background: #fff; }
+.np-fig-geo { height: 216px; }
+.np-fig-sun { height: 268px; }
+.np-fig-mp { width: 150px; height: 150px; }
+.np-fig canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.np-vals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.np-v { display: flex; flex-wrap: wrap; align-items: baseline; align-content: flex-start; column-gap: 3px; min-width: 0; }
+.np-v span { flex-basis: 100%; color: #919199; font-size: 10px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-v b { color: #fff; font: 600 16px/1.15 ui-monospace, "SF Mono", Menlo, monospace; }
+.np-v b i { font-style: normal; }
+.np-v small { color: #aeaeb6; font-size: 10px; }
+.np-v em { flex-basis: 100%; color: #aeaeb6; font-style: normal; font-size: 10px; }
+.np-v.south b, .np-v.south em { color: #ffc44d; }
+.np-gl b { color: #e8e9ed; font-weight: 600; }
 .np-key { margin-top: 5px !important; color: #7c7d86; font-size: 9.5px; }
-.np-key .k, .np-sub .k { display: inline-block; width: 14px; height: 0; margin: 0 4px 3px 0; vertical-align: middle; border-top: 1.5px solid #e6e7ee; }
-.np-key .k.ahead { border-top: 1.5px dashed #8a8d97; }
-.np-sub .k.dash { border-top: 1.5px dashed #9fc0ff; }
+.np-sub .k { display: inline-block; width: 14px; height: 0; margin: 0 4px 3px 0; vertical-align: middle; border-top: 1.5px solid #e6e7ee; }
+.np-sub .k.dash { border-top: 1.5px dashed #6f86ff; }
 .np-sub .k.tick { width: 2px; height: 9px; border: 0; background: #c98bff; }
-.np-mp { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 10px; margin-top: 4px; }
-.np-mps { width: 120px; height: 92px; overflow: hidden; }
-.np-mps .geo { fill: none; stroke: rgba(240, 240, 250, 0.4); stroke-width: 1; stroke-dasharray: 2 2.5; }
-.np-mps .bs { fill: none; stroke: #34d27b; stroke-width: 1.1; stroke-dasharray: 1 2.5; stroke-linecap: round; }
-.np-mps .mp { fill: rgba(159, 192, 255, 0.08); stroke: #9fc0ff; stroke-width: 1.8; }
-.np-mps .mp.in { stroke: #ff6b5e; fill: rgba(255, 107, 94, 0.1); }
-.np-mps .mpl { fill: none; stroke: #9fc0ff; stroke-width: 1; stroke-dasharray: 3 2; opacity: 0.75; }
-.np-mps .swmf { stroke: #c98bff; stroke-width: 2; }
-.np-mps .earth { fill: #3d7be0; }
-.np-mps .night { fill: rgba(0, 0, 0, 0.55); }
-.np-mps .sun { fill: none; stroke: #f7c55c; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
-.np-mps text { fill: #f7c55c; font: 500 7.5px ui-monospace, "SF Mono", Menlo, monospace; }
-.np-mps text.gl { fill: #919199; text-anchor: middle; }
+.np-mp { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; margin-top: 4px; }
 .np-r0 b { color: #fff; font: 600 26px/1 ui-monospace, "SF Mono", Menlo, monospace; }
 .np-r0 { color: #cdcdd5; font-size: 12px; }
 .np-r0.geo b { color: #ff6b5e; }
