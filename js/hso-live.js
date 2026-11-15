@@ -2135,5 +2135,10 @@
     sky: skyFrame,
     burstHalf: BURST_HALF,
     tasks: () => [...tasks],
+    /** For the LMN workbench and the Formation view (lmn-panel.js, formation.js): one HAPI request through this page's
+     *  queue, relay and cache — times in ms, rows back in s after T0 — and MMS1–4's MEC positions as the page holds
+     *  them ({ n: { t, r: [[x, y, z] km GSE] } }; SSCWeb's where MEC has not reached the moment). */
+    hapi: (id, params, a, b, label) => track(label || id, hapi(id, params, a, b, true)),
+    positions: () => mec().then((got) => Object.fromEntries(got.map((g, k) => [k + 1, g && g.n ? { t: g.t, r: Array.from({ length: g.n }, (_, i) => [g.cols[0][i], g.cols[1][i], g.cols[2][i]]), computed: !!got[0].computed } : null]))),
   };
 })();

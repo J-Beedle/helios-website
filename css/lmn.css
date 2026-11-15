@@ -1,0 +1,64 @@
+/* Helios Live: the LMN workbench's extra pieces (lmn-panel.js), in the ToolsKit look of site.css's .tk rules */
+.tk-cite { margin: 0; color: #8e8e97; font-size: 11px; line-height: 1.3; }
+.tk-num { width: 64px; box-sizing: border-box; padding: 3px 5px; border: 1px solid rgba(240, 240, 250, 0.18); border-radius: 5px; background: #1e1e23; color: #e3e3eb; font: 12px ui-monospace, "SF Mono", Menlo, monospace; }
+.fw-lmn .tk-seg { margin: 0; }
+.fw-lmn select { max-width: 100%; }
+.lx-busy { display: flex; align-items: center; gap: 7px; }
+.lx-spin { flex: none; width: 11px; height: 11px; border: 2px solid rgba(255, 255, 255, 0.16); border-top-color: rgba(255, 255, 255, 0.75); border-radius: 50%; animation: lx-spin 0.9s linear infinite; }
+@keyframes lx-spin { to { transform: rotate(360deg); } }
+.lx-q { margin: 0; color: #cdcdd5; font-size: 12px; line-height: 1.35; }
+.lx-q.gold, .lx-q .gold { color: #ffc44d; }
+.lx-q b { font-weight: 600; }
+.lx-good { color: #34d27b; }
+.lx-strong { color: #f0f0fa; font-weight: 600; }
+.lx-notes { display: grid; gap: 2px; }
+.lx-notes p { margin: 0; color: #8e8e97; font-size: 11px; line-height: 1.3; overflow-wrap: anywhere; }
+.tk-axes td.lx-lam { color: #8e8e97; font-size: 11px; }
+.tk-axes td.gold { color: #ffc44d; }
+.lx-saved { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.04); }
+.lx-saved.on { background: rgba(255, 255, 255, 0.08); }
+.lx-saved > span { flex: 1; display: grid; gap: 1px; min-width: 0; }
+.lx-saved b.mono { font-size: 12px; font-weight: 600; }
+.lx-saved em { color: #8e8e97; font-size: 11px; font-style: normal; overflow-wrap: anywhere; }
+.lx-tag { color: #ffc44d; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; }
+.lx-cmb { display: grid; grid-template-columns: 48px 96px minmax(0, 1fr); align-items: center; gap: 6px; }
+.lx-cmb .tk-seg button { padding: 3px 0; }
+.lx-cmb select { min-width: 0; }
+.lx-axis { display: grid; grid-template-columns: 12px minmax(0, 1fr) 14px; align-items: center; gap: 6px; }
+.lx-axis i { font-style: normal; font-size: 12px; color: #8e8e97; text-align: center; }
+.lx-axis i.ok { color: #34d27b; }
+.lx-axis i.gold { color: #ffc44d; }
+/* the Formation & topology view (formation.js): the cut on white, as Helios draws its figures, in the dark panel */
+.fw-form { width: 470px; border-left: 1px solid rgba(240, 240, 250, 0.1); }
+.fx-pb { gap: 12px; }
+.fx-beta { padding: 1px 6px; border-radius: 999px; background: rgba(124, 92, 224, 0.28); color: #c9b8ff; font-size: 9px; font-weight: 700; letter-spacing: 0.06em; }
+.fx-instant { display: flex; align-items: center; gap: 6px; }
+.fx-instant .tk-time { flex: 1; }
+.fx-instant .tk-btn { padding: 3px 8px; }
+.fx-strip canvas { display: block; width: 100%; height: 18px; cursor: ew-resize; touch-action: none; }
+.fx-sl { display: flex; justify-content: space-between; margin-top: 2px; color: #8e8e97; font: 10px ui-monospace, "SF Mono", Menlo, monospace; }
+.fx-ctl { display: flex; gap: 8px; }
+.fx-ctl .tk-seg { flex: 1; margin: 0; }
+.fx-cut { position: relative; }
+.fx-cut canvas { display: block; width: 100%; height: 420px; border-radius: 4px; background: #fff; cursor: crosshair; }
+.fx-off { display: flex; align-items: center; gap: 8px; }
+.fx-off input[type="range"] { flex: 1; accent-color: #b4b4c4; }
+.fx-off b { font-size: 12px; min-width: 42px; text-align: right; }
+.fx-verdict { display: grid; gap: 3px; padding: 8px 10px; border-left: 3px solid var(--c); border-radius: 4px; background: rgba(255, 255, 255, 0.04); }
+.fx-verdict b { color: var(--c); font-size: 14px; }
+.fx-verdict span { font-size: 12px; color: #cdcdd5; line-height: 1.35; }
+.fx-read { display: grid; gap: 12px; }
+.fx-instant .tk-btn.on { background: rgba(124, 92, 224, 0.35); }
+
+/* Compare methods (Helios's comparisonBlock / candidateRow): one card per method, the selected one lit. */
+.lx-cand { display: flex; gap: 8px; width: 100%; text-align: left; padding: 8px; margin: 0 0 6px; border: 0; border-radius: 8px;
+  background: rgba(255,255,255,0.025); color: inherit; font: inherit; cursor: pointer; }
+.lx-cand:hover { background: rgba(255,255,255,0.05); }
+.lx-cand.on { background: rgba(255,255,255,0.08); }
+.lx-cand.off { cursor: default; flex-direction: column; gap: 2px; opacity: 0.8; }
+.lx-cand b { font-size: 13px; font-weight: 600; }
+.lx-cand em { display: block; font-style: normal; font-size: 11px; margin-top: 2px; }
+.lx-radio { width: 12px; flex: none; font-size: 12px; opacity: 0.8; }
+.lx-cgrid { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; margin-top: 3px; font-size: 11px; }
+.lx-cgrid .mono { font-size: 10.5px; }
+.lx-four { margin-top: 8px; }

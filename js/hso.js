@@ -323,7 +323,10 @@
     ctx.restore();
   }
   function stroke(ctx, R, a, b, rr, acc, yOf, color, width, shift) {
-    const kx = R.w / (b - a);
+    // Dense data are drawn as each column's first, min, max and last sample, one column per DEVICE pixel: per CSS
+    // pixel, a saved figure (3 device pixels a point, 1.8-pixel lines) showed white between the columns, every trace
+    // looking hollow (user report, 2026-11-14).
+    const kx = R.w / (b - a), px = Math.max(1, Math.abs(ctx.getTransform().a) || 1);
     ctx.save(); ctx.beginPath(); ctx.rect(R.x, R.y, R.w, R.h); ctx.clip();
     ctx.strokeStyle = color; ctx.lineWidth = width || 1.1; ctx.lineJoin = "round"; ctx.beginPath();
     // Helios (MMSStackPlot.drawLine): a break only where the spacing exceeds max(3 × the median of the last five
@@ -347,7 +350,7 @@
       if (!f) continue;
       const t0 = L.t, sh = shift ? shift(L) : 0, t = sh ? { length: t0.length } : t0, j0 = Math.max(0, i0), j1 = Math.min(t0.length, i1);
       if (sh) for (let i = j0; i < j1; i++) t[i] = t0[i] + sh;
-      if (j1 - j0 < R.w * 3) {
+      if (j1 - j0 < R.w * px * 3) {
         for (let i = j0; i < j1; i++) {
           const y0 = f(i);
           if (!isFinite(yOf(y0))) continue;                 // not placeable (fill, ≤ 0 on a log row): bridged
@@ -360,7 +363,7 @@
         let c = null, fy = 0, mn = 0, mx = 0, ly = 0;
         const flush = () => {
           if (c === null) return;
-          const X = R.x + c + 0.5;
+          const X = R.x + (c + 0.5) / px;
           if (pen) ctx.lineTo(X, yOf(fy)); else { ctx.moveTo(X, yOf(fy)); pen = true; }
           ctx.lineTo(X, yOf(mn)); ctx.lineTo(X, yOf(mx)); ctx.lineTo(X, yOf(ly));
           c = null;
@@ -370,7 +373,7 @@
           if (!isFinite(yOf(y))) continue;
           if (isGap(ti)) { flush(); pen = false; }
           note(ti);
-          const cc = Math.floor((ti - a) * kx);
+          const cc = Math.floor((ti - a) * kx * px);
           if (cc !== c) { flush(); c = cc; fy = mn = mx = ly = y; }
           else { if (y < mn) mn = y; if (y > mx) mx = y; ly = y; }
         }
@@ -1400,7 +1403,11 @@
     }
 
     /** The rows that read B, where the LMN interval's handles go ("Mark interval on B"). */
-    const bRows = () => (L ? L.rows.filter(R => R.row.key === "b") : []);
+    const bRows = () => {
+      if (!L) return [];
+      const on = L.rows.filter(R => (cfg.intervalRows || ["b"]).includes(R.row.key));   // the LMN method's inputs (lmn-panel.js), else B
+      return on.length ? on : L.rows.filter(R => R.row.key === "b");
+    };
     function overlay() {
       if (!L || !over.clientWidth) return;
       const { ctx, w, h } = sizeCanvas(over), Pl = L.plot, a = app.a, b = app.b;
@@ -1460,7 +1467,7 @@
         ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = m.color; ctx.lineWidth = 1.2;
         ctx.beginPath(); ctx.moveTo(x, Pl.y); ctx.lineTo(x, Pl.y + Pl.h); ctx.stroke(); ctx.restore();
         ctx.beginPath(); ctx.arc(x, Pl.y - 1, 7, 0, Math.PI * 2); ctx.fillStyle = m.color; ctx.fill();
-        rich(ctx, String(k + 1), x, Pl.y - 1, { size: 9.5, weight: 700, align: "center", color: "#fff" });
+        rich(ctx, m.label || String(k + 1), x, Pl.y - 1, { size: 9.5, weight: 700, align: "center", color: "#fff" });
       }
       if (cfg.still) return;
       if (app.sel) {
@@ -2243,12 +2250,21 @@
     });
     W.panel = Panel(W.view, A, $(".fw-plot", el), $(".fw-over", el), {
       mission: CRAFT[n0].mission, stack: MISSIONS[CRAFT[n0].mission].stack.slice(),
-      onMark: (k, t) => moveCut(W.vdf.cuts[k], t),
+      onMark: (k, t) => (W.vdf.on && k < W.vdf.cuts.length ? moveCut(W.vdf.cuts[k], t) : FX && FX.drag(t)),
       onInterval: (a, b) => { W.lmn.range = [a, b]; W.redraw(); lmnTimes(); },
       onPaint: (kind, a, b) => { W.bands.push({ kind, a, b }); W.bands.sort((p, q) => p.a - q.a); renderSide(); renderLMN(); W.redraw(); },
     });
     const C = W.cfg = W.panel.cfg;
     const side = $(".fw-side", el), lmnEl = $(".fw-lmn", el), vdfEl = $(".fw-vdf", el), cols = $(".vd-cols", el);
+    // the LMN workbench with every method LMNSolver has (lmn-panel.js, lmn.js); the MVA-B panel below when it is absent
+    const LX = window.HeliosLMNPanel ? window.HeliosLMNPanel({ W, el: lmnEl, tk, esc, clock, durText, DAY, hmsShort, parseClock, SRC, LIVE,
+      get T0() { return T0; }, craft: () => CRAFT[W.n || n0], bIn: (a, b) => bIn(W.view, a, b), runs: (ds, a, b) => runs(W.view, ds, a, b, true),
+      applied: () => { renderSide(); redrawCuts(); W.redraw(); if (FX) FX.update(); }, redraw: () => W.redraw(), renderSide: () => renderSide(), relayout: () => relayout(),
+      defaultInterval: () => defaultInterval(), lmnTimes: () => lmnTimes() }) : null;
+    // the Formation & topology view (formation.js, recon.js): the four probes and the polynomial reconstruction at an instant
+    const FX = window.HeliosFormation ? window.HeliosFormation({ W, tk, esc, clock, hmsShort, parseClock, SRC, LIVE, side, get T0() { return T0; },
+      craft: () => CRAFT[W.n || n0], bIn: (a, b) => bIn(W.view, a, b), runs: (ds, a, b) => runs(W.view, ds, a, b, true), moment: () => host.moment(),
+      redraw: () => W.redraw(), renderSide: () => renderSide(), relayout: () => relayout() }) : null;
 
     // ── the subplot editor (Helios's overplot editor): right-click a subplot to hide its lines, overplot others, switch
     //    log y, or set its axis (a line subplot) or color (a spectrogram) limits; a movable card that closes with × or Esc ──
@@ -2354,8 +2370,9 @@
     /** The figure's settings from the window's state, then a redraw on the next frame. */
     function sync() {
       const L = W.lmn, V = W.vdf, f = L.frame;
-      C.lmn = f && L.on ? { R: [f.l, f.m, f.n], label: `LMN (${f.method}, λ₂/λ₃ = ${f.ratio.toFixed(1)})` } : null;
-      C.marks = V.on ? V.cuts.map(c => ({ t: c.t, color: c.color })) : [];
+      C.lmn = f && L.on ? { R: [f.l, f.m, f.n], label: f.label || `LMN (${f.method}, λ₂/λ₃ = ${f.ratio.toFixed(1)})` } : null;
+      C.intervalRows = LX ? LX.rows() : null;
+      C.marks = (V.on ? V.cuts.map(c => ({ t: c.t, color: c.color })) : []).concat(FX && FX.mark() ? [FX.mark()] : []);
       C.interval = L.panel && (!f || L.draft) && L.range ? (L.mark ? { a: L.range[0], b: L.range[1], live: true } : null)
         : f && L.mark ? { a: f.a, b: f.b, live: false } : null;
       C.bands = W.bands; C.paint = W.paint;
@@ -2510,9 +2527,14 @@
       vdfEl.style.setProperty("--cols", ncol);
       $(".fw-cuts", el).hidden = !W.vdf.on;
       $(".fw-sb", el).setAttribute("aria-pressed", String(W.sideOpen));
-      const extra = (W.sideOpen ? 220 : 0) + (W.lmn.panel ? 320 : 0) + (W.vdf.on ? 250 * ncol : 0), dw = extra - W.extra;
-      W.extra = extra;
-      if (dw) host.widen(W, dw);
+      const extra = (W.sideOpen ? 220 : 0) + (W.lmn.panel ? 320 : 0) + (W.vdf.on ? 250 * ncol : 0) + (FX && FX.on ? FX.width : 0), dw = extra - W.extra;
+      if (dw) {
+        // A window held to the screen's width takes less than it asks for: keep what it took, or closing a panel
+        // later shrinks it by more than it grew (the Formation view was left clipped, 2026-11-14).
+        const w0 = W.r && W.r.w;
+        host.widen(W, dw);
+        W.extra = Number.isFinite(w0) && Number.isFinite(W.r && W.r.w) ? W.extra + (W.r.w - w0) : extra;
+      }
       W.redraw();
     }
 
@@ -2571,6 +2593,7 @@
       return `Boxcar mean over ${C.smoothW} samples ≈ ${s < 1 ? `${Math.round(s * 1000)} ms` : `${s.toFixed(1)} s`}. Edges keep raw values; spectrograms unaffected.`;
     }
     function lmnStatus() {
+      if (LX) return LX.status();
       const f = W.lmn.frame;
       return `${f.method}${f.ratio >= 10 ? " · normal well determined" : " · normal poorly determined"}${f.native ? "" : " · from the displayed B"}${W.lmn.on ? " · in use on the figure" : " · kept, figure in GSE"}`;
     }
@@ -2642,6 +2665,7 @@
         h += `<section class="tk-sec">${tk.h("Analysis panels")}`
           + tk.sw('data-an="lmn"', "LMN frame", W.lmn.panel, "The LMN frame workbench beside the figure: calculate a frame, apply a saved one, or enter axes");
         if (!W.lmn.panel) h += W.lmn.error ? tk.note(esc(W.lmn.error), true) : W.lmn.frame ? tk.note(lmnStatus()) : "";
+        if (mms && FX) h += FX.sideHTML();
         if (mms) {
           h += tk.sw('data-an="vdf"', "VDF cuts", W.vdf.on, "Velocity-distribution cuts beside the figure, one column per cut");
           if (!W.vdf.on && HAS_CRESCENT) h += tk.link("crescent", "Show the Burch crescent · 13:07:02.195", CRESCENT_HELP);
@@ -2722,6 +2746,7 @@
     }
     function renderLMN() {
       if (!W.lmn.panel) return;
+      if (LX) return LX.render();
       const L = W.lmn, f = L.frame, top = lmnEl.scrollTop;
       let h = `<div class="tk-ph"><b>LMN frame · ${CRAFT[W.n || n0].name}</b>`
         + (f ? `<button class="tk-pill${L.on ? " on" : ""}" data-act="lmn-onoff" title="${L.on ? "The figure is drawn in this LMN frame — click to draw it in GSE, keeping the frame" : "The frame is kept but the figure is in GSE — click to draw it in LMN"}">${L.on ? "LMN ON" : "LMN OFF"}</button>` : "")
