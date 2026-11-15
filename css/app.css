@@ -199,9 +199,9 @@ body.now-mode .rail-ev b { color: #5fd08a; }
 .np-al { list-style: none; padding: 0; margin-top: 9px !important; display: grid; gap: 8px; }
 .np-al li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: start; }
 .np-al li b { padding: 2px 0; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: #cdcdd5; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-align: center; text-transform: uppercase; }
-.np-al li.warning b { background: rgba(255, 107, 94, 0.22); color: #ffd0ca; }
-.np-al li.watch b { background: rgba(255, 196, 77, 0.16); color: #ece6d6; }
-.np-al li.alert b { background: rgba(255, 255, 255, 0.11); color: #e3e3eb; }
+.np-al li.warning b { background: rgba(255, 150, 0, 0.24); color: #ffc070; }   /* the alert kinds keep their colors (user, 2026-11-15) */
+.np-al li.watch b { background: rgba(246, 235, 20, 0.16); color: #efe56a; }
+.np-al li.alert b { background: rgba(255, 59, 48, 0.24); color: #ffa39b; }
 .np-al li span { color: #e3e3eb; font-size: 12.5px; line-height: 1.3; }
 .np-al li small { display: block; margin-top: 1px; color: #aeaeb6; font-size: 11.5px; }
 /* values over their names, as .tk-big beside .tk-sub */
