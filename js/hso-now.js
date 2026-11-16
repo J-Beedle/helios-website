@@ -756,9 +756,10 @@
   const SCALE_NAME = { R: "Radio blackouts", S: "Solar radiation storms", G: "Geomagnetic storms" };
   const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const dayHm = (ms) => `${day(ms)} ${hm(ms)}`;
-  /** The NOAA scales as SWPC's dashboards head every page: now, the last 24 hours' highest, and the forecast for
-   *  today and the two days after (the chance of an R1–R2 blackout and of an S1 or stronger proton event, and the
-   *  geomagnetic storm level expected). */
+  /** The NOAA scales as SWPC's dashboards head every page. Columns: now, the highest of the last 24 hours, then
+   *  NOAA's forecast for today and the next two days. In the forecast columns the Radio row is the percent chance
+   *  of an R1–R2 blackout, the Radiation row the percent chance of an S1 or stronger storm, and the Geomagnetic
+   *  row the forecast G level. */
   function condGrid(sc) {
     const s = state.scales;
     if (!sc) return `<p class="np-n${s && s.fetched === undefined && !s.loading ? " bad" : ""}">${s && s.loading ? "Fetching NOAA's scales…" : "NOAA's scales did not load."}</p>`;
@@ -773,7 +774,7 @@
       + fc.map(d => pct(d.s, `${day(d.t)}: ${d.s ?? "–"} % chance of S1 or more (a solar proton event)`)).join("");
     g += `<span class="lb" title="${SCALE_NAME.G}, from Kp">Geomagnetic</span>${lv("G", sc.now.G, "now")}${lv("G", sc.max ? sc.max.G : null, "the last 24 hours' highest")}${gap}`
       + fc.map(d => lv("G", d.g, `forecast for ${day(d.t)}`)).join("") + `</div>`;
-    return g + (fc.length ? `<p class="np-key">Forecast: the chance of R1–R2 and of S1 or more, and the G level expected</p>` : "");
+    return g + (fc.length ? `<p class="np-key">Right side is NOAA's forecast. Radio: chance of an R1–R2 blackout. Radiation: chance of an S1 or stronger storm. Geomagnetic: forecast storm level.</p>` : "");
   }
   const ALERT_TAG = { warning: "Warning", watch: "Watch", alert: "Alert", summary: "Summary" };
   function alertsBlock(now) {

@@ -1062,25 +1062,62 @@
                : !sv.dis ? "Field only: SOLAR-1's plasma (SWiPS) is not archived yet. NOAA's real-time feed carries it for the last day." : null,
              notes: `SOLAR-1 (formerly SWFO-L1, NOAA) at L1, at the spacecraft's own time (not shifted to Earth). ${note || "No SOLAR-1 data for this interval: NOAA/NCEI's archive starts 2026-04-01, NOAA's live feeds reach back a day (1-minute) and a week (propagated), and CDAWeb carries only its position."}` };
   }
-  /** IMAP at L1: CDAWeb's science data first — MAG L2 (GSE, 2 Hz, quality 0) and SWAPI L3a solar-wind protons (1 min,
-   *  flags 0; velocity in RTN) — then IMAP's I-ALiRT real-time stream as CDAWeb archives it (field in GSE; SWAPI's
-   *  pseudo-moments, no velocity vector), then NOAA's real-time feed for the last day (IMAP's rows, GSE). */
+  // The Sun's rotation pole (IAU: RA 286.13°, Dec 63.87°, J2000) and Earth's distance from the Sun, km (Astronomical
+  // Almanac, low precision).
+  const SUN_POLE_J2000 = [Math.cos(63.87 * DEG) * Math.cos(286.13 * DEG), Math.cos(63.87 * DEG) * Math.sin(286.13 * DEG), Math.sin(63.87 * DEG)];
+  const sunDist_km = (ms) => { const g = (357.529 + 0.98560028 * (ms - Date.UTC(2000, 0, 1, 12)) / 864e5) * DEG; return (1.00014 - 0.01671 * Math.cos(g) - 0.00014 * Math.cos(2 * g)) * 149597870.7; };
+  /** The RTN unit vectors at a spacecraft, in GSE (as Helios's IMAPData.rtnAxes): R from the Sun to the spacecraft, T
+   *  along the Sun's rotation pole × R, N = R × T. `pos_km` is the spacecraft in GSE; without it R = −X (the Sun–Earth
+   *  line: L1's halo orbit is within 0.35° of it seen from the Sun, 2–4 km/s of Vy at solar-wind speeds). The Sun's
+   *  pole is 7.25° from the ecliptic's, so T and N are −Y and +Z turned about X by up to that (early June, December). */
+  function rtnAxes(ms, pos_km) {
+    const cross = (u, w) => [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    const unit = (u) => { const n = Math.hypot(u[0], u[1], u[2]) || 1; return [u[0] / n, u[1] / n, u[2] / n]; };
+    const p = pos_km || [0, 0, 0], R = unit([p[0] - sunDist_km(ms), p[1], p[2]]);
+    const T = unit(cross(app(framesAt(ms).gse, SUN_POLE_J2000), R));
+    return { R, T, N: cross(R, T) };
+  }
+  // swp_flags bits that leave a SWAPI fit usable (CDAWeb's notes): 4, a preliminary MAG field for the direction, and 15,
+  // a predicted ephemeris. Bits 2 (bad fit) and 3 (fit failed), and any other, drop the row; 65535 is the flag's fill.
+  const SWAPI_BENIGN = (1 << 4) | (1 << 15);
+  /** IMAP at L1: CDAWeb's science data first — MAG L2 (GSE, 2 Hz, quality 0) and SWAPI L3a solar-wind proton fits
+   *  (1 min) — then IMAP's I-ALiRT real-time stream as CDAWeb archives it (field in GSE; SWAPI's pseudo-moments, no
+   *  velocity vector), then NOAA's real-time feed for the last day (IMAP's rows: field, speed and temperature).
+   *
+   *  Checked against the services on 2026-11-16:
+   *  - SWAPI's velocity is RTN only, in a spacecraft frame and a Sun frame. The Sun-frame one is read and turned onto
+   *    GSE axes: the other monitors' GSE velocities are aberration-corrected (Earth's ~30 km/s orbital motion removed).
+   *    2026-07-15 10:30–14:30, mean V in km/s: Wind H1 (−484, +29, −15), IMAP Sun frame on GSE axes (−470, +33, −16),
+   *    IMAP spacecraft frame (−470, +62, −16), which is what this window drew, as R/T/N, until then.
+   *  - NOAA's json/rtsw IMAP rows have no velocity vector, are stamped at :01 s, and their proton_density is not usable:
+   *    over the file's 24 h it was a median 9.2 × SOLAR-1's (10th–90th percentile 7.6–11.1; speed × 1.02, temperature
+   *    × 0.77). CDAWeb's I-ALiRT density is sound (× 1.19 the science fits on 2026-07-15 12–13; T × 1.24, speed × 1.01). */
   async function imapWindow() {
     const [a, b] = window_, nil = { t: [], cols: [], n: 0 }, relabel = {}, used = [];
-    let Bv = [], P = [], vFrame = "GSE";
+    let Bv = [], P = [], provisional = 0, gseV = false, ialirtPlasma = false, noaaPlasma = false;
     const [m, sw] = await Promise.all([
       track("IMAP MAG L2", hapi("IMAP_MAG_L2_NORM-GSE", ["b_gse", "quality_flags"], a, b, true)).catch(() => nil),
-      track("IMAP SWAPI L3a protons", hapi("IMAP_SWAPI_L3A_PROTON-SW", ["proton_sw_speed", "proton_sw_temperature", "proton_sw_density", "proton_sw_velocity_rtn", "swp_flags"], a, b, true)).catch(() => nil),
+      track("IMAP SWAPI L3a protons", hapi("IMAP_SWAPI_L3A_PROTON-SW", ["proton_sw_speed_sun", "proton_sw_temperature", "proton_sw_density", "proton_sw_velocity_rtn_sun", "swp_flags"], a, b, true)).catch(() => nil),
     ]);
     const ok = (x, lo, hi) => (isFinite(x) && x >= lo && x <= hi ? x : NaN);
     for (let i = 0; i < m.n; i++) { if (m.cols[3][i] !== 0) continue; const xyz = [0, 1, 2].map(c => m.cols[c][i]); if (xyz.every(x => isFinite(x) && Math.abs(x) < 1e4)) Bv.push([m.t[i], ...xyz]); }
+    // where IMAP was, for R (one small SSCWeb request; R = −X without it)
+    const orbit = sw.n ? await track("IMAP position (SSCWeb)", ssc(["imap"], a - 600e3, b + 600e3)).then(o => (o.imap && o.imap.t.length ? o.imap : null)).catch(() => null) : null;
     for (let i = 0; i < sw.n; i++) {
-      if (sw.cols[6][i] !== 0) continue;
-      const tK = ok(sw.cols[1][i], 1, 1e8);
-      P.push([sw.t[i], ok(sw.cols[2][i], 0, 500), ok(sw.cols[3][i], -3000, 3000), ok(sw.cols[4][i], -3000, 3000), ok(sw.cols[5][i], -3000, 3000), ok(sw.cols[0][i], 50, 3000), isFinite(tK) ? tK * KELVIN_EV : NaN]);
+      const f = sw.cols[6][i];
+      if (!isFinite(f) || f < 0 || f >= 65535 || (f & ~SWAPI_BENIGN) !== 0) continue;
+      if (f !== 0) provisional++;
+      const tK = ok(sw.cols[1][i], 1, 1e8), rtn = [3, 4, 5].map(c => ok(sw.cols[c][i], -3000, 3000));
+      let g = [NaN, NaN, NaN];
+      if (rtn.every(isFinite)) {
+        const p = orbit && posAt(orbit, sw.t[i]), ax = rtnAxes(T0 + sw.t[i] * 1000, p ? p.map(x => x * RE_KM) : null);
+        g = [0, 1, 2].map(c => ax.R[c] * rtn[0] + ax.T[c] * rtn[1] + ax.N[c] * rtn[2]);
+        gseV = true;
+      }
+      P.push([sw.t[i], ok(sw.cols[2][i], 0, 500), g[0], g[1], g[2], ok(sw.cols[0][i], 50, 3000), isFinite(tK) ? tK * KELVIN_EV : NaN]);
     }
     if (Bv.length) used.push("MAG L2 (GSE)");
-    if (P.length) { used.push("SWAPI L3a protons (velocity in RTN)"); vFrame = "RTN"; }
+    if (P.length) used.push("SWAPI L3a proton fits (1 min)");
     if (!Bv.length || !P.length) {
       const [im, ip] = await Promise.all([
         Bv.length ? nil : track("IMAP I-ALiRT field", hapi("IMAP_IALIRT_L1_REALTIME@1", ["mag_B_GSE"], a, b, true)).catch(() => nil),
@@ -1089,18 +1126,19 @@
       for (let i = 0; i < im.n; i++) { const xyz = [0, 1, 2].map(c => im.cols[c][i]); if (xyz.every(x => isFinite(x) && Math.abs(x) < 1e4)) Bv.push([im.t[i], ...xyz]); }
       for (let i = 0; i < ip.n; i++) { const tK = ok(ip.cols[2][i], 1, 1e8); P.push([ip.t[i], ok(ip.cols[0][i], 0, 500), NaN, NaN, NaN, ok(ip.cols[1][i], 50, 3000), isFinite(tK) ? tK * KELVIN_EV : NaN]); }
       if (im.n) used.push("I-ALiRT field (GSE)");
-      if (ip.n) used.push("I-ALiRT SWAPI pseudo-moments (density, speed, temperature)");
+      if (ip.n) { ialirtPlasma = true; used.push("I-ALiRT SWAPI pseudo-moments (density, speed, temperature)"); }
     }
     if ((!Bv.length || !P.length) && b > Date.now() - 26 * 3600e3) {
       const r = await track("IMAP, NOAA's real-time feed", rtswFor("IMAP", a, b)).catch(() => ({ B: [], P: [] }));
       if (!Bv.length && r.B.length) { Bv = r.B; used.push("NOAA's real-time field (GSE)"); }
-      if (!P.length && r.P.length) { P = r.P; vFrame = "GSE"; used.push("NOAA's real-time plasma (GSE)"); }
+      // speed and temperature only: the feed's IMAP rows have no velocity vector, and their density is ~9 × too high (above)
+      if (!P.length && r.P.length) { P = r.P.map(p => [p[0], NaN, NaN, NaN, NaN, p[5], p[6]]); noaaPlasma = true; used.push("NOAA's real-time speed and temperature"); }
     }
-    if (vFrame === "RTN") relabel.vi = vRows("RTN", ["R", "T", "N"]);
     const sv = l1Sets(Bv, P);
     return { sv, bu: null, kind: "l1", label: "IMAP", relabel, empty: !sv.fgm && !sv.dis,
-             banner: !sv.fgm && !sv.dis ? "No IMAP data for this moment yet: CDAWeb's science files run to the end of July 2026 so far, its copy of IMAP's I-ALiRT real-time stream lags a few days, and NOAA's live feed reaches back a day." : null,
-             notes: `IMAP (NASA) at L1, at the spacecraft's own time (not shifted to Earth). ${used.length ? `From ${used.join("; ")}, via ${used.some(u => /NOAA/.test(u)) ? "CDAWeb HAPI and NOAA SWPC" : "CDAWeb HAPI"}.` : "No IMAP data for this interval: CDAWeb's science files run to the end of July 2026 so far, its copy of the I-ALiRT real-time stream lags a few days, and NOAA's live feed reaches back a day."}${vFrame === "RTN" ? " SWAPI's velocity is in RTN (R from the Sun, about −X GSE)." : ""}${used.some(u => /I-ALiRT SWAPI|NOAA's real-time plasma/.test(u)) ? " The real-time plasma values are SWAPI's pseudo-moments from IMAP's I-ALiRT stream, not the calibrated science moments: the density in particular can differ several-fold from other monitors'." : ""}` };
+             banner: !sv.fgm && !sv.dis ? "No IMAP data for this moment yet: CDAWeb's science files run to the end of July 2026 so far, its copy of IMAP's I-ALiRT real-time stream lags a few days, and NOAA's live feed reaches back a day."
+               : noaaPlasma ? "No density: NOAA's real-time density for IMAP reads about nine times SOLAR-1's, so it is not drawn." : null,
+             notes: `IMAP (NASA) at L1, at the spacecraft's own time (not shifted to Earth). ${used.length ? `From ${used.join("; ")}, via ${used.some(u => /NOAA/.test(u)) ? "CDAWeb HAPI and NOAA SWPC" : "CDAWeb HAPI"}.` : "No IMAP data for this interval: CDAWeb's science files run to the end of July 2026 so far, its copy of the I-ALiRT real-time stream lags a few days, and NOAA's live feed reaches back a day."}${gseV ? ` SWAPI publishes its velocity in RTN. It is drawn here on GSE axes (R from the Sun to IMAP${orbit ? ", from SSCWeb's position" : ", taken along the Sun–Earth line"}; T along the Sun's rotation pole × R; N = R × T), and in the Sun's frame, like the other monitors' velocities: Earth's 30 km/s orbital motion is removed, which the spacecraft-frame values would carry as about +30 km/s in Y. The speed is the Sun-frame one too.` : ""}${provisional ? ` ${provisional} of the fits used a preliminary field or a predicted ephemeris.` : ""}${sw.n ? " Fits flagged bad or failed are left out." : ""}${ialirtPlasma ? " The real-time plasma values are SWAPI's pseudo-moments from IMAP's I-ALiRT stream, not the calibrated science fits (against those, on 2026-07-15, density and temperature read about 20% high and the speed within 1%); the stream has no velocity vector." : ""}${noaaPlasma ? " NOAA's rows for IMAP carry no velocity vector, and their density is not drawn: over 24 hours on 2026-11-16 it read about nine times SOLAR-1's in the same feed, while its speed read × 1.02 and its temperature × 0.77." : ""}` };
   }
 
   // ───────────────────────── GOES (Helios's GOES adapter: LASP's Space Weather Portal LaTiS) ─────────────────────────
