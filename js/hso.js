@@ -66,6 +66,59 @@
     const s = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
     return ms ? `${s}.${String(d.getUTCMilliseconds()).padStart(3, "0")}` : s;
   }
+  // ── Save Data as CSV (Helios's PlottedCSV): the text helpers and a small zip writer ──
+  const CSV_SUB = { 0: "₀", 1: "₁", 2: "₂", 3: "₃", 4: "₄", 5: "₅", 6: "₆", 7: "₇", 8: "₈", 9: "₉", a: "ₐ", e: "ₑ", h: "ₕ", i: "ᵢ", j: "ⱼ", k: "ₖ", l: "ₗ", m: "ₘ", n: "ₙ", o: "ₒ", p: "ₚ", r: "ᵣ", s: "ₛ", t: "ₜ", u: "ᵤ", v: "ᵥ", x: "ₓ", "+": "₊", "-": "₋", "−": "₋" };
+  const CSV_SUP = { 0: "⁰", 1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶", 7: "⁷", 8: "⁸", 9: "⁹", i: "ⁱ", n: "ⁿ", "+": "⁺", "-": "⁻", "−": "⁻", "(": "⁽", ")": "⁾" };
+  /** A figure label as plain text: "N_{i}" → "Nᵢ", "He^{++}" → "He⁺⁺"; a sub- or superscript with no Unicode form stays
+   *  inline ("V_{e⊥}" → "Ve⊥"). */
+  function plainText(str) {
+    return String(str || "").replace(/([_^])\{([^}]*)\}/g, (m, k, body) => {
+      const map = k === "_" ? CSV_SUB : CSV_SUP, chars = [...body];
+      return chars.every(c => map[c]) ? chars.map(c => map[c]).join("") : body;
+    });
+  }
+  /** C's %.7g, as Helios writes its CSV numbers; nan and ±inf as Swift prints them there. */
+  function g7(v) {
+    if (Number.isNaN(v)) return "nan";
+    if (!isFinite(v)) return v > 0 ? "inf" : "-inf";
+    if (v === 0) return Object.is(v, -0) ? "-0" : "0";
+    const [m, ex] = v.toExponential(6).split("e"), e = +ex;
+    const trim = (x) => (x.includes(".") ? x.replace(/0+$/, "").replace(/\.$/, "") : x);
+    if (e < -4 || e >= 7) return `${trim(m)}e${e < 0 ? "-" : "+"}${String(Math.abs(e)).padStart(2, "0")}`;
+    return trim(v.toFixed(Math.max(0, 6 - e)));
+  }
+  const csvField = (s) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  const isoMs = (t) => new Date(Math.round(T0 + t * 1000)).toISOString();   // yyyy-MM-ddTHH:mm:ss.SSSZ, Helios's time_utc
+  let crcTable = null;
+  function crc32(u8) {
+    if (!crcTable) crcTable = Uint32Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+    let c = 0xffffffff;
+    for (let i = 0; i < u8.length; i++) c = crcTable[(c ^ u8[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+  /** Files [{ name, text }] as an uncompressed zip (UTF-8 names), a Blob. A browser cannot write a folder; the zip opens
+   *  to the same folder Helios writes into Downloads. */
+  function zipBlob(files) {
+    const enc = new TextEncoder(), parts = [], central = [], d = new Date();
+    const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    let off = 0;
+    for (const f of files) {
+      const name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data);
+      const head = (sig, extra) => { const h = new DataView(new ArrayBuffer(extra)); h.setUint32(0, sig, true); return h; };
+      const lh = head(0x04034b50, 30);
+      lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true); lh.setUint16(10, time, true); lh.setUint16(12, date, true);
+      lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true);
+      parts.push(lh.buffer, name, data);
+      const ch = head(0x02014b50, 46);
+      ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(12, time, true); ch.setUint16(14, date, true);
+      ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true); ch.setUint32(42, off, true);
+      central.push(ch.buffer, name);
+      off += 30 + name.length + data.length;
+    }
+    const size = central.reduce((s, x) => s + x.byteLength, 0), end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, size, true); end.setUint32(16, off, true);
+    return new Blob([...parts, ...central, end.buffer], { type: "application/zip" });
+  }
   /** Values as Helios's tracker writes them. */
   function fmtVal(v) {
     const a = Math.abs(v);
@@ -1220,7 +1273,7 @@
       const cvr = LIVE && mission === "mms" && D0.craft && D0.craft[D0.n] ? D0.craft[D0.n].coverage || null : null, tier = D.tier || "native";
       barOn = !!(cfg.coverage && mission === "mms" && (D0.bu || (cvr && ((cvr.burst && cvr.burst.length) || (cvr.fast && cvr.fast.length)))));
       L = layout(ctx, w, h, rows);
-      L.yOf = []; L.acc = []; L.yOf2 = [];
+      L.yOf = []; L.acc = []; L.yOf2 = []; L.D = D; L.R = R; L.a = a; L.b = b;   // the tier, frame and span drawn, for table()
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
       const Pl = L.plot, xOf = (t) => Pl.x + (t - a) / (b - a) * Pl.w;
       info = { burst: null, e: null };
@@ -1269,6 +1322,7 @@
           else rich(ctx, "no data", Rw.x + Rw.w / 2, Rw.y + Rw.h / 2, { size: 9, align: "center", color: "rgba(0,0,0,0.55)" });
           L.yOf.push(null); L.acc.push(null); L.yOf2.push(null);
         } else if (r.spec) {
+          Rw.specD = D.tier === "survey" ? D : D0;          // the records the spectrogram is drawn from, for table()
           const win = specRange(D, r.spec, r.range, a, b, true), E = r.edit;
           if (E && E.zLo != null) win[0] = E.zLo;
           if (E && E.zHi != null) win[1] = E.zHi;
@@ -1281,6 +1335,7 @@
           if (r.lazy && LIVE && mission === "mms" && !(D.lazyDone && D.lazyDone[r.lazy])) fetchingBar(ctx, Rw, r.lazy, D.n);
           let lo = Infinity, hi = -Infinity;
           const accs = r.lines.map(line => accessor(line, R, r.key)), rrs = r.lines.map(line => runs(D, line.ds, a, b, true));
+          Rw.accs = accs; Rw.rrs = rrs;                     // the values as drawn, for table()
           const lg = (acc) => (S) => { const f = acc(S); return f && ((i) => { const v = f(i); return v > 0 ? Math.log10(v) : NaN; }); };
           accs.forEach((acc, i) => { if (!r.lines[i].axis2) [lo, hi] = extent(rrs[i], r.log ? lg(acc) : acc, lo, hi, a, b); });
           if (!isFinite(lo)) { lo = -1; hi = 1; }
@@ -1585,7 +1640,59 @@
     over.addEventListener("dblclick", () => app.setFocus(...app.home));
     /** The subplot under a y on the figure (for the editor), with its letter. */
     const rowAt = (y) => { const R = L && L.rows.find(R => y >= R.y && y <= R.y + R.h); return R ? Object.assign({ letter: "abcdefghijklmnopqrst"[R.k] }, R.row) : null; };
-    return { draw, overlay, cfg, rowAt, get info() { return info; }, get rows() { return L ? L.rows.length : 0; } };
+    /** The numbers behind the last draw, row by row (Helios's PlottedSnapshot, for Save Data as CSV): each line's records
+     *  in the span, after the window's corrections and LMN frame and at the tier drawn; each spectrogram's records with
+     *  their own energy table. Rows still loading or with no data come back as { title, missing: true }. */
+    function table() {
+      if (!L) return null;
+      const a = L.a, b = L.b, R = L.R, out = [];
+      for (const Rw of L.rows) {
+        const r = Rw.row, label = R && r.comp != null ? r.label.replace(/\{[xyz]\}/, `{${LMN[r.comp]}}`) : r.label;
+        const title = plainText(label), unit = plainText(String(r.unit || "").replace(/^\((.*)\)$/, "$1"));
+        if (r.spec) {
+          const Dsp = Rw.specD;
+          if (!Dsp) { out.push({ title, missing: true }); continue; }
+          const groups = new Map();
+          let coded = false;
+          for (const [S, i0, i1] of runs(Dsp, r.spec, a, b, true)) {
+            const nc = S.cols.spec, n2 = S.cols.etab || nc, store = S.store || (D0.m && (D0.m.spectra[r.range] || D0.m.spectra.dis).log10) || [0, 1];
+            for (let i = Math.max(0, i0); i < Math.min(S.t.length, i1); i++) {
+              if (S.t[i] < a || S.t[i] > b) continue;
+              const e = S.eidx ? S.eidx[i] : 0, nr = Math.min(nc, S.etabN ? S.etabN[e] : n2), en = Array.from(S.etab.subarray(e * n2, e * n2 + nr)), key = en.join();
+              let g = groups.get(key);
+              if (!g) groups.set(key, g = { energies: en, t: [], rows: [] });
+              const row = new Array(nr);
+              for (let j = 0; j < nr; j++) {
+                if (S.specLog) { const l = S.specLog[i * nc + j]; row[j] = isFinite(l) ? 10 ** l : NaN; }
+                else { const v = S.spec[i * nc + j]; row[j] = v ? 10 ** (store[0] + (v - 1) / 254 * (store[1] - store[0])) : NaN; coded = true; }
+              }
+              g.t.push(S.t[i]); g.rows.push(row);
+            }
+          }
+          const flux = r.cbar || (r.spec === "esp" && cfg.mission === "c4" ? "keV/cm²-s-sr-keV" : "eV/cm²-sr-eV-s");
+          out.push({ title, unit: flux, axisUnit: unit, spec: [...groups.values()].filter(g => g.t.length), coded });
+          continue;
+        }
+        if (!Rw.accs) { out.push({ title, missing: true }); continue; }
+        const lines = r.lines.map((line, k) => {
+          const f0 = Rw.accs[k], t = [], v = [];
+          for (const [S, i0, i1] of Rw.rrs[k]) {
+            const f = f0(S);
+            if (!f) continue;
+            const sh = line.shift ? line.shift(S) : 0;
+            for (let i = Math.max(0, i0); i < Math.min(S.t.length, i1); i++) {
+              const ti = S.t[i] + sh;
+              if (ti < a || ti > b) continue;
+              t.push(ti); v.push(f(i));
+            }
+          }
+          return { name: plainText(legendOf(line, R)), unit: line.over ? plainText(String(line.unit || "").replace(/^\((.*)\)$/, "$1")) : unit, t, v };
+        });
+        out.push({ title, unit, lines });
+      }
+      return { a, b, tier: L.D.tier || "native", rows: out };
+    }
+    return { draw, overlay, cfg, rowAt, table, get info() { return info; }, get rows() { return L ? L.rows.length : 0; } };
   }
 
   // ───────────────────────── the Now panel's figures (hso-now.js): drawn by the data windows' own renderer ─────────────────────────
@@ -2206,6 +2313,7 @@
   const RESET = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4 8h8M6 5.6L3.8 8 6 10.4M10 5.6L12.2 8 10 10.4" fill="none" stroke="#14161b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const HAM = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
   const SAVE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2v7.6M4.9 6.9 8 10l3.1-3.1M3 11.2v1.6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1.6" stroke-linejoin="round"/></svg>';
+  const CSV = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.4" y="3" width="11.2" height="10" rx="1.4"/><path d="M2.4 6.4h11.2M2.4 9.7h11.2M6.2 6.4V13M9.9 6.4V13"/></svg>';   // Helios's "tablecells"
   const SAVED = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="#5fd08a" stroke="none"/><path d="M4.8 8.3 7 10.5l4.3-4.8" stroke="#0c1410" stroke-width="1.7" stroke-linejoin="round"/></svg>';
   const CANON = ["b", "ionSpec", "elecSpec", "n", "ti", "te", "tanis", "p", "vi", "ve", "jfpi", "jpar", "jperp", "e"];
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
@@ -2250,7 +2358,7 @@
         <button class="fw-ic fw-sb" aria-label="Show the figure and analysis tools" aria-pressed="false" title="Figure and analysis tools">${HAM}</button>
         ${host.pinned != null ? `<span class="fw-pin" title="Pinned: opened while the time machine was at this moment">${clock(host.pinned)} UTC</span>` : ""}
         <div class="fw-cuts" hidden><span class="fc-l">VDF cuts</span><span class="fc-chips"></span>${HAS_CRESCENT ? `<button class="fc-cres" title="${esc(CRESCENT_HELP)}">Crescent</button>` : ""}<div class="fw-add"><button class="pick fc-add" aria-haspopup="menu" aria-expanded="false" title="Add a VDF cut: a species at the current time. Then drag its numbered line, or type its time in its column."><b>+</b>Add</button><div class="pick-menu fc-menu" role="menu" hidden></div></div></div>
-        <div class="fw-range"><button class="fw-ic fw-save" aria-label="Save this figure as a PNG" title="Save this figure as a PNG, as it is drawn: its range, subplots, LMN frame, painted regions and VDF cuts">${SAVE}</button><button class="fw-reset" hidden aria-label="Reset the time range" title="Reset the trimmed time range to the full ±window (or double-click the figure)">${RESET}</button><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
+        <div class="fw-range"><button class="fw-ic fw-csv" aria-label="Save this window's data as CSV" title="Save the data as CSV files, as the window draws them. Each subplot is one file. They come in a zip with a README.">${CSV}</button><button class="fw-ic fw-save" aria-label="Save this figure as a PNG" title="Save this figure as a PNG, as it is drawn: its range, subplots, LMN frame, painted regions and VDF cuts">${SAVE}</button><button class="fw-reset" hidden aria-label="Reset the time range" title="Reset the trimmed time range to the full ±window (or double-click the figure)">${RESET}</button><button class="pick fw-rb" aria-haspopup="listbox" aria-expanded="false"><span></span>${CHEV}</button><div class="pick-menu" role="listbox" aria-label="Time range" hidden>${WINDOW_CHOICES.map(m => `<button role="option" data-m="${m}">${rangeLabel(m)}</button>`).join("")}</div></div>
       </div>
       <p class="fw-banner" hidden></p>
       <div class="fw-main">
@@ -3151,6 +3259,86 @@
         clearTimeout(saveTimer);
         saveTimer = setTimeout(() => { saveBtn.innerHTML = SAVE; saveBtn.classList.remove("done"); }, 1600);
       }, "image/png");
+    });
+    // ── Save Data as CSV (Helios's PlottedCSV.panelFiles): every subplot as drawn, after the window's corrections and at
+    //    the tier drawn, one CSV per subplot and time base with a single header row, time_utc first; a spectrogram one
+    //    row per record and one column per energy bin. A README names each file. The Mac app writes the files into a new
+    //    folder in Downloads; a browser cannot, so the same folder comes as a zip, named as Helios names the folder. ──
+    function dataFiles() {
+      W.drawNow();
+      const T = W.panel.table();
+      if (!T) return null;
+      const name = CRAFT[W.n].name, mms = C.mission === "mms";
+      const fixes = [];
+      if (mms && C.spintone) fixes.push("spin-tone correction");
+      if (C.smooth) fixes.push(`boxcar smoothing (width ${C.smoothW})`);
+      if (C.outliers) fixes.push("outlier rejection");
+      if (C.lmn) fixes.push(`LMN rotation${C.lmn.label ? ` (${C.lmn.label})` : ""}`);
+      let readme = `${name} — the data of the window as drawn, ${isoMs(T.a)} – ${isoMs(T.b)} UTC.\n`;
+      readme += `Saved by Helios Live ${new Date().toISOString()} UTC. Times are UTC (ISO 8601, ms). Missing values are nan.\n`;
+      readme += `Window corrections: ${fixes.length ? fixes.join(", ") : "none"}.\n`;
+      readme += "Numbers are written with up to 7 significant digits. They keep the digits the archive sent. "
+        + (mms ? "MMS data come from CDAWeb's CDF files at full precision, or from its HAPI text service where a CDF subset was slow (FPI moments and spectra there: 3 significant digits; FGM: 6).\n"
+               : "CDAWeb's HAPI text service can send fewer digits than its CDF files hold.\n");
+      if (T.tier === "reduced") readme += "At this time range the window draws B box-averaged to 0.15 s and the burst electron moments averaged onto the ion records, as Helios does; the files hold those averages.\n";
+      if (T.tier === "survey") readme += "At this time range the window draws survey data only, with B box-averaged to 4.5 s, as Helios does; the files hold those averages.\n";
+      readme += "\n";
+      const files = [], left = [];
+      const safe = (x) => x.replace(/[\/:\\?%*|"<>\n]/g, "-").split(/\s+/).filter(Boolean).join(" ");
+      T.rows.forEach((row, k) => {
+        const base = `${pad2(k + 1)} ${safe(row.title)}`;
+        if (row.missing) { left.push(row.title); return; }
+        if (row.spec) {
+          if (!row.spec.length) { left.push(row.title); return; }
+          const axis = row.axisUnit === "Hz" ? "frequency bin centers (Hz)" : `energy bin centers${row.axisUnit ? ` (${row.axisUnit})` : ""}`;
+          row.spec.forEach((g, j) => {
+            const fname = base + (row.spec.length > 1 ? ` (${j + 1})` : "") + ".csv", out = ["time_utc," + g.energies.map(g7).join(",")];
+            for (let i = 0; i < g.t.length; i++) out.push(isoMs(g.t[i]) + "," + g.rows[i].map(g7).join(","));
+            files.push({ name: fname, text: out.join("\n") + "\n" });
+            readme += `${fname} — ${row.title} spectrogram, ${row.unit}; columns are ${axis}${row.spec.length > 1 ? `, energy table ${j + 1} of ${row.spec.length}` : ""}, ${g.t.length} rows.`
+              + (row.coded ? " Values are read back from the page's 8-bit store (1/254 of the color range)." : "") + "\n";
+          });
+          return;
+        }
+        // lines that share a time base (same count, same first and last stamp) become one table, a column each
+        const groups = [];
+        for (const l of row.lines) {
+          const g = groups.find(g => g[0].t.length === l.t.length && g[0].t[0] === l.t[0] && g[0].t[g[0].t.length - 1] === l.t[l.t.length - 1]);
+          if (g) g.push(l); else groups.push([l]);
+        }
+        const kept = groups.filter(g => g[0].t.length);
+        if (!kept.length) { left.push(row.title); return; }
+        kept.forEach((g, j) => {
+          const fname = base + (kept.length > 1 ? ` (${j + 1})` : "") + ".csv";
+          const out = ["time_utc," + g.map(l => csvField(l.name + (l.unit ? ` [${l.unit}]` : ""))).join(",")];
+          const t = g[0].t;
+          for (let i = 0; i < t.length; i++) { let line = isoMs(t[i]); for (const l of g) line += "," + g7(l.v[i]); out.push(line); }
+          files.push({ name: fname, text: out.join("\n") + "\n" });
+          readme += `${fname} — ${row.title}: ${g.map(l => l.name).join(", ")}${row.unit ? ` (${row.unit})` : ""}, ${t.length} rows.\n`;
+        });
+      });
+      if (left.length) readme += `\nNot saved, with no data in the range or still loading: ${left.join(", ")}.\n`;
+      readme += "\nNot saved: painted regions, VDF cuts and pins.\n";
+      readme += "\nPython: pandas.read_csv(path, parse_dates=[\"time_utc\"]) reads each file.\n";
+      files.unshift({ name: "README.txt", text: readme });
+      const hm = (t) => clock(t).slice(0, 5).replace(":", ""), day = new Date(T0 + T.a * 1000).toISOString().slice(0, 10);
+      return { folder: `${name} ${day} ${hm(T.a)}-${hm(T.b)} UT data`, files };
+    }
+    W.dataFiles = dataFiles;                                // (for checking the files against the figure)
+    const csvBtn = $(".fw-csv", el);
+    let csvTimer = null;
+    csvBtn.addEventListener("click", () => {
+      if (!W.n || !W.panel.rows) return;
+      let out;
+      try { out = dataFiles(); } catch (err) { console.error(err); csvBtn.title = "The data could not be saved."; return; }
+      if (!out || out.files.length < 2) { csvBtn.title = "There is no data in this range to save."; return; }
+      const blob = zipBlob(out.files.map(f => ({ name: `${out.folder}/${f.name}`, text: f.text })));
+      const url = URL.createObjectURL(blob), link = Object.assign(document.createElement("a"), { href: url, download: `${out.folder}.zip` });
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      csvBtn.innerHTML = SAVED; csvBtn.classList.add("done");
+      clearTimeout(csvTimer);
+      csvTimer = setTimeout(() => { csvBtn.innerHTML = CSV; csvBtn.classList.remove("done"); }, 1600);
     });
     $(".fw-sb", el).addEventListener("click", () => { W.sideOpen = !W.sideOpen; renderSide(); relayout(); });
     W.openTools = (tab) => { W.sideOpen = true; if (tab) W.tab = tab; renderSide(); relayout(); };
