@@ -487,7 +487,7 @@
         else { const v = S.spec[i * nc + j]; if (v > 1) q.push(store[0] + (v - 1) / 254 * (store[1] - store[0])); }
       }
     }
-    if (q.length <= 30) return ({ dis: [3, 7], hpH: [3, 7], hpHepp: [2, 6], hpHep: [1, 5], hpO: [1, 5], epsd: [-16, -8] })[rangeKey] || [4, 9];
+    if (q.length <= 30) return ({ dis: [3, 7], hpH: [3, 7], hpHepp: [2, 6], hpHep: [1, 5], hpO: [1, 5], epsd: [-16, -8], radio: [1, 6] })[rangeKey] || [4, 9];
     q.sort((x, y) => x - y);
     const lg = (l) => l;
     const hi = Math.ceil(lg(q[Math.floor(q.length * 0.995)]) - 1e-9);
@@ -779,6 +779,7 @@
   const fz = (sp, c) => ({ title: `E vs −V${sp === "des" ? "ₑ" : "ᵢ"}×B  · ${"xyz"[c]}`, label: `E_{${"xyz"[c]}}`, unit: "(mV/m)", w: 0.8, zero: true, lazy: "edp",
                           comp: c, lines: [Object.assign(Vc("efi", "e", c, COL.mag, `E_{${"xyz"[c]}}`), { lmnLabel: (k) => `E_{${k}}` }),
                                            Object.assign(rotd(derive(sp, COL.z, `−V_{${sp === "des" ? "e" : "i"}}×B`, minusVxB(c)), c, minusVxB, () => `−V_{${sp === "des" ? "e" : "i"}}×B`), { shift: midStamp })] });
+  const FLUX_COL = ["#001af2", "#d90d0d", "#008000", "#ff9900", "#7f33b3", "#008c8c"];   // Helios's fluxPalette, in order
   const KINDS = {
     b: { title: "B — magnetic field", label: "B", unit: "(nT)", w: 1.25, zero: true, lines: [Sc("fgm", "b", 3, COL.mag, "|B|"), ...XYZ("fgm", "b")] },
     ionSpec: { title: "Ion spectrogram", label: "Ions", unit: "(eV)", w: 1, spec: "dis", range: "dis" },
@@ -857,6 +858,30 @@
           lines: [Sc("gxrs", "f", 0, COL.x, "1–8 Å"), Sc("gxrs", "f", 1, COL.z, "0.5–4 Å")] },
     comp: { title: "CIS composition  O⁺ / He⁺ / He⁺⁺", label: "CIS comp.", unit: "(cm⁻³)", w: 0.9, log: true,
             lines: [Sc("cmpO", "v", 0, COL.x, "O^{+}"), Sc("cmpHe1", "v", 0, COL.z, "He^{+}"), Sc("cmpHe2", "v", 0, COL.y, "He^{++}")] },
+    // MAVEN (Helios's fetchMAVEN): its own rows, titled as Helios titles them, and the in-situ key parameters it adds on request
+    mvTi: { title: "SWIA Tᵢ", label: "SWIA T_{i}", unit: "(eV)", w: 0.9, log: true, lines: [Sc("dis", "tp", 0, COL.x, "T")] },
+    mvAlt: { title: "Altitude", label: "Altitude", unit: "(km)", w: 0.8, lines: [Sc("alt", "km", 0, COL.mag, "areoid")] },
+    mvStaN: { title: "STATIC nᵢ  H⁺ / O⁺ / O₂⁺", label: "STATIC n_{i}", unit: "(cm⁻³)", w: 0.9, log: true,
+              lines: [Sc("kp", "stn", 0, FLUX_COL[0], "H^{+}"), Sc("kp", "stn", 1, FLUX_COL[1], "O^{+}"), Sc("kp", "stn", 2, FLUX_COL[2], "O_{2}^{+}")] },
+    mvStaT: { title: "STATIC Tᵢ  H⁺ / O⁺ / O₂⁺", label: "STATIC T_{i}", unit: "(eV)", w: 0.9, log: true,
+              lines: [Sc("kp", "stt", 0, FLUX_COL[0], "H^{+}"), Sc("kp", "stt", 1, FLUX_COL[1], "O^{+}"), Sc("kp", "stt", 2, FLUX_COL[2], "O_{2}^{+}")] },
+    mvSweN: { title: "SWEA nₑ", label: "SWEA n_{e}", unit: "(cm⁻³)", w: 0.8, log: true, lines: [Sc("kp", "swn", 0, FLUX_COL[0], "SWEA")] },
+    mvTe: { title: "Tₑ  LPW / SWEA", label: "T_{e}", unit: "(eV)", w: 0.8, log: true, lines: [Sc("kp", "te", 0, FLUX_COL[0], "LPW"), Sc("kp", "te", 1, FLUX_COL[1], "SWEA")] },
+    mvPdyn: { title: "Dynamic pressure (SWIA)", label: "Dynamic pressure", unit: "(nPa)", w: 0.8, log: true, lines: [Sc("kp", "pdyn", 0, FLUX_COL[0], "SWIA")] },
+    mvSep: { title: "SEP 30 keV–1 MeV", label: "SEP 30 keV–1 MeV", unit: "(1/(cm²·s·sr))", w: 0.9, log: true,
+             lines: [["ions 1F", 0], ["ions 2F", 1], ["e^{−} 1F", 2], ["e^{−} 2F", 3]].map(([nm, c]) => Sc("kp", "sep", c, FLUX_COL[c], nm)) },
+    mvNgims: { title: "NGIMS neutrals", label: "NGIMS neutrals", unit: "(cm⁻³)", w: 0.9, log: true,   // Helios's order: CO₂ O N₂ Ar He CO NO
+               lines: [["CO_{2}", 6], ["O", 1], ["N_{2}", 3], ["Ar", 5], ["He", 0], ["CO", 2], ["NO", 4]].map(([nm, c], k) => Sc("kp", "ngims", c, FLUX_COL[k % 6], nm)) },
+    mvPot: { title: "S/C potential (LPW)", label: "S/C potential (LPW)", unit: "(V)", w: 0.8, zero: true, lines: [Sc("kp", "pot", 0, FLUX_COL[0], "LPW")] },
+    // STEREO-A (Helios's fetchStereo)
+    stT: { title: "Proton T", label: "Proton T", unit: "(eV)", w: 0.9, log: true, lines: [Sc("dis", "tp", 0, FLUX_COL[0], "Tp")] },
+    stBeta: { title: "Plasma β", label: "Plasma β", unit: "", w: 0.8, log: true, lines: [Sc("stx", "beta", 0, FLUX_COL[0], "β")] },
+    stP: { title: "Pressure", label: "Pressure", unit: "(nPa)", w: 0.9, log: true,
+           lines: [Sc("stx", "p", 0, FLUX_COL[0], "total"), Sc("stx", "p", 1, FLUX_COL[1], "magnetic"), Sc("stx", "p", 2, FLUX_COL[2], "dynamic")] },
+    stR: { title: "Heliocentric distance", label: "Heliocentric distance", unit: "(AU)", w: 0.7, lines: [Sc("stx", "r", 0, FLUX_COL[0], "r")] },
+    stHet: { title: "HET flux", label: "HET flux", unit: "(1/(cm²·sr·s·MeV/n))", w: 1, log: true, lines: [] },
+    stHfr: { title: "S/WAVES HFR", label: "HFR", unit: "(kHz)", w: 1, spec: "hfr", range: "radio", cbar: "sfu" },
+    stLfr: { title: "S/WAVES LFR", label: "LFR", unit: "(kHz)", w: 1, spec: "lfr", range: "radio", cbar: "sfu" },
   };
   for (const [k, c] of [["exbX", 0], ["exbY", 1], ["exbZ", 2]])
     KINDS[k] = { title: `E×B/B² vs V⊥  · ${"xyz"[c]}`, label: `V⊥_{${"xyz"[c]}}`, unit: "(km/s)", w: 0.8, zero: true, lazy: "edp", comp: c,
@@ -949,11 +974,28 @@
       relabel: { n: { title: "Proton density", lines: [Sc("dis", "n", 0, COL.ni, "N_{i}"), Sc("des", "n", 0, COL.ne, "N_{e}")] }, vi: { title: "Proton velocity  V (GSE)" } },
     },
   });
+  // MAVEN and STEREO-A, the subplots Helios's windows draw, in its order (fetchMAVEN, fetchStereo); MAVEN's further key
+  // parameters are listed off, as Helios offers them on request
+  MISSIONS.maven = {
+    sections: [["MAG", ["b"]], ["SWIA · SWEA · LPW", ["elecSpec", "n", "vi", "mvTi", "swSpeed"]], ["Orbit", ["mvAlt"]],
+               ["In-situ key parameters", ["mvStaN", "mvStaT", "mvSweN", "mvTe", "mvPdyn", "mvSep", "mvNgims", "mvPot"]]],
+    stack: ["b", "elecSpec", "n", "vi", "mvTi", "swSpeed", "mvAlt"],
+    relabel: { b: { title: "B — magnetic field (MSO)", label: "B MSO" }, vi: { title: "Ion velocity  Vᵢ (MSO, SWIA)" },
+               elecSpec: { spec: "swea", range: "swea", label: "SWEA e^{−}", title: "SWEA electron spectrogram" },
+               n: { title: "Density  Nᵢ (SWIA) / Nₑ (LPW)", lines: [Sc("dis", "n", 0, COL.ni, "N_{i}"), Sc("lpw", "n", 0, COL.ne, "N_{e}")] } },
+  };
+  MISSIONS.sta = {
+    sections: [["IMPACT · PLASTIC", ["b", "n", "vi", "swSpeed", "stT", "stBeta", "stP", "stR"]], ["HET", ["stHet"]], ["S/WAVES", ["stHfr", "stLfr"]]],
+    stack: ["b", "n", "vi", "swSpeed", "stT", "stBeta", "stP", "stR", "stHet", "stHfr", "stLfr"],
+    relabel: { b: { title: "B — magnetic field (RTN)", label: "B RTN", lines: [Sc("fgm", "b", 3, COL.mag, "|B|"), Vc("fgm", "b", 0, COL.x, "R"), Vc("fgm", "b", 1, COL.y, "T"), Vc("fgm", "b", 2, COL.z, "N")] },
+               n: { title: "Proton density", lines: [Sc("dis", "n", 0, COL.ni, "N_{p}")] },
+               vi: { title: "Proton velocity  V (RTN)", lines: [Vc("dis", "v", 0, COL.x, "R"), Vc("dis", "v", 1, COL.y, "T"), Vc("dis", "v", 2, COL.z, "N")] } },
+  };
   MISSIONS.goes = { sections: [["MAG", ["b"]], ["X-rays", ["gX"]], ["Particles", ["gP", "gE", "gDP", "gDE"]]], stack: ["b", "gX", "gP", "gE", "gDP", "gDE"],
                     relabel: { b: { title: "B — magnetic field (GSE)" } } };
   MISSIONS.idx = { sections: [["Upstream", ["giMach", "giMach2"]], ["Ground", ["giKp", "giAeal", "giAu", "giSymh", "giDst"]]],
                    stack: ["giMach", "giKp", "giAeal", "giAu", "giSymh"] };          // Dst off: SYM-H is its 1-min counterpart
-  for (const k of ["tha", "c4", "omni", "l1", "goes", "idx"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
+  for (const k of ["tha", "c4", "omni", "l1", "goes", "idx", "maven", "sta"]) MISSIONS[k].presets = [["Default", MISSIONS[k].stack]];
   /** The subplot `key` as the given mission draws it. */
   function kindOf(mission, key) {
     const k = KINDS[key], r = MISSIONS[mission].relabel && MISSIONS[mission].relabel[key];
@@ -2277,11 +2319,13 @@
     g16: { name: "GOES-16", col: "#34d27b", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g17: { name: "GOES-17", col: "#2bb86a", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
     g18: { name: "GOES-18", col: "#5fe39a", mission: "goes", family: ["g16", "g17", "g18", "g19"] }, g19: { name: "GOES-19", col: "#1f9d57", mission: "goes", family: ["g16", "g17", "g18", "g19"] },
     sdo: { name: "SDO", col: "#ffe27a", mission: "sdo", family: ["sdo"] },        // its window is the Sun's images (SunWindow)
+    maven: { name: "MAVEN", col: "#ff9c7a", mission: "maven", family: ["maven"] },  // Helios's helioColor
+    sta: { name: "STEREO-A", col: "#e5533a", mission: "sta", family: ["sta"] },     // red, as its coronagraph
   });
   /** The craft a click on the view opens: the demo carries one probe of each other mission, and stands it in for the rest. */
   const representative = (name) => {
     if (LIVE) {
-      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr", "SOLAR-1": "solar1", IMAP: "imap", SDO: "sdo", Sun: "sdo" }[name];
+      const art = { "ARTEMIS-P1": "thb", "ARTEMIS-P2": "thc", ACE: "ace", Wind: "wind", DSCOVR: "dscovr", "SOLAR-1": "solar1", IMAP: "imap", SDO: "sdo", Sun: "sdo", MAVEN: "maven", "STEREO-A": "sta" }[name];
       if (art) return art;
       const g = /^GOES-(1[6-9])$/.exec(name);
       if (g) return `g${g[1]}`;
@@ -2291,7 +2335,7 @@
     return /^THEMIS/.test(name) ? "tha" : /^Cluster/.test(name) ? "c4" : null;
   };
   const WINDOW_CHOICES = [5, 10, 30, 90, 180];             // ±minutes, as HSOScreen.windowChoices
-  const NO_ANALYSIS = new Set(["l1", "omni", "idx"]);
+  const NO_ANALYSIS = new Set(["l1", "omni", "idx", "maven", "sta"]);
   const IDX_CHOICES = [720, 1440, 2880, 4320];             // the indices window: ±12 h … ±3 d (GeoIndicesPanelView.halfWidths)
   const NOW_PAGE = LIVE && !!SRC.now;                      // ?t=now: a window ends at the present, so its range is "last …"
   const rangeLabel = (m) => (NOW_PAGE && m < 720 ? `last ${2 * m >= 60 && (2 * m) % 60 === 0 ? `${2 * m / 60}h` : `${2 * m}m`}`
@@ -2700,8 +2744,11 @@
       if (!D.craft[k]) { busy.textContent = `Loading ${Cr.name}…`; busy.hidden = false; }
       try { if (Cr.mission === "mms") await loadCraft(D, k); else await loadMission(D, k); }
       catch (e) { busy.textContent = `${Cr.name}'s data could not be loaded.`; busy.hidden = false; return; }
-      busy.hidden = true;
-      const data = D.craft[k], newMission = !W.n || CRAFT[W.n].mission !== Cr.mission;
+      const data = D.craft[k];
+      // a mission that has ended (MAVEN after 2025-12-06): its window says so in place of empty panels
+      busy.classList.toggle("ended", !!data.ended);
+      if (data.ended) { busy.textContent = data.ended; busy.hidden = false; } else busy.hidden = true;
+      const newMission = !W.n || CRAFT[W.n].mission !== Cr.mission;
       Object.assign(W.view, { n: k, sv: data.sv, bu: data.bu, segs: data.segs, erange: data.erange, kind: data.kind, relabel: data.relabel || null, lazyDone: data.lazyDone || null, span: host.app ? null : data.span || null });
       W.n = k;
       if (newMission || LIVE) {                              // live: only the subplots that probe has data for that day
@@ -3290,7 +3337,7 @@
         if (row.missing) { left.push(row.title); return; }
         if (row.spec) {
           if (!row.spec.length) { left.push(row.title); return; }
-          const axis = row.axisUnit === "Hz" ? "frequency bin centers (Hz)" : `energy bin centers${row.axisUnit ? ` (${row.axisUnit})` : ""}`;
+          const axis = /Hz$/.test(row.axisUnit || "") ? `frequency bin centers (${row.axisUnit})` : `energy bin centers${row.axisUnit ? ` (${row.axisUnit})` : ""}`;
           row.spec.forEach((g, j) => {
             const fname = base + (row.spec.length > 1 ? ` (${j + 1})` : "") + ".csv", out = ["time_utc," + g.energies.map(g7).join(",")];
             for (let i = 0; i < g.t.length; i++) out.push(isoMs(g.t[i]) + "," + g.rows[i].map(g7).join(","));

@@ -26,7 +26,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="css/site.css?v=66">
-  <link rel="stylesheet" href="css/app.css?v=10">
+  <link rel="stylesheet" href="css/app.css?v=11">
   <link rel="stylesheet" href="css/lmn.css?v=3">
 </head>
 <body class="helios-app" data-default-t="2015-10-16T13:07:02Z">
@@ -111,11 +111,12 @@
     <h3>What you are looking at</h3>
     <p><b>The view.</b> OMNI's 1-minute solar wind sizes the magnetopause and the bow shock; the view names each model it draws. Frames come from MMS's ephemeris, or are computed here for moments it has not reached. Orbits are SSCWeb's. Field lines are traced through IGRF-14 and T89 at the moment's Kp; the auroral oval follows Starkov with the hour's AL.</p>
     <p><b>MMS.</b> FGM, FPI moments and spectra, HPCA, EDP and DSP: survey for four hours around the moment and burst within ten minutes of it, with electron, ion and HPCA distribution cuts on request.</p>
-    <p><b>Other missions.</b> THEMIS and ARTEMIS, Cluster 1–4, GOES-16 to 19, ACE, Wind, DSCOVR, SOLAR-1 and IMAP, and OMNI. SOLAR-1's window has NOAA/NCEI's archived 1-minute field (from April 2026) and NOAA's real-time feed for the last day; IMAP's has CDAWeb's MAG and SWAPI science data, then its I-ALiRT real-time stream, then NOAA's feed. Where SSCWeb's definitive THEMIS and ARTEMIS orbits stop short of a recent moment, its predicted orbits are drawn. A GOES window has the satellite's field, its X-rays and the integral particle fluxes, and, for the last seven days, SWPC's differential proton and electron fluxes.</p>
+    <p><b>Other missions.</b> THEMIS and ARTEMIS, Cluster 1–4, GOES-16 to 19, ACE, Wind, DSCOVR, SOLAR-1 and IMAP, MAVEN and STEREO-A, and OMNI. SOLAR-1's window has NOAA/NCEI's archived 1-minute field (from April 2026) and NOAA's real-time feed for the last day; IMAP's has CDAWeb's MAG and SWAPI science data, then its I-ALiRT real-time stream, then NOAA's feed. Where SSCWeb's definitive THEMIS and ARTEMIS orbits stop short of a recent moment, its predicted orbits are drawn. A GOES window has the satellite's field, its X-rays and the integral particle fluxes, and, for the last seven days, SWPC's differential proton and electron fluxes.</p>
+    <p><b>MAVEN and STEREO-A.</b> Both are on the Sun rung; click one for its data window. MAVEN's window shows its data at Mars from CDAWeb: the magnetic field in MSO coordinates (MAG, 1 s), SWIA's ion moments, SWEA's electron spectrum, LPW's electron density and the altitude, with more in-situ key parameters in its Plot selection. SWIA's moments are kept only where the team's quality flags pass. MAVEN's archive ends on 2025-12-06, when the spacecraft was lost; it is drawn at Mars until then. STEREO-A's window shows the solar wind near 1 AU, where STEREO-A is in its orbit about the Sun: the field in RTN coordinates and PLASTIC's protons (1 minute), β, the pressures, HET's energetic particles and the S/WAVES radio spectra. CDAWeb's merged field and plasma file lags the present by months; the radio spectra follow within weeks. STEREO-A's position is CDAWeb's hourly heliocentric ephemeris. Both windows show each craft's data at its own time, not shifted to Earth.</p>
     <p><b>SDO.</b> Click SDO, or the Sun on the Sun rung, for the Sun as SDO saw it: AIA's 193, 304, 171, 211, 131 and 94 Å, HMI's magnetogram and continuum, or four at once. The window follows the time bar: it fetches a strip of frames across the four hours (Helioviewer's renders of the SDO archive, about 300 kB each), shows the one nearest the time bar, and fetches the exact moment once you stop dragging. The download button saves the frame on screen as a 2048-px PNG from Helioviewer (in Quad, one file per channel).</p>
     <p><b>Timing and accuracy.</b> The numbers are the archives' current Level 2 versions, read at full precision where the archive allows and not checked by hand. A moment from the last few weeks opens with positions only until the missions publish their data.</p>
     <h3>Sources</h3>
-    <p>MMS Science Data Center (LASP) · CDAWeb and SSCWeb (NASA SPDF) · NOAA SWPC (real time: RTSW, GOES, the scales, alerts and forecasts, OVATION) · WDC for Geomagnetism, Kyoto (Dst, via SWPC) · NASA CCMC (ISWA) · NOAA NCEI · LASP Space Weather Portal · ESA Cluster Science Archive · NASA SDO and Helioviewer · University of Calgary · IAGA (IGRF-14)</p>
+    <p>MMS Science Data Center (LASP) · CDAWeb and SSCWeb (NASA SPDF) · the MAVEN instrument teams (MAG, SWIA, SWEA, LPW, STATIC, NGIMS, SEP) · NASA STEREO: the IMPACT, PLASTIC and S/WAVES teams · NOAA SWPC (real time: RTSW, GOES, the scales, alerts and forecasts, OVATION) · WDC for Geomagnetism, Kyoto (Dst, via SWPC) · NASA CCMC (ISWA) · NOAA NCEI · LASP Space Weather Portal · ESA Cluster Science Archive · NASA SDO and Helioviewer · University of Calgary · IAGA (IGRF-14)</p>
     <p>Analysis methods adapted from PySPEDAS and SPEDAS using Claude Code, and extensively tested to ensure accurate translations. Earth imagery from NASA's Blue Marble. Artemis II photographs from the NASA Image and Video Library. Every model, code base and data source is cited where it is used.</p>
     <p class="la-fine">Helios is built by Dr. Jason Beedle. It is developed independently and is not supported or endorsed by NASA, NOAA, ESA or any institution. Past moments are kept in this browser for a week so they reopen quickly.</p>
   </dialog>
@@ -132,13 +133,13 @@
   <script src="js/app-page.js?v=5"></script>
   <script src="js/igrf14.js?v=38"></script>
   <script src="js/fieldlines.js?v=39"></script>
-  <script src="js/hsoview.js?v=60"></script>
+  <script src="js/hsoview.js?v=61"></script>
   <script src="js/hso-now.js?v=9"></script>
-  <script src="js/hso-live.js?v=83"></script>
+  <script src="js/hso-live.js?v=84"></script>
   <script src="js/lmn.js?v=1"></script>
   <script src="js/lmn-panel.js?v=4"></script>
   <script src="js/recon.js?v=1"></script>
   <script src="js/formation.js?v=4"></script>
-  <script src="js/hso.js?v=86"></script>
+  <script src="js/hso.js?v=87"></script>
 </body>
 </html>

@@ -23,7 +23,7 @@
   const THEMIS = { A: 0xFF74C4, D: 0xC59CFF, E: 0x6FE0FF };
   const PROBE = { 1: 0xEBEBEB, 2: 0xED7821, 3: 0x128C66, 4: 0x4FA8ED };
   const PLANET = { Mercury: [0x9AA6B8, "☿"], Venus: [0xE8C97A, "♀"], Mars: [0xE07A55, "♂"], Jupiter: [0xD9A066, "♃"] };
-  const HELIO = { Juno: 0xF2C572, MAVEN: 0xFF9C7A };
+  const HELIO = { Juno: 0xF2C572, MAVEN: 0xFF9C7A, "STEREO-A": 0xE5533A };   // HeroOrbitCanvas.helioColor (STEREO-A red, as its coronagraph)
   const NET = { themis: 0x6CF0A8, rego: 0xFF6E6E, trexRGB: 0x7CC8FF, smile: 0xC8A2FF };
   const NET_NAME = { themis: "THEMIS", rego: "REGO", trexRGB: "TREx", smile: "SMILE" };
   const CRAFT_RISE = 15, GROUP_RISE = 34;
@@ -506,7 +506,8 @@
     // The Sun as Helios builds it (SunModel.swift): a map of the whole surface at 13:07 from seven SDO/AIA 193 Å images,
     // the near side from the image of the moment and the far side from those of the rotation before, carried forward by
     // differential rotation (prepare_hso_sun.py); here it is turned to the view and drawn as a sphere.
-    let sunMap = null, sunHit = null;
+    let sunMap = null, sunHit = null, helioHits = [];
+    const helioRings = new Map();                           // one ring object per craft, so the hover test can compare them
     if (o.sun !== null) fetch(o.sun || "assets/data/hso/sun.json").then(r => r.json()).then(m => {
       const im = new Image();
       im.onload = () => {
@@ -755,13 +756,17 @@
       else circle(ctx, sunQ[0], sunQ[1], r, "rgb(255,249,108)");
       text(ctx, "☀ Sun ×15", sunQ[0], sunQ[1] + r * 1.25 + 11, `600 10px ${MONO}`, "#FFE08A");
       sunHit = { q: sunQ, r: Math.max(r * 1.25, 12) };        // live: a click on the Sun opens SDO's images (o.sunClick)
-      // Helios's heliocentric fleet on the day
+      // Helios's heliocentric fleet on the day; a click on one opens its data window (o.onOther)
+      helioHits = [];
       for (const h of S.solar.fleet) {
         const c = HELIO[h.name] ?? 0xC9B8FF, q = P.pt(world(h.pos));
-        if (h.loop.length > 1) { path(ctx, h.loop.map(world)); stroke(ctx, rgba(c, 0.6), 0.8, [3, 2]); }
+        if (h.loop && h.loop.length > 1) { path(ctx, h.loop.map(world)); stroke(ctx, rgba(c, 0.6), 0.8, [3, 2]); }
         if (q[0] < -20 || q[0] > P.W + 20 || q[1] < -20 || q[1] > P.H + 20) continue;
+        if (!helioRings.has(h.name)) helioRings.set(h.name, { kind: "helio", name: h.name });
+        const ring = helioRings.get(h.name), lit = hover && hover.ring === ring;
+        helioHits.push({ q, ring });
         circle(ctx, q[0], q[1], 4, rgba(DS.screenAlt)); circle(ctx, q[0], q[1], 2.5, rgba(c));
-        ctx.beginPath(); ctx.arc(q[0], q[1], 6.85, 0, TAU); stroke(ctx, rgba(c, 0.85), 1.3);
+        ctx.beginPath(); ctx.arc(q[0], q[1], 6.85, 0, TAU); stroke(ctx, rgba(c, lit ? 1 : 0.85), lit ? 1.8 : 1.3);
         text(ctx, h.name, q[0], q[1] + 15, `600 8px ${MONO}`, rgba(c, 0.95));
         text(ctx, `${h.au.toFixed(2)} AU`, q[0], q[1] + 25, `8px ${MONO}`, rgba(c, 0.6));
       }
@@ -1584,7 +1589,12 @@
         for (const m of stationMarks) if (Math.hypot(m.q[0] - x, m.q[1] - y) < 8) return { ring: { kind: "station", name: m.s.name, code: m.s.code, m } };
         return null;
       }
-      if (rung === "sun") return o.sunClick && sunHit && Math.hypot(sunHit.q[0] - x, sunHit.q[1] - y) < sunHit.r ? { ring: { kind: "sun", name: "Sun" } } : null;
+      if (rung === "sun") {
+        let near = null;
+        for (const m of helioHits) { const d = Math.hypot(m.q[0] - x, m.q[1] - y); if (d < 11 && (!near || d < near.d)) near = { ring: m.ring, d }; }
+        if (near) return { ring: near.ring };
+        return o.sunClick && sunHit && Math.hypot(sunHit.q[0] - x, sunHit.q[1] - y) < sunHit.r ? { ring: { kind: "sun", name: "Sun" } } : null;
+      }
       for (const d of formDots) if (Math.hypot(d.q[0] - x, d.q[1] - y) < 6.5) return { dot: d };
       let best = null;
       for (const r of rings) { const d = Math.hypot(r.q[0] - x, r.q[1] - y); if (d < 14 && (!best || d < best.d)) best = { ring: r, d }; }

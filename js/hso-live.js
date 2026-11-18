@@ -23,7 +23,8 @@
   const RE_KM = 6371.2, MK_EV = 86.1733, DEG = Math.PI / 180;
   // log10 keV/(cm² s sr keV) the 8-bit spectra are stored over: wide, so no flux is clipped; each window then picks
   // its own color range from the data, as Helios does (hso.js specRange)
-  const SPEC_RANGE = { dis: [0.5, 10.0], des: [1.5, 10.0], hpca: [-1.0, 9.0], epsd: [-16.0, -2.0] };
+  // (swea: MAVEN SWEA, eV/(eV cm² sr s); radio: STEREO S/WAVES, sfu)
+  const SPEC_RANGE = { dis: [0.5, 10.0], des: [1.5, 10.0], hpca: [-1.0, 9.0], epsd: [-16.0, -2.0], swea: [1.0, 11.0], radio: [-3.0, 9.0] };
   // FPI's fast-survey energy tables (eV), which HAPI does not serve: the same on all four probes in the demo's files
   const FPI_E = {
     dis: [11.33, 14.55, 18.69, 24.0, 30.83, 39.6, 50.87, 65.34, 83.92, 107.8, 138.46, 177.86, 228.45, 293.44, 376.92, 484.15,
@@ -242,15 +243,22 @@
     for (const p of parts) { t.set(p.t, o); p.cols.forEach((c, j) => cols[j].set(c, o)); o += p.n; }
     return { t, cols, n };
   }
-  /** One parameter's bins (HAPI info), for spectra the server labels itself. */
-  async function hapiBins(id, param, first) {
+  /** A dataset's HAPI info for the named parameters (comma-separated): their bins, and the dataset's start and stop. */
+  async function hapiInfo(id, params, first) {
     await relay;
-    const url = `${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${param}`;
+    const url = `${HAPI}/info?id=${encodeURIComponent(id)}&parameters=${params}`;
     const u8 = await kept(url, () => slot(async () => { const r = await get(url); return r.ok ? bodyOf(r) : null; }, first), (b2) => b2.length > 20 && b2[0] === 123);
     if (!u8) return null;
-    const p = (JSON.parse(textOf(u8)).parameters || []).find(x => x.name === param);
+    try { return JSON.parse(textOf(u8)); } catch (e) { return null; }
+  }
+  /** One parameter's bins (HAPI info), for spectra the server labels itself. */
+  async function hapiBins(id, param, first) {
+    const j = await hapiInfo(id, param, first);
+    const p = j && (j.parameters || []).find(x => x.name === param);
     return p && p.bins && p.bins[0].centers;
   }
+  /** The last day a dataset covers, "YYYY-MM-DD" (HAPI info's stopDate), or null. */
+  const stopDay = (j) => (j && typeof j.stopDate === "string" && /^\d{4}-\d\d-\d\d/.test(j.stopDate) ? j.stopDate.slice(0, 10) : null);
   const stack = (cols, j, k) => {                          // columns j … j+k−1 as one row-major array
     const n = cols[j] ? cols[j].length : 0, out = new Float32Array(n * k);
     for (let c = 0; c < k; c++) { const v = cols[j + c]; if (v) for (let i = 0; i < n; i++) out[i * k + c] = v[i]; }
@@ -1141,6 +1149,208 @@
              notes: `IMAP (NASA) at L1, at the spacecraft's own time (not shifted to Earth). ${used.length ? `From ${used.join("; ")}, via ${used.some(u => /NOAA/.test(u)) ? "CDAWeb HAPI and NOAA SWPC" : "CDAWeb HAPI"}.` : "No IMAP data for this interval: CDAWeb's science files run to the end of July 2026 so far, its copy of the I-ALiRT real-time stream lags a few days, and NOAA's live feed reaches back a day."}${gseV ? ` SWAPI publishes its velocity in RTN. It is drawn here on GSE axes (R from the Sun to IMAP${orbit ? ", from SSCWeb's position" : ", taken along the Sun–Earth line"}; T along the Sun's rotation pole × R; N = R × T), and in the Sun's frame, like the other monitors' velocities: Earth's 30 km/s orbital motion is removed, which the spacecraft-frame values would carry as about +30 km/s in Y. The speed is the Sun-frame one too.` : ""}${provisional ? ` ${provisional} of the fits used a preliminary field or a predicted ephemeris.` : ""}${sw.n ? " Fits flagged bad or failed are left out." : ""}${ialirtPlasma ? " The real-time plasma values are SWAPI's pseudo-moments from IMAP's I-ALiRT stream, not the calibrated science fits (against those, on 2026-07-15, density and temperature read about 20% high and the speed within 1%); the stream has no velocity vector." : ""}${noaaPlasma ? " NOAA's rows for IMAP carry no velocity vector, and their density is not drawn: over 24 hours on 2026-11-16 it read about nine times SOLAR-1's in the same feed, while its speed read × 1.02 and its temperature × 0.77." : ""}` };
   }
 
+  // ───────────────────────── MAVEN at Mars, and STEREO-A ahead of Earth (Helios's fetchMAVEN and fetchStereo) ─────────────────────────
+  // MAVEN: Mars orbit insertion 2014-09-22 02:24 UTC. Loss of signal 2025-12-06, when it came out from behind Mars spinning
+  // too fast to keep its batteries charged; NASA declared the mission over in 2026. CDAWeb's archive ends that day
+  // (checked 2026-11-17: MVN_MAG_L2-SUNSTATE-1SEC to 2025-12-06T00:00, the SWIA, SWEA and KP files to 2025-12-05 23:59).
+  const MAVEN_END = Date.UTC(2025, 11, 6), MAVEN_DRAWN_UNTIL = Date.UTC(2025, 11, 7);   // Helios's HelioFleetClient `until`
+  const MAVEN_ENDED = "MAVEN's archive ends on 2025-12-06. That day the spacecraft came out from behind Mars spinning too fast to keep its batteries charged, and it was not heard from again. NASA declared the mission over in 2026. Pick a moment between 2014-09-22 (Mars orbit insertion) and 2025-12-06 for its data.";
+  // Helios's MAVENScreening, each rule the instrument team's own (Helios docs/MARS.md, "MAVEN data check", 2026-10-29)
+  const SWIA_QLEVEL = 0.5, SWIA_HALF_S = 2, LPW_VALID = Date.UTC(2014, 9, 11), MARS_R_KM = 3389.5, K_PER_EV = 11604.518;
+  // SWEA's survey energies as Helios lists them (descending as served, eV), where HAPI's info does not answer
+  const SWEA_E = [4628, 4119, 3666, 3262, 2903, 2584, 2300, 2047, 1822, 1621, 1443, 1284, 1143, 1017, 905.4, 805.8, 717.2, 638.3, 568.1,
+    505.6, 450, 400.5, 356.4, 317.2, 282.3, 251.3, 223.7, 199.1, 177.2, 157.7, 140.3, 124.9, 111.2, 98.93, 88.05, 78.36, 69.74, 62.07, 55.24,
+    49.17, 43.76, 38.95, 34.66, 30.85, 27.46, 24.44, 21.75, 19.36, 17.23, 15.33, 13.65, 12.15, 10.81, 9.62, 8.562, 7.62, 6.782, 6.036, 5.372,
+    4.781, 4.255, 3.787, 3.371, 3];
+  // the in-situ key parameters read, in the DATASET's order (HAPI refuses a list out of it): LPW nₑ [cm⁻³], Tₑ [K], potential
+  // [V]; SWEA nₑ [cm⁻³], Tₑ [eV]; SWIA dynamic pressure [nPa]; STATIC H⁺ O⁺ O₂⁺ densities [cm⁻³] and temperatures [eV]; SEP
+  // ion (30 keV–1 MeV) and electron (30–300 keV) fluxes, fields of view 1F and 2F; NGIMS He O CO N₂ NO Ar CO₂ [cm⁻³]; and
+  // SPICE's altitude above the areoid [km]
+  const MAVEN_KP = ["LPW_Electron_density", "LPW_Electron_temperature", "LPW_Spacecraft_potential", "SWEA_Electron_density", "SWEA_Electron_temperature",
+    "SWIA_dynamic_pressure", "STATIC_Hplus_density", "STATIC_Oplus_density", "STATIC_O2plus_density", "STATIC_Hplus_temperature",
+    "STATIC_Oplus_temperature", "STATIC_O2plus_temperature", "SEP_Ion_Energy_Flux_30_1000_FOV_1F", "SEP_Ion_Energy_Flux_30_1000_FOV_2F",
+    "SEP_Electron_Energy_Flux_30_300_FOV_1F", "SEP_Electron_Energy_Flux_30_300_FOV_2F", "NGIMS_He_density", "NGIMS_O_density", "NGIMS_CO_density",
+    "NGIMS_N2_density", "NGIMS_NO_density", "NGIMS_Ar_density", "NGIMS_CO2_density", "SPICE_spacecraft_altitude"];
+  /** Columns of a HAPI answer as one set: each column screened by ok(x), NaN where it fails. */
+  const cols32 = (r, idx, ok, scale = 1) => idx.map(k => Float32Array.from(r.cols[k] || new Float64Array(r.n).fill(NaN), x => (ok(x) ? x * scale : NaN)));
+  const interleave = (cs) => { const n = cs[0].length, k = cs.length, out = new Float32Array(n * k); for (let i = 0; i < n; i++) for (let c = 0; c < k; c++) out[i * k + c] = cs[c][i]; return out; };
+  const pos = (x) => isFinite(x) && x > 0, fin = (x) => isFinite(x);
+  /** MAVEN at Mars, as Helios's fetchMAVEN: MAG at 1 s in MSO, SWIA's onboard moments (screened by the team's quality and
+   *  decommutation flags, re-stamped at the middle of their 4-s accumulation), SWEA's electron energy spectrum, LPW's
+   *  electron density and SPICE's altitude above the areoid, and the rest of the in-situ key parameters (Helios's opt-in
+   *  "maven.kp", here one request with the density and the altitude). Checked against CDAWeb's HAPI info on 2026-11-17:
+   *  OB_B's description says J2000, but the "sunstate" product is MSO (Helios: r = 0.99994 against the KP file's MSO field). */
+  async function mavenWindow() {
+    const [a, b] = window_, nil = { t: new Float64Array(0), cols: [], n: 0 }, label = "MAVEN";
+    if (a >= MAVEN_END) {
+      track("MAVEN", Promise.resolve({ empty: true }));
+      return { sv: {}, bu: null, kind: "maven", label, empty: true, ended: MAVEN_ENDED, banner: "MAVEN's archive ends on 2025-12-06.",
+               notes: `${MAVEN_ENDED} Its data on CDAWeb: MAG (MSO), SWIA moments, the SWEA electron spectrum and the in-situ key parameters.` };
+    }
+    const [mag, swi, swe, kp, eBins] = await Promise.all([
+      track("MAVEN MAG (MSO, 1 s)", hapi("MVN_MAG_L2-SUNSTATE-1SEC", ["OB_B", "POSN"], a, b, true)).catch(() => nil),
+      track("MAVEN SWIA moments", hapi("MVN_SWI_L2_ONBOARDSVYMOM", ["density", "velocity_mso", "temperature_mso", "quality_flag", "decom_flag"], a, b, true)).catch(() => nil),
+      track("MAVEN SWEA spectra", hapi("MVN_SWE_L2_SVYSPEC", ["diff_en_fluxes"], a, b, true)).catch(() => nil),
+      track("MAVEN key parameters (LPW, STATIC, NGIMS, SEP)", hapi("MVN_INSITU_KP-4SEC", MAVEN_KP, a, b, true)).catch(() => nil),
+      hapiBins("MVN_SWE_L2_SVYSPEC", "diff_en_fluxes", true).catch(() => null),
+    ]);
+    const sv = {};
+    // the field, MSO, nT; |B| from the components (Helios)
+    if (mag.n) {
+      const [bx, by, bz] = cols32(mag, [0, 1, 2], fin), b4 = new Float32Array(mag.n * 4);
+      for (let i = 0; i < mag.n; i++) { b4[i * 4] = bx[i]; b4[i * 4 + 1] = by[i]; b4[i * 4 + 2] = bz[i]; b4[i * 4 + 3] = Math.hypot(bx[i], by[i], bz[i]); }
+      sv.fgm = set({ t: [f64(mag.t), 1], b: [b4, 4] });
+    }
+    // SWIA: kept where quality_flag and decom_flag are both ≥ 0.5 (SPEDAS mvn_swia_load_l2_data, qlevel 0.5), at start + 2 s
+    const T = [], N = [], V = [], S = [], TP = [];
+    for (let i = 0; i < swi.n; i++) {
+      const c = (k) => swi.cols[k][i], q = c(7), dq = c(8);
+      if (!(q >= SWIA_QLEVEL && dq >= SWIA_QLEVEL)) continue;
+      const n = c(0), v = [c(1), c(2), c(3)], ts = [c(4), c(5), c(6)];
+      const nOK = pos(n), vOK = v.every(fin), tOK = ts.every(pos);
+      if (!nOK && !vOK && !tOK) continue;
+      T.push(swi.t[i] + SWIA_HALF_S); N.push(nOK ? n : NaN); V.push(...(vOK ? v : [NaN, NaN, NaN]));
+      S.push(vOK ? Math.hypot(...v) : NaN); TP.push(tOK ? (ts[0] + ts[1] + ts[2]) / 3 : NaN);
+    }
+    const swiDropped = swi.n - T.length;
+    if (T.length) sv.dis = set({ t: [f64(T), 1], n: [f32(N), 1], v: [f32(V), 3], speed: [f32(S), 1], tp: [f32(TP), 1] });
+    // the KP file: LPW's density (valid from 2014-10-11) and the altitude above the areoid, then the optional rows
+    const kc = (k) => (kp.cols[k] || new Float64Array(kp.n).fill(NaN));
+    if (kp.n) {
+      const ne = [], tl = [];
+      for (let i = 0; i < kp.n; i++) { const x = kc(0)[i]; if (pos(x) && T0 + kp.t[i] * 1000 >= LPW_VALID) { tl.push(kp.t[i]); ne.push(x); } }
+      if (tl.length) sv.lpw = set({ t: [f64(tl), 1], n: [f32(ne), 1] });
+    }
+    // altitude: SPICE's above the areoid where the KP file has it, else |r| − 3389.5 km from MAG's MSO position (Helios)
+    let areoid = false;
+    {
+      const t = [], km = [];
+      for (let i = 0; i < kp.n; i++) { const x = kc(23)[i]; if (fin(x)) { t.push(kp.t[i]); km.push(x); } }
+      if (t.length) { areoid = true; sv.alt = set({ t: [f64(t), 1], km: [f32(km), 1] }); }
+      else if (mag.n) {
+        for (let i = 0; i < mag.n; i += 4) { const p = [3, 4, 5].map(k => mag.cols[k][i]); if (p.every(fin)) { t.push(mag.t[i]); km.push(Math.hypot(...p) - MARS_R_KM); } }
+        if (t.length) sv.alt = set({ t: [f64(t), 1], km: [f32(km), 1] });
+      }
+    }
+    if (kp.n) {
+      const any = (k) => kc(k).some(x => isFinite(x));
+      if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].some(any)) {
+        const [lte, pot, swn, swt, pd, ...rest] = [cols32(kp, [1], pos, 1 / K_PER_EV)[0], cols32(kp, [2], fin)[0], ...cols32(kp, [3, 4, 5], pos),
+                                                  ...cols32(kp, [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22], pos)];
+        sv.kp = set({ t: [f64(kp.t), 1], te: [interleave([lte, swt]), 2], pot: [pot, 1], swn: [swn, 1], pdyn: [pd, 1],
+                      stn: [interleave(rest.slice(0, 3)), 3], stt: [interleave(rest.slice(3, 6)), 3], sep: [interleave(rest.slice(6, 10)), 4],
+                      ngims: [interleave(rest.slice(10, 17)), 7] });
+      }
+    }
+    // SWEA: 64 channels served high → low; ascending here, as the energy axis reads them
+    if (swe.n) {
+      const served = Array.isArray(eBins) && eBins.length === 64 ? eBins : SWEA_E, nc = 64, flux = new Float32Array(swe.n * nc);
+      for (let i = 0; i < swe.n; i++) for (let c = 0; c < nc; c++) { const v = swe.cols[nc - 1 - c] ? swe.cols[nc - 1 - c][i] : NaN; flux[i * nc + c] = isFinite(v) ? v : NaN; }
+      sv.swea = set({ t: [f64(swe.t), 1], spec: [spec8(flux, swe.n, nc, "swea"), nc], etab: [Float32Array.from(served.slice().reverse()), nc], eidx: [new Uint8Array(swe.n), 1] });
+    }
+    const relabel = { mvAlt: { lines: [Sc_("alt", "km", 0, "#000000", areoid ? "areoid" : "|r| − R_{M}")] } };
+    const empty = !Object.keys(sv).length;
+    const notes = [`MAVEN at Mars, at the spacecraft's own time (not shifted to Earth), via CDAWeb HAPI.`,
+      `Magnetic field in MSO coordinates, 1 s (MAG L2, MVN_MAG_L2-SUNSTATE-1SEC). MSO: +X toward the Sun, +Z north of Mars's orbital plane. The archive's variable description says J2000, but this product is in MSO.`,
+      swi.n ? `Ion density, velocity (MSO) and temperature from SWIA's onboard moments, 4 s, which count every ion as a proton. They are kept where the team's quality and decommutation flags are at least 0.5${swiDropped ? `: ${swiDropped} of ${swi.n} were dropped in this window` : ""}. Each is drawn at the middle of its 4-s accumulation. They are not meaningful inside the pileup boundary, where planetary O⁺ and O₂⁺ dominate. The temperature runs high in the solar wind and the sheath, because alphas are counted as protons.` : "",
+      sv.swea ? "Electron energy spectrum from SWEA, 2 s, in the spacecraft frame. Below the spacecraft potential (a few volts to +10 V in sunlight outside the ionosphere) the flux is the spacecraft's own photoelectrons." : "",
+      sv.lpw ? "Electron density from LPW (in-situ key parameters, 4 s below 500 km and 8 s above), near periapsis only." : "",
+      sv.alt ? (areoid ? "Altitude above the areoid, from SPICE (in-situ key parameters)." : "Altitude as |r| − 3389.5 km from MAG's MSO position: the key parameters have no altitude in this window.") : "",
+      sv.kp ? "The Plot selection adds more in-situ key parameters: STATIC ion densities and temperatures, SWEA and LPW electron values, the SWIA dynamic pressure, SEP fluxes, NGIMS neutrals and the spacecraft potential." : "",
+      !mag.n && !empty ? "No MAG data in this window (MVN_MAG_L2-SUNSTATE-1SEC has gaps, for example 2024-05-10 to 12)." : ""].filter(Boolean).join(" ");
+    const banner = empty ? "No MAVEN data for this window on CDAWeb (MAG, SWIA, SWEA and the in-situ key parameters)."
+      : swi.n && swiDropped > swi.n / 2 ? `SWIA moments are kept only where the team's quality flags pass: ${swiDropped} of ${swi.n} failed in this window.`
+      : !mag.n ? "No MAG data in this window." : null;
+    return { sv, bu: null, kind: "maven", label, relabel, empty, banner, notes };
+  }
+  const Sc_ = (ds, name, c, color, label) => ({ ds, name, c, color, label });
+
+  /** STEREO-A, as Helios's fetchStereo: IMPACT's field merged with PLASTIC's protons at 1 minute (STA_L2_MAGPLASMA_1M: B in
+   *  RTN, |B|, Nₚ, the proton speed and its RTN direction cosines, Tₚ in kelvin, β, the pressures, the distance from the
+   *  Sun), the HET electron and proton fluxes, and the S/WAVES HFR and LFR radio spectra in sfu. Checked against CDAWeb's
+   *  HAPI on 2026-11-17: fill −1e30 in the merged file (−1e31 elsewhere); the direction cosines are "NaN" from 2020 on, so
+   *  only the speed is drawn after that (Helios draws no velocity then); total and magnetic pressure are in pPa, dynamic
+   *  pressure in nPa. Coverage that day: merged file to 2026-04-30, HET to 2025-12-31, S/WAVES to 2026-10-17. */
+  async function stereoWindow() {
+    const [a, b] = window_, nil = { t: new Float64Array(0), cols: [], n: 0 }, label = "STEREO-A";
+    // dataset order (HAPI error 1411 otherwise)
+    const merged = ["BFIELDRTN", "BTOTAL", "R", "Np", "Vp", "Tp", "Vr_Over_V_RTN", "Vt_Over_V_RTN", "Vn_Over_V_RTN", "Beta", "Total_Pressure", "Magnetic_Pressure", "Dynamic_Pressure"];
+    const radio = async (band) => {
+      const id = `STA_L3_WAV_${band}`, info = await hapiInfo(id, "PSD_SFU", true).catch(() => null);
+      const p = info && (info.parameters || []).find(x => x.name === "PSD_SFU"), hz = p && p.bins && p.bins[0].centers;
+      if (!Array.isArray(hz) || !hz.length) return { info, set: null };
+      const r = await track(`STEREO-A S/WAVES ${band}`, hapi(id, ["PSD_SFU"], a, b, true)).catch(() => nil), nc = hz.length;
+      if (!r.n) return { info, set: null };
+      const up = hz[0] <= hz[nc - 1], flux = new Float32Array(r.n * nc);
+      for (let i = 0; i < r.n; i++) for (let c = 0; c < nc; c++) { const col = r.cols[up ? c : nc - 1 - c]; const v = col ? col[i] : NaN; flux[i * nc + c] = isFinite(v) ? v : NaN; }
+      const kHz = (up ? hz.slice() : hz.slice().reverse()).map(f => f / 1000);
+      return { info, set: set({ t: [f64(r.t), 1], spec: [spec8(flux, r.n, nc, "radio"), nc], etab: [Float32Array.from(kHz), nc], eidx: [new Uint8Array(r.n), 1] }) };
+    };
+    const [m, het, hetInfo, hfr, lfr] = await Promise.all([
+      track("STEREO-A field and plasma (IMPACT, PLASTIC)", hapi("STA_L2_MAGPLASMA_1M", merged, a, b, true)).catch(() => nil),
+      track("STEREO-A HET", hapi("STA_L1_HET", ["Electron_Flux", "Proton_Flux"], a, b, true)).catch(() => nil),
+      hapiInfo("STA_L1_HET", "Electron_Flux,Proton_Flux", true).catch(() => null),
+      radio("HFR"), radio("LFR"),
+    ]);
+    const sv = {};
+    let vecs = 0, speeds = 0;
+    if (m.n) {
+      const c = (k, i) => m.cols[k] ? m.cols[k][i] : NaN, n = m.n, b4 = new Float32Array(n * 4), ni = new Float32Array(n), v = new Float32Array(n * 3).fill(NaN);
+      const sp = new Float32Array(n), tp = new Float32Array(n), beta = new Float32Array(n), r = new Float32Array(n), pr = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const bv = [c(0, i), c(1, i), c(2, i)], bt = c(3, i);
+        for (let k = 0; k < 3; k++) b4[i * 4 + k] = bv.every(fin) ? bv[k] : NaN;
+        b4[i * 4 + 3] = fin(bt) ? bt : NaN;
+        r[i] = pos(c(4, i)) ? c(4, i) : NaN;
+        ni[i] = pos(c(5, i)) ? c(5, i) : NaN;
+        const vp = c(6, i), dir = [c(8, i), c(9, i), c(10, i)];
+        sp[i] = pos(vp) ? vp : NaN;
+        if (pos(vp)) speeds++;
+        if (pos(vp) && dir.every(fin)) { for (let k = 0; k < 3; k++) v[i * 3 + k] = vp * dir[k]; vecs++; }   // Vp is the speed; the cosines its RTN direction
+        tp[i] = pos(c(7, i)) ? c(7, i) * KELVIN_EV : NaN;                           // kelvin in this file
+        beta[i] = pos(c(11, i)) ? c(11, i) : NaN;
+        pr[i * 3] = pos(c(12, i)) ? c(12, i) * 1e-3 : NaN;                          // total, pPa → nPa
+        pr[i * 3 + 1] = pos(c(13, i)) ? c(13, i) * 1e-3 : NaN;                      // magnetic, pPa → nPa
+        pr[i * 3 + 2] = pos(c(14, i)) ? c(14, i) : NaN;                             // dynamic, nPa
+      }
+      const t = f64(m.t);
+      if (b4.some(isFinite)) sv.fgm = set({ t: [t, 1], b: [b4, 4] });
+      if (ni.some(isFinite) || sp.some(isFinite) || tp.some(isFinite)) sv.dis = set({ t: [t, 1], n: [ni, 1], v: [v, 3], speed: [sp, 1], tp: [tp, 1] });
+      if (beta.some(isFinite) || pr.some(isFinite) || r.some(isFinite)) sv.stx = set({ t: [t, 1], beta: [beta, 1], p: [pr, 3], r: [r, 1] });
+    }
+    // HET: 3 electron and 11 proton channels, labeled by the bins HAPI serves; zero and fill dropped (Helios)
+    const binsOf = (name) => { const p = hetInfo && (hetInfo.parameters || []).find(x => x.name === name); return (p && p.bins && p.bins[0].centers) || []; };
+    const eE = binsOf("Electron_Flux"), pE = binsOf("Proton_Flux"), hetLines = [];
+    if (het.n && eE.length + pE.length) {
+      const k = eE.length + pE.length, f = new Float32Array(het.n * k);
+      for (let i = 0; i < het.n; i++) for (let j = 0; j < k; j++) { const x = het.cols[j] ? het.cols[j][i] : NaN; f[i * k + j] = pos(x) ? x : NaN; }
+      if (f.some(isFinite)) {
+        sv.het = set({ t: [f64(het.t), 1], f: [f, k] });
+        const PCOL = ["#001af2", "#d90d0d", "#008000", "#ff9900", "#7f33b3", "#008c8c"];           // Helios's fluxPalette, in order
+        eE.forEach((e, j) => hetLines.push(Sc_("het", "f", j, PCOL[hetLines.length % 6], `e^{−} ${(+e).toFixed(1)} MeV`)));
+        pE.forEach((e, j) => hetLines.push(Sc_("het", "f", eE.length + j, PCOL[hetLines.length % 6], `p^{+} ${(+e).toFixed(0)} MeV`)));
+      }
+    }
+    if (hfr.set) sv.hfr = hfr.set;
+    if (lfr.set) sv.lfr = lfr.set;
+    const relabel = hetLines.length ? { stHet: { lines: hetLines } } : {};
+    // where CDAWeb's files stop: the merged file lags months behind the radio spectra
+    const mergedStop = !sv.fgm && !sv.dis ? stopDay(await hapiInfo("STA_L2_MAGPLASMA_1M", "BTOTAL", true).catch(() => null)) : null;
+    const hetStop = stopDay(hetInfo), hfrStop = stopDay(hfr.info);
+    const empty = !Object.keys(sv).length;
+    const ago = (d) => d && Date.parse(d + "T23:59:59Z") < a;
+    let banner = null;
+    if (empty) banner = `No STEREO-A data for this moment yet. CDAWeb's files run to ${[mergedStop && `${mergedStop} (field and plasma)`, hfrStop && `${hfrStop} (S/WAVES radio)`, hetStop && `${hetStop} (HET particles)`].filter(Boolean).join(", ") || "an earlier date"} so far.`;
+    else if (!sv.fgm && !sv.dis) banner = ago(mergedStop) ? `No field or plasma for this moment yet: CDAWeb's merged IMPACT and PLASTIC file runs to ${mergedStop} so far.` : "No field or plasma in this window (CDAWeb STA_L2_MAGPLASMA_1M).";
+    const notes = ["STEREO-A in its orbit about the Sun, near 1 AU (the Sun rung shows where), at the spacecraft's own time (not shifted to Earth), via CDAWeb HAPI.",
+      sv.fgm ? "Magnetic field in RTN coordinates, 1 minute (IMPACT MAG, merged with PLASTIC in STA_L2_MAGPLASMA_1M). RTN: R from the Sun, T along the Sun's rotation, N completing the set." : "",
+      sv.dis ? `Proton density, speed and temperature from PLASTIC, 1 minute. The temperature is converted from kelvin to eV.${vecs ? " The velocity is the speed along its RTN direction cosines." : speeds ? " The file carries no flow direction for this window (none from 2020 on), so only the speed is drawn." : ""}` : "",
+      sv.stx ? "Plasma β, the pressures (total and magnetic converted from pPa to nPa) and the distance from the Sun from the same file." : "",
+      sv.het ? "HET electron and proton fluxes, 1 minute, labeled by their channels' energies." : hetStop && ago(hetStop) ? `HET particles: CDAWeb's file runs to ${hetStop} so far.` : "",
+      sv.hfr || sv.lfr ? "S/WAVES HFR and LFR radio spectra in solar flux units (after 1% background subtraction), drawn against frequency in kHz. Type II and III bursts appear here." : ""].filter(Boolean).join(" ");
+    return { sv, bu: null, kind: "sta", label, relabel, empty, banner, notes };
+  }
+
   // ───────────────────────── GOES (Helios's GOES adapter: LASP's Space Weather Portal LaTiS) ─────────────────────────
   const LATIS = "https://lasp.colorado.edu/space-weather-portal/latis/dap";
   /** One LaTiS dataset over [a, b] as rows of numbers (time first, s after T0); fill (≤ −99999) as NaN. */
@@ -1777,6 +1987,10 @@
   async function scene() {
     const keoP = track("All-sky imager keograms (UCalgary)", keogramLists()).catch(() => ({}));
     const driverP = track(NOW ? "Kp (NOAA SWPC)" : "Kp (OMNI2) and AL (OMNI)", auroralDriver()).catch(() => ({ kp: null, al: null }));
+    // STEREO-A on the Sun rung: CDAWeb's hourly heliocentric position (COHOWeb's HELIO1HR: distance and Solar Ecliptic
+    // latitude and longitude, of date; predicted ahead of the archive, to 2027-01 as of 2026-11-17). JPL Horizons, which
+    // Helios asks, sends no CORS header, so a page cannot read it.
+    const staP = track("STEREO-A position (CDAWeb HELIO1HR)", hapi("STA_HELIO1HR_POSITION", ["RAD_AU", "SE_LAT", "SE_LON"], AT - 2 * 3600e3, AT + 2 * 3600e3)).catch(() => null);
     const [[m1, ...others], sites, starsBuf, fleetA, fleetB, fleetC, fleetD] = await Promise.all([
       mec(),
       fetch("assets/data/live/asi-sites.json").then(r => r.json()),
@@ -1874,6 +2088,23 @@
       name: name[0].toUpperCase() + name.slice(1), pos: r3(helio(name, AT), 0), au: +(Math.hypot(...planet(name, AT))).toFixed(3),
       orbit: Array.from({ length: 181 }, (_, k) => r3(helio(name, AT + per * k / 180 * 864e5), 0)),
     })) };
+    // Helios's heliocentric fleet (HelioFleetClient), as far as a page can reach it. MAVEN rides Mars, as Helios draws it
+    // when Horizons does not answer (its 4.5-hour orbit is under a pixel at this scale), until its 2025-12-06 loss of signal.
+    if (AT <= MAVEN_DRAWN_UNTIL) solar.fleet.push({ name: "MAVEN", pos: r3(helio("mars", AT), 0), au: +(Math.hypot(...planet("mars", AT))).toFixed(3), loop: [] });
+    const sta = await staP;
+    if (sta && sta.n) {
+      let k = -1;
+      for (let i = 0; i < sta.n; i++) if ([0, 1, 2].every(c => isFinite(sta.cols[c][i])) && (k < 0 || Math.abs(sta.t[i] - HALF) < Math.abs(sta.t[k] - HALF))) k = i;
+      if (k >= 0 && Math.abs(sta.t[k] - HALF) <= 5400) {
+        // Solar Ecliptic of date → the J2000 ecliptic (less the general precession in longitude, 5029.0966″ a century;
+        // checked against Horizons' J2000 vector on 2026-01-20: 171.151° of date, 170.784° J2000) → J2000 equatorial
+        const r = sta.cols[0][k], lat = sta.cols[1][k] * DEG, Tc = (AT - Date.UTC(2000, 0, 1, 12)) / 864e5 / 36525;
+        const lon = (sta.cols[2][k] - 5029.0966 * Tc / 3600) * DEG, eps = 23.43928 * DEG;
+        const x = r * Math.cos(lat) * Math.cos(lon), y = r * Math.cos(lat) * Math.sin(lon), z = r * Math.sin(lat);
+        const eq = [x, Math.cos(eps) * y - Math.sin(eps) * z, Math.sin(eps) * y + Math.cos(eps) * z];
+        solar.fleet.push({ name: "STEREO-A", pos: r3(app(J2G, eq.map(v => v * RE_AU)), 0), au: +r.toFixed(3), loop: [] });
+      }
+    }
     // the all-sky imagers running that month (Helios's site list)
     const d = new Date(AT), ym = d.getUTCFullYear() * 100 + d.getUTCMonth() + 1;
     const keo = await keoP;
@@ -1902,7 +2133,7 @@
         return { kp: +k.toFixed(2), al: al === null ? null : +al.toFixed(0), kpSrc: kp !== null ? (NOW ? "NOAA" : "OMNI2") : isFinite(mk) ? "MEC" : "assumed",
                  ...(NOW ? { kpSrcNow: kp !== null ? nowSrc : null } : {}) };
       })), ...(NOW ? { nowMissing: missing } : {}),
-      sources: NOW ? "Now: SSCWeb (predicted orbits), NOAA SWPC, JPL approximate planetary elements, Yale BSC" : "Live: MMS MEC via CDAWeb HAPI, SSCWeb, JPL approximate planetary elements, Yale BSC",
+      sources: NOW ? "Now: SSCWeb (predicted orbits), NOAA SWPC, JPL approximate planetary elements, Yale BSC" : "Live: MMS MEC and STEREO-A's position via CDAWeb HAPI, SSCWeb, JPL approximate planetary elements, Yale BSC",
     };
     return [S, out.buffer];
   }
@@ -2305,7 +2536,7 @@
     craft: (n) => (craftCache[n] = craftCache[n] || mms(n)),
     /** Drops a window's fetched data, so the next ask fetches again (the present's GOES windows, every few minutes). */
     forget: (key) => { delete craftCache[key]; },
-    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : key === "idx" ? indicesWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : key === "solar1" ? solar1Window() : key === "imap" ? imapWindow() : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
+    mission: (key) => (craftCache[key] = craftCache[key] || (/^th/.test(key) ? themis(key) : key === "omni" ? omniWindow() : key === "idx" ? indicesWindow() : /^(ace|wind|dscovr)$/.test(key) ? l1Window(key) : key === "solar1" ? solar1Window() : key === "imap" ? imapWindow() : key === "maven" ? mavenWindow() : key === "sta" ? stereoWindow() : /^g\d\d$/.test(key) ? goesWindow(key) : cluster(key))
       .catch((e) => { delete craftCache[key]; throw e; })),
     scene,
     vdf: (n, sp) => vdfStore(n, sp),

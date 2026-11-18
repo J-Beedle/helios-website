@@ -281,3 +281,6 @@ body.now-mode .rail-ev b { color: #5fd08a; }
 .np-f li.stale, .np-f li.bad { border-color: #ff6b5e; }
 .np-f li.stale b, .np-f li.bad b { color: #ff9e8a; }
 body.now-mode .hso-toast { z-index: 8; }   /* over the Now panel */
+
+/* a data window whose mission has ended (MAVEN after 2025-12-06): the note in place of empty panels */
+.panel-loading.ended { padding: 0 12%; background: #fff; font: 500 13.5px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; text-align: center; }
