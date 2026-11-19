@@ -3656,10 +3656,12 @@
     const KEY = "helios-live-view", MODELS = ["off", "igrf", "t89"];
     // Field lines start off (user request, 2026-11-12). The field model is kept only once a visitor has picked one
     // (`picked`): the copies saved before held T89 because every visit saved the defaults, so their `model` is ignored.
-    const st = { model: "off", lines: true, ref: false, mp: true, bs: true, picked: null };
+    const st = { model: "off", lines: true, ref: false, mp: true, bs: true, lightDay: true, hpModel: true, bodies: true,
+                 jBounds: true, jSheet: true, jTorus: true, jTubes: true, jOvals: true, jLines: true, picked: null };
+    const FLAGS = ["lines", "ref", "mp", "bs", "lightDay", "hpModel", "bodies", "jBounds", "jSheet", "jTorus", "jTubes", "jOvals", "jLines"];
     try {
       const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
-      for (const k of ["lines", "ref", "mp", "bs"]) if (typeof saved[k] === typeof st[k]) st[k] = saved[k];
+      for (const k of FLAGS) if (typeof saved[k] === typeof st[k]) st[k] = saved[k];
       if (MODELS.includes(saved.picked)) st.model = st.picked = saved.picked;
     } catch (e) { /* the defaults */ }
     const box = document.createElement("div");
@@ -3675,6 +3677,17 @@
         <p class="hv-h">Boundaries</p>
         <label class="hv-row"><input type="checkbox" data-view="mp"><span>Magnetopause<small>Lin et al. 2010, Petrinec &amp; Russell 1996 tail</small></span></label>
         <label class="hv-row"><input type="checkbox" data-view="bs"><span>Bow shock<small>Jelínek et al. 2012</small></span></label>
+        ${window.Heliosphere ? `<p class="hv-h">Interstellar</p>
+        <label class="hv-row"><input type="checkbox" data-view="lightDay"><span>One light-day marker<small>A sphere around Earth, 173.14 AU in radius</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="hpModel"><span>Heliosphere model<small>Parker's Rankine heliopause and a spherical termination shock</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="bodies"><span>Dwarf planets and interstellar objects<small>Pluto, Eris, Makemake, Haumea, Sedna, Arrokoth, the Kuiper belt, 1I, 2I and 3I</small></span></label>` : ""}
+        ${window.Jupiter ? `<p class="hv-h">Jupiter</p>
+        <label class="hv-row"><input type="checkbox" data-view="jBounds"><span>Magnetopause and bow shock<small>Joy et al. 2002</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="jSheet"><span>Current sheet<small>Khurana &amp; Schwarzl 2005</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="jTorus"><span>Io plasma torus<small>On the centrifugal equator</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="jTubes"><span>Moon flux tubes and Alfvén wings<small>Through JRM33 with Con2020, to the footprints</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="jOvals"><span>Moon footprint ovals<small>Where each moon's footprint can fall</small></span></label>
+        <label class="hv-row"><input type="checkbox" data-view="jLines"><span>Magnetodisc field lines<small>From 8, 15 and 25 R♃</small></span></label>` : ""}
         <p class="hv-note">T01 and the radiation belts are in the Helios app.</p>
       </div>`;
     host.appendChild(box);
@@ -3682,7 +3695,7 @@
     const each = (sel, fn) => box.querySelectorAll(sel).forEach(fn);
     const sync = () => {
       scene.setFieldModel(st.model);
-      for (const k of ["lines", "ref", "mp", "bs"]) scene.setView(k, st[k]);
+      for (const k of FLAGS) scene.setView(k, st[k]);
       each("[data-model]", b => b.setAttribute("aria-pressed", String(b.dataset.model === st.model)));
       each("[data-view]", c => { c.checked = st[c.dataset.view]; if (c.dataset.view === "lines" || c.dataset.view === "ref") c.disabled = st.model === "off"; });
       box.querySelector(".hv-badge").textContent = st.model === "off" ? "no field lines" : `${st.model === "t89" ? "T89" : "IGRF"} lines`;
@@ -4019,7 +4032,7 @@
       fs.classList.toggle("on", on); fs.setAttribute("aria-label", on ? "Leave full screen" : "Full screen");
     });
     if (APP) {                                             // the screen its address describes: #rung=…, ?open=1,thd
-      const rg = /rung=(leo|mag|moon|l1|sun)/.exec(location.hash);
+      const rg = /rung=(leo|mag|moon|l1|sun|jupiter|interstellar)/.exec(location.hash);
       if (rg && rg[1] !== "mag") scene.setRung(rg[1]);
       for (const k of (new URLSearchParams(location.search).get("open") || "").split(",").filter(Boolean).slice(0, 6)) {
         const key = /^\d$/.test(k) ? +k : k;
@@ -4038,6 +4051,7 @@
   function viewOpts() {
     const d = new Date(T0 + 7200e3);
     return LIVE ? { sun: null, day: `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`, sky: SRC.sky, leoZoom: true, plainWheel: APP, sunClick: true,
+                   epochMs: (t) => T0 + t * 1000, heliosphere: "assets/data/heliosphere.json?v=1", jupiter: "assets/data/jupiter.json?v=1",   // the Interstellar rung (js/heliosphere.js)
                    ...(APP ? { onPreset: (k) => hashSet("view", k), onRung: (k) => hashSet("rung", k) } : {}),
                    feet: { epoch: (t) => T0 + t * 1000, worker: "js/fieldlines.js?v=39" } } : {};
   }

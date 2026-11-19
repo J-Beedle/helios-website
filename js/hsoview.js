@@ -219,7 +219,8 @@
     const root = o.root, cv = root.querySelector("canvas"), S = o.S;
     const card = root.querySelector(".hso-card"), toast = root.querySelector(".hso-toast"), swBox = root.querySelector(".hso-sw");
     let winds = Winds(o.omni);                              // replaced as new solar wind arrives (app.html?t=now, setWind)
-    const show = { topo: false, mp: true, bs: true, lines: true, ref: false };
+    const show = { topo: false, mp: true, bs: true, lines: true, ref: false, lightDay: true, hpModel: true, bodies: true,
+                   jBounds: true, jSheet: true, jTorus: true, jTubes: true, jOvals: true, jLines: true };
     // the field the lines are traced through (Helios's FieldLineOverlay.ModelChoice, without T01): "off", "igrf" (IGRF-14
     // alone) or "t89" (with Tsyganenko 1989 at the moment's Kp). Every cache is keyed by it.
     let fieldModel = "off";                                  // off until the View options pick a model (2026-11-12)
@@ -339,6 +340,8 @@
       moon: { center: [0, 0, 0], extent: [68, 66] },
       l1: { center: [90, 0, 0], extent: [236, 95] },
       sun: { center: [AU, 0, 0], extent: [1.78 * AU, 1.78 * AU] },
+      interstellar: { center: [AU, 0, 0], extent: [205 * AU, 205 * AU] },   // HeroZoom.interstellar: 205 AU to the frame's edge
+      jupiter: { center: [0, 0, 0], extent: [30, 30] },     // HeroZoom.jupiterSystem: Jupiter radii, JSO; Callisto's orbit is 26.3
     };
     let rung = "mag", zoomFrom = null;
     const leoCam = { lat: 57, lon: -102, zoom: 1 };      // LEOCamera.earthHome; zoom 1…8 (LEOCamera.zoomRange), live page only
@@ -351,7 +354,7 @@
     }
     function framing(W, fh) {
       const R = RUNGS[rung];
-      if (R) return { scale: Math.min(W * 0.92 / (2 * R.extent[0]), fh * 0.92 / (2 * R.extent[1])) * (rung === "leo" ? leoCam.zoom : 1), c: R.center };
+      if (R) return { scale: Math.min(W * 0.92 / (2 * R.extent[0]), fh * 0.92 / (2 * R.extent[1])) * (rung === "leo" ? leoCam.zoom : rung === "interstellar" ? farZoom : rung === "jupiter" ? jupZoom : 1), c: R.center };
       const m = 0.14;
       const minX = Math.min(16, 0, -2, box.minX), maxX = Math.max(16, 0, -2, box.maxX);
       const minY = Math.min(-15, box.minY), maxY = Math.max(15, box.maxY);
@@ -381,9 +384,9 @@
         basis = { right: [-ca, sa, 0], down: [sa * ct, ca * ct, -st], toward: [sa * st, ca * st, ct] };
       }
       const pt = (p) => { const q = scr(p); return [ox + q[0] * scale, oy + q[1] * scale]; };
-      const earth = pt([0, 0, 0]), skyC = rung === "sun" ? [ox, oy] : earth;
+      const earth = pt([0, 0, 0]), skyC = rung === "sun" || rung === "interstellar" ? [ox, oy] : earth;
       return {
-        W, H, scale, c, pt, basis, earth, az: view.az, tilt: view.tilt,
+        W, H, top, scale, c, pt, basis, earth, az: view.az, tilt: view.tilt, skyBasis: rung === "interstellar" ? farSkyBasis(basis) : rung === "jupiter" ? jupSkyBasis(basis) : basis,
         depth: (p) => scr(p)[2],
         onEarthDisc: (q) => (q[0] - earth[0]) ** 2 + (q[1] - earth[1]) ** 2 < scale * scale,
         hidden(p) { return scr(p)[2] < scr([0, 0, 0])[2] && this.onEarthDisc(pt(p)); },
@@ -423,6 +426,16 @@
     }
     function circle(ctx, x, y, r, fill) { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fillStyle = fill; ctx.fill(); }
 
+    /** The stars are kept in GSE at the page's moment. On the Interstellar rung the view's axes are the ecliptic of J2000
+     *  turned to the upwind longitude, so the camera's axes are turned back into GSE: about the ecliptic pole, by the
+     *  Sun's longitude seen from the Earth less the upwind longitude. */
+    function farSkyBasis(b) {
+      if (!window.Heliosphere || !o.epochMs) return b;
+      const e = window.Heliosphere.planet("earth", o.epochMs(S.epoch)), th = Math.atan2(-e[1], -e[0]) - window.Heliosphere.FLOW.lon * DEG;
+      const c = Math.cos(th), s = Math.sin(th), back = (v) => [v[0] * c + v[1] * s, -v[0] * s + v[1] * c, v[2]];
+      return { right: back(b.right), down: back(b.down), toward: back(b.toward) };
+    }
+
     // ── the star sky (StarSkyLayer: a 55° pinhole camera along the view; each star a Gaussian, added like light) ──
     let skyCache = null;
     const sprites = new Map();
@@ -443,7 +456,7 @@
       return s;
     }
     function drawStars(ctx, dpr) {
-      const key = [P.W, P.H, dpr, P.basis.toward.map(v => v.toFixed(4)).join(), P.basis.right.map(v => v.toFixed(4)).join(), P.skyC[0].toFixed(1), P.skyC[1].toFixed(1)].join("|");
+      const key = [P.W, P.H, dpr, P.skyBasis.toward.map(v => v.toFixed(4)).join(), P.skyBasis.right.map(v => v.toFixed(4)).join(), P.skyC[0].toFixed(1), P.skyC[1].toFixed(1)].join("|");
       if (!skyCache || skyCache.key !== key) {
         const w = Math.round(P.W * dpr), h = Math.round(P.H * dpr);
         const c = skyCache && skyCache.cv.width === w && skyCache.cv.height === h ? skyCache.cv : document.createElement("canvas");
@@ -452,7 +465,7 @@
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.fillStyle = rgba(DS.well); g.fillRect(0, 0, P.W, P.H);
         g.globalCompositeOperation = "lighter";
-        const b = P.basis, fwd = [-b.toward[0], -b.toward[1], -b.toward[2]];
+        const b = P.skyBasis, fwd = [-b.toward[0], -b.toward[1], -b.toward[2]];
         for (let i = 0; i < nStars; i++) {
           const k = i * 7, d = [stars[k], stars[k + 1], stars[k + 2]], z = dot(d, fwd), mag = stars[k + 3];
           if (z < 0.05 || mag > 7.5) continue;
@@ -775,6 +788,699 @@
       ge.addColorStop(0, rgba(0x8fd0ff)); ge.addColorStop(1, rgba(0x8fd0ff, 0));
       circle(ctx, e[0], e[1], 4.5, ge); circle(ctx, e[0], e[1], 2.5, rgba(0x5b9cff));
       text(ctx, "Earth", e[0], e[1] - 11, `600 9px ${MONO}`, rgba(0x8fd0ff));
+    }
+
+    // ── the Interstellar rung (Helios's InterstellarRung and InterstellarLayers): the Sun out to the Voyagers, about 205 AU
+    //    from the center to the frame's edge. Its own fixed frame: the ecliptic of J2000 turned so the interstellar wind
+    //    comes in from the left (Heliosphere.frame), because GSE turns with the Earth and would spin this picture once a
+    //    year. The same world unit and the same place for the Sun as the Sun rung. Positions are bundled JPL Horizons
+    //    tables (js/heliosphere.js); nothing is fetched but that one file. ──
+    const HS = window.Heliosphere || null;
+    const epochMs = (t) => (o.epochMs ? o.epochMs(t) : NaN);
+    const FAR = { lightDay: 0xff8a70, wind: 0xc9a0ff, planet: 0x7f8ea8, model: 0x7fb8ff, shock: 0xa7c4e8, body: 0xc9ad8c, iso: 0x5fd3c6, kuiper: 0x9a8f7a };
+    const FAR_AXES = [[[1, 0, 0], "+X", 0xc9a0ff], [[0, 1, 0], "+Y", 0x7fd6a0], [[0, 0, 1], "+Z", 0x8fb7ff]];
+    let farZoom = 1, farWire = null, farCache = null, farMarks = [], farFailed = false, farMin = false, tiltBefore = null;
+    const farCard = HS && o.epochMs ? Object.assign(document.createElement("div"), { className: "hso-far", hidden: true }) : null;
+    if (farCard) {
+      root.appendChild(farCard);
+      farCard.addEventListener("pointerdown", (e) => e.stopPropagation());
+      farCard.addEventListener("click", (e) => { if (e.target.closest(".hf-min")) { farMin = !farMin; farCard.dataset.html = ""; request(); } });
+    }
+    /** Sun-centered ecliptic J2000 (AU) → this rung's world (R_E, the Sun where the Sun rung has it). */
+    const farWorld = (e) => { const f = HS.frame(e); return [AU + f[0] * AU, f[1] * AU, f[2] * AU]; };
+    function farLoad() {
+      if (!HS || HS.ready || farFailed) return;
+      HS.load(o.heliosphere || "assets/data/heliosphere.json").then(() => request(), () => { farFailed = true; request(); });
+    }
+    /** The model's lines, once: rings about the upwind axis every 15° and meridians along it every 30°, in world points. */
+    function farModel() {
+      if (farWire) return farWire;
+      const maxA = HS.maxAngle(), lines = [];
+      for (let a = 15 * DEG; a <= maxA + 1e-9; a += 15 * DEG) lines.push(Array.from({ length: 97 }, (_, i) => HS.heliopausePoint(a, TAU * i / 96)));
+      for (let m = 0; m < 12; m++) lines.push(Array.from({ length: 61 }, (_, i) => HS.heliopausePoint(maxA * i / 60, TAU * m / 12)));
+      farWire = lines.map(l => l.map(p => (p ? farWorld(p) : null)));
+      return farWire;
+    }
+    /** Everything the tables give for one minute: the craft with their paths, the bodies with theirs. */
+    function farScene(ms) {
+      const key = Math.round(ms / 60000);
+      if (farCache && farCache.key === key && farCache.ready === HS.ready) return farCache;
+      const sc = { key, ready: HS.ready, ms, earth: farWorld(HS.planet("earth", ms)), craft: [], bodies: [], planets: [] };
+      for (const name of ["jupiter", "saturn", "uranus", "neptune"]) {
+        sc.planets.push({ name: name[0].toUpperCase() + name.slice(1), orbit: HS.planetOrbit(name, ms).map(farWorld), w: farWorld(HS.planet(name, ms)) });
+      }
+      if (HS.ready) {
+        for (const c of HS.craftAt(ms)) {
+          const cov = HS.coverage(c.key);
+          sc.craft.push(Object.assign(c, {
+            w: farWorld(c.p), flown: HS.path(c.key, cov[0], ms).map(farWorld),
+            ahead: HS.path(c.key, ms, ms + 15 * 365.25 * 864e5).map(farWorld),   // fifteen years: past every date the view names
+            events: HS.EVENTS.filter(e => e.craft === c.key && e.au && e.t <= ms).map(e => ({ e, w: farWorld(HS.state(c.key, e.t).p) })),
+          }));
+        }
+        for (const b of HS.BODIES) {
+          const s = HS.state(b.key, ms), cov = HS.coverage(b.key), iso = b.kind === "interstellar";
+          sc.bodies.push(Object.assign({}, b, {
+            line: iso ? HS.path(b.key, cov[0], cov[1]).map(farWorld) : s ? HS.ellipse(s.p, s.v).map(farWorld) : [],
+            w: s && !(b.found && ms < b.found) ? farWorld(s.p) : null, sun: s ? len3(s.p) : NaN,
+          }));
+        }
+      }
+      farCache = sc;
+      return sc;
+    }
+    const lightTime = (s) => { const t = Math.round(s); return `${Math.floor(t / 3600)} h ${String(Math.floor(t % 3600 / 60)).padStart(2, "0")} m ${String(t % 60).padStart(2, "0")} s`; };
+    const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10), utcMin = (ms) => `${utcDay(ms)} at ${new Date(ms).toISOString().slice(11, 16)} UT`;
+    function drawInterstellar(ctx) {
+      const ms = epochMs(time);
+      farMarks = [];
+      if (!HS || !isFinite(ms)) return;
+      farLoad();
+      const sc = farScene(ms), sun = [AU, 0, 0], sunQ = P.pt(sun), ptPerAU = P.scale * AU;
+      const open = 1 - Math.abs(P.basis.toward[2]);        // how far the view is from straight down on the ecliptic
+      const facing = (w) => (w[0] - AU) * P.basis.toward[0] + w[1] * P.basis.toward[1] + w[2] * P.basis.toward[2] > 0;
+      const line = (pts, close) => {
+        ctx.beginPath();
+        let pen = false;
+        for (const w of pts) { if (!w) { pen = false; continue; } const q = P.pt(w); if (pen) ctx.lineTo(q[0], q[1]); else { ctx.moveTo(q[0], q[1]); pen = true; } }
+        if (close) ctx.closePath();
+      };
+      const ring = (c, rAU, u, v, n = 180) => Array.from({ length: n + 1 }, (_, k) => {
+        const a = TAU * k / n, ca = Math.cos(a) * rAU * AU, sa = Math.sin(a) * rAU * AU;
+        return [c[0] + u[0] * ca + v[0] * sa, c[1] + u[1] * ca + v[1] * sa, c[2] + u[2] * ca + v[2] * sa];
+      });
+      const X = [1, 0, 0], Y = [0, 1, 0], Z = [0, 0, 1];
+      // labels placed against each other: the first free of right, left, below, above (InterstellarScene.Labels)
+      const taken = [], bounds = [6, (P.top || 0) + 4, P.W - 6, P.H - 62];
+      if (farCard && !farCard.hidden) { const r = farCard.getBoundingClientRect(), b = cv.getBoundingClientRect(); taken.push([r.left - b.left, r.top - b.top, r.right - b.left, r.bottom - b.top]); }
+      const place = (rows, q, gap = 7, prefer = "RLBA") => {
+        let w = 0, h = 0;
+        for (const r of rows) { ctx.font = r.font; r.w = ctx.measureText(r.s).width; r.h = (r.size || 10) + 2; w = Math.max(w, r.w); h += r.h; }
+        for (const side of prefer) {
+          const x = side === "R" ? q[0] + gap : side === "L" ? q[0] - gap - w : q[0] - w / 2;
+          const y = side === "B" ? q[1] + gap : side === "A" ? q[1] - gap - h : q[1] - h / 2;
+          if (x < bounds[0] || y < bounds[1] || x + w > bounds[2] || y + h > bounds[3]) continue;
+          if (taken.some(t => x - 2 < t[2] && x + w + 2 > t[0] && y - 1 < t[3] && y + h + 1 > t[1])) continue;
+          taken.push([x, y, x + w, y + h]);
+          let yy = y;
+          for (const r of rows) { text(ctx, r.s, side === "L" ? x + w : side === "R" ? x : x + w / 2, yy + r.h / 2, r.font, r.color, side === "L" ? "right" : side === "R" ? "left" : "center"); yy += r.h; }
+          return true;
+        }
+        return false;
+      };
+      const mono = (px, wt = "") => `${wt ? wt + " " : ""}${px}px ${MONO}`;
+
+      // the ecliptic plane, as distance rings about the Sun, named on the downwind side
+      for (const r of [50, 100, 150]) {
+        line(ring(sun, r, X, Y)); stroke(ctx, "rgba(145,145,153,0.28)", 0.6);
+        place([{ s: `${r} AU`, font: mono(9), color: "rgba(145,145,153,0.9)", size: 9 }], P.pt([AU - r * AU, 0, 0]), 3, "BA");
+      }
+      // the model heliopause and termination shock, behind everything inside them
+      if (show.hpModel) {
+        for (const near of [false, true]) {
+          ctx.beginPath();
+          for (const l of farModel()) for (let i = 1; i < l.length; i++) {
+            const a = l[i - 1], b = l[i];
+            if (!a || !b || (facing(a) && facing(b)) !== near) continue;
+            const qa = P.pt(a), qb = P.pt(b);
+            ctx.moveTo(qa[0], qa[1]); ctx.lineTo(qb[0], qb[1]);
+          }
+          stroke(ctx, rgba(FAR.model, near ? 0.55 : 0.2), 0.7);
+        }
+        const r = HS.MODEL.shock * ptPerAU;                   // a sphere, so a circle from any side
+        circle(ctx, sunQ[0], sunQ[1], r, rgba(FAR.shock, 0.05));
+        ctx.beginPath(); ctx.arc(sunQ[0], sunQ[1], r, 0, TAU); stroke(ctx, rgba(FAR.shock, 0.5), 0.9, [3, 3]);
+      }
+      if (show.bodies) {                                     // the Kuiper belt's classical region, a band in the ecliptic
+        ctx.beginPath();
+        for (const rr of [HS.KUIPER.outer, HS.KUIPER.inner]) { const pts = ring(sun, rr, X, Y); pts.forEach((w, i) => { const q = P.pt(w); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.closePath(); }
+        ctx.fillStyle = rgba(FAR.kuiper, 0.14); ctx.fill("evenodd");
+      }
+      // the giant planets' orbits, for scale; inside Jupiter everything is one dot
+      for (const pl of sc.planets) {
+        line(pl.orbit, true); stroke(ctx, rgba(FAR.planet, 0.7), 0.7);
+        const q = P.pt(pl.w);
+        circle(ctx, q[0], q[1], 1.5, rgba(FAR.planet));
+        farMarks.push({ q, title: `${pl.name} · ${(len3([pl.w[0] - AU, pl.w[1], pl.w[2]]) / AU).toFixed(2)} AU from the Sun` });
+        if (ptPerAU >= 6 || (pl.name === "Neptune" && ptPerAU * 30 >= 36)) place([{ s: pl.name, font: mono(9), color: rgba(FAR.planet), size: 9 }], q, 4);
+      }
+      if (show.bodies) {
+        for (const b of sc.bodies) {
+          const iso = b.kind === "interstellar";
+          if (b.line.length > 2) { line(b.line, !iso); if (iso) stroke(ctx, rgba(FAR.iso, 0.4), 0.8, [2, 3]); else stroke(ctx, rgba(FAR.body, b.key === "pluto" ? 0.55 : 0.3), 0.6); }
+          if (!b.w) continue;
+          const q = P.pt(b.w);
+          if (iso) { ctx.beginPath(); ctx.moveTo(q[0], q[1] - 3.5); ctx.lineTo(q[0] + 3.5, q[1]); ctx.lineTo(q[0], q[1] + 3.5); ctx.lineTo(q[0] - 3.5, q[1]); ctx.closePath(); ctx.fillStyle = rgba(FAR.iso); ctx.fill(); }
+          else circle(ctx, q[0], q[1], 2.2, rgba(FAR.body));
+          farMarks.push({ q, title: `${b.name} · ${b.sun.toFixed(2)} AU from the Sun` });
+        }
+      }
+      if (show.lightDay) {
+        // one light-day from Earth: a sphere, so its outline is a circle from any side; two great circles (the ecliptic's
+        // plane, and the plane through the wind's longitude and the pole) make it read as a sphere once tilted
+        const R = HS.LIGHT_DAY_AU, c = P.pt(sc.earth), rr = R * ptPerAU;
+        ctx.beginPath(); ctx.arc(c[0], c[1], rr, 0, TAU); stroke(ctx, rgba(FAR.lightDay, 0.9), 1.2, [7, 5]);
+        if (open > 0.05) {
+          const a = 0.35 * Math.min(1, (open - 0.05) / 0.25);
+          for (const [u, v] of [[X, Y], [X, Z]]) { line(ring(sc.earth, R, u, v)); stroke(ctx, rgba(FAR.lightDay, a), 0.7, [2, 4]); }
+        }
+        place([{ s: `One light-day from Earth · ${R.toFixed(1)} AU`, font: mono(10, 500), color: rgba(FAR.lightDay), size: 10 }], [c[0], c[1] - rr], 5, "BA");
+      }
+      // the interstellar wind, outside the sphere on the side it comes from
+      {
+        const up = HS.frame(HS.UPWIND), at = (r) => P.pt([AU + up[0] * r * AU, up[1] * r * AU, up[2] * r * AU]), tail = at(203), head = at(181);
+        const dx = head[0] - tail[0], dy = head[1] - tail[1], l = Math.max(Math.hypot(dx, dy), 1e-3), ux = dx / l, uy = dy / l;
+        ctx.beginPath(); ctx.moveTo(tail[0], tail[1]); ctx.lineTo(head[0], head[1]);
+        ctx.moveTo(head[0] - 6 * ux + 3.5 * uy, head[1] - 6 * uy - 3.5 * ux); ctx.lineTo(head[0], head[1]); ctx.lineTo(head[0] - 6 * ux - 3.5 * uy, head[1] - 6 * uy + 3.5 * ux);
+        stroke(ctx, rgba(FAR.wind), 1.3, null, "round");
+        place([{ s: `Interstellar wind · ${HS.FLOW.speed.toFixed(1)} km/s`, font: mono(9), color: rgba(FAR.wind), size: 9 }], tail, 6, "LBAR");
+      }
+      // the Sun
+      const gs = ctx.createRadialGradient(sunQ[0], sunQ[1], 1, sunQ[0], sunQ[1], 7);
+      gs.addColorStop(0, rgba(0xffe9a8, 0.6)); gs.addColorStop(1, rgba(0xffe9a8, 0));
+      circle(ctx, sunQ[0], sunQ[1], 7, gs); circle(ctx, sunQ[0], sunQ[1], 2.5, rgba(0xffe9a8));
+      farMarks.push({ q: sunQ, title: "The Sun" });
+      // the craft: the silent ones first, so the ones that still answer draw over them
+      const order = sc.craft.slice().sort((a, b) => (b.silent ? 1 : 0) - (a.silent ? 1 : 0));
+      for (const k of order) {
+        line(k.flown); stroke(ctx, rgba(k.color, k.silent ? 0.55 : 0.95), k.silent ? 0.9 : 1.4);
+        line(k.ahead); stroke(ctx, rgba(k.color, 0.45), 0.8, [1.5, 3.5]);
+        const q = P.pt(k.w);
+        if (open > 0.05) {                                  // a stalk to the ecliptic plane: how far above or below it the craft is
+          const foot = P.pt([k.w[0], k.w[1], 0]);
+          ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(foot[0], foot[1]); stroke(ctx, rgba(k.color, 0.35), 0.7, [2, 2]);
+          circle(ctx, foot[0], foot[1], 1.2, rgba(k.color, 0.5));
+        }
+        for (const ev of k.events) { const m = P.pt(ev.w); ctx.fillStyle = "rgba(255,255,255,0.92)"; ctx.fillRect(m[0] - 2.5, m[1] - 2.5, 5, 5); }
+        if (!k.silent) {
+          const g = ctx.createRadialGradient(q[0], q[1], 1, q[0], q[1], 8);
+          g.addColorStop(0, rgba(k.color, 0.7)); g.addColorStop(1, rgba(k.color, 0));
+          circle(ctx, q[0], q[1], 8, g);
+        }
+        circle(ctx, q[0], q[1], k.silent ? 2 : 3, rgba(k.color));
+        farMarks.push({ q, title: `${k.name} · ${k.sun.toFixed(2)} AU from the Sun · ecliptic longitude ${k.lon.toFixed(1)}°, latitude ${k.lat >= 0 ? "+" : "−"}${Math.abs(k.lat).toFixed(1)}° · ${k.upwind.toFixed(0)}° from the upwind direction` });
+      }
+      // names after every marker is down, the ones that still answer first
+      for (const k of order.slice().reverse()) {
+        place([{ s: k.name, font: mono(10.5, 600), color: rgba(k.color), size: 10.5 },
+               { s: k.silent ? `${k.sun.toFixed(1)} AU from the Sun · silent` : `${k.earth.toFixed(1)} AU from Earth · ${lightTime(k.light)}`, font: mono(9), color: rgba(k.color, 0.85), size: 9 }], P.pt(k.w), 9);
+      }
+      if (show.bodies) {
+        for (const b of sc.bodies) if (b.w) place([{ s: b.name, font: mono(9), color: rgba(b.kind === "interstellar" ? FAR.iso : FAR.body), size: 9 }], P.pt(b.w), 5);
+        if (ptPerAU * HS.KUIPER.outer >= 60) place([{ s: "Kuiper belt", font: mono(9), color: rgba(FAR.kuiper), size: 9 }], P.pt([AU, -45 * AU, 0]), 2, "BA");
+      }
+      if (show.hpModel) {
+        // each named on its own outline: the flank point that projects highest, and the top of the shock's circle
+        let top = null;
+        for (let m = 0; m < 24; m++) { const p = HS.heliopausePoint(Math.PI / 2, TAU * m / 24), q = p && P.pt(farWorld(p)); if (q && (!top || q[1] < top[1])) top = q; }
+        if (top) place([{ s: "Heliopause (model)", font: mono(9), color: rgba(FAR.model), size: 9 }], top, 4, "ARLB");
+        place([{ s: "Termination shock (model)", font: mono(9), color: rgba(FAR.shock), size: 9 }], [sunQ[0], sunQ[1] - HS.MODEL.shock * ptPerAU], 4, "BARL");
+      }
+      // the measured crossings, named last: they give way to everything else
+      for (const k of sc.craft) for (const ev of k.events) {
+        place([{ s: `${ev.e.title} · ${new Date(ev.e.t).getUTCFullYear()} · ${ev.e.au.toFixed(1)} AU`, font: mono(8.5), color: "rgba(174,174,182,0.95)", size: 8.5 }], P.pt(ev.w), 6, "LRAB");
+      }
+      if (!HS.ready) text(ctx, farFailed ? "The trajectory tables could not be loaded." : "Loading the trajectories…", P.W / 2, (P.top || 0) + 30, mono(10), "rgba(255,255,255,0.6)");
+      farCardUpdate(sc);
+    }
+    /** The rung's card: each craft's distances and light time, then what the marker and the model are, a fact a sentence. */
+    function farCardUpdate(sc) {
+      if (!farCard) return;
+      const M = HS.MODEL, esc_ = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      const rows = sc.craft.map(k => `<tr class="${k.silent ? "sil" : ""}"><th style="color:${rgba(k.color)}">${esc_(k.name)}</th><td>${k.sun.toFixed(2)} AU</td><td>${k.earth.toFixed(2)} AU</td><td>${k.silent ? "silent" : lightTime(k.light)}</td></tr>`).join("");
+      const notes = [];
+      if (show.lightDay) {
+        notes.push(`One light-day is ${HS.LIGHT_DAY_AU.toFixed(2)} AU. Light takes 24 hours to cross it.`);
+        notes.push("The dashed circle is a sphere of that radius around Earth.");
+        for (const e of HS.EVENTS) if (e.kind === "lightDay") notes.push(`${HS.CRAFT.find(c => c.key === e.craft).name} ${e.t <= sc.ms ? "passed" : "passes"} one light-day from Earth on ${utcMin(e.t)}.`);
+      }
+      if (show.hpModel) {
+        notes.push(`The heliopause drawn is a model: Parker's Rankine shape, ${M.nose.toFixed(1)} AU at the nose, set to pass through Voyager 1's crossing.`);
+        notes.push(`Voyager 2 crossed ${(HS.heliopauseR(M.v2Crossing.angle * DEG) - M.v2Crossing.r).toFixed(0)} AU inside it. The real heliosphere is not symmetric.`);
+        notes.push(`The termination shock drawn is a sphere of ${M.shock.toFixed(1)} AU, the mean of the two crossings.`);
+        notes.push("The tail is left open. Nothing has measured it.");
+      }
+      notes.push("White squares mark where each Voyager crossed the two boundaries.");
+      notes.push("The view is fixed to the ecliptic of J2000. The interstellar wind comes from the left.");
+      const html = farMin ? `<p class="hf-h"><b>INTERSTELLAR</b><button class="hf-min" aria-label="Show the Interstellar card" title="Show the card">+</button></p>`
+        : `<p class="hf-h"><b>INTERSTELLAR</b><span>${new Date(sc.ms).toISOString().slice(0, 16).replace("T", " ")} UTC</span><button class="hf-min" aria-label="Minimize the Interstellar card" title="Minimize">−</button></p>` +
+          (rows ? `<table><thead><tr><th></th><td>from the Sun</td><td>from Earth</td><td>light time</td></tr></thead><tbody>${rows}</tbody></table>` : "") +
+          notes.map(n => `<p>${esc_(n)}</p>`).join("") +
+          `<p class="hf-f">Positions: JPL Horizons. Horizons extrapolates the Voyagers' paths from tracking data that ends in 1992. Both Voyagers are still in contact with Earth. Pioneer 10 and 11 no longer answer.</p>`;
+      farCard.classList.toggle("min", farMin);
+      if (farCard.dataset.html !== html) { farCard.innerHTML = html; farCard.dataset.html = html; }
+    }
+
+    // ── the Jupiter rung (Helios's JupiterRung): Jupiter at true size in JSO, +X to the Sun and to the left at rest, lengths
+    //    in R_J. The Joy et al. 2002 magnetopause and bow shock at the Tao et al. 2005 wind (or a chosen pressure), the
+    //    current sheet, the Io plasma torus, the Galilean moons with their flux tubes, Alfvén wings and footprints through
+    //    JRM33 + Con2020, a moon's interaction in an inset, and Juno. The numbers are js/jupiter.js's. ──
+    const JV = window.Jupiter || null;
+    const JC = { bs: 0x6fb0e0, mp: 0x9fd6ff, mpWire: 0x8fd0ff, sheet: 0xD9A2FF, torus: 0xFF7A59, disc: 0x7FA8D8, juno: HELIO.Juno, earth: 0x5b9cff };
+    let jupZoom = 1, jupFailed = false, jupMoon = "ganymede", jupFollows = true, jupPressure = null, jupHits = [], jupCache = null, jupGlobeKey = "";
+    const jupTex = {}, jupGlobeCv = document.createElement("canvas"), jupMoonCv = document.createElement("canvas");
+    const jupBox = JV && o.epochMs ? Object.assign(document.createElement("div"), { className: "hso-jupbox", hidden: true }) : null;
+    let jupInsetCv = null;
+    if (jupBox) {
+      jupBox.innerHTML = `<div class="hso-jmoon"><p class="jm-h">${JV.MOONS.map(m => `<button data-moon="${m}">${JV.MOON[m].name}</button>`).join("")}<span></span>` +
+        `<button class="jm-f"></button><button class="jb-min" data-min="inset" aria-label="Show or minimize the moon inset" title="Show">+</button></p><canvas width="340" height="241"></canvas><div class="jm-live"></div></div>` +
+        `<div class="hso-jup"><p class="jc-h"><b>JUPITER · JSO</b><span class="jc-t"></span><button class="jb-min" data-min="card" aria-label="Show or minimize the Jupiter card" title="Minimize">−</button></p>` +
+        `<div class="jc-a"></div><p class="jc-p"><select aria-label="Solar wind pressure at Jupiter" title="The solar wind's dynamic pressure sets the two boundaries."><option value="">Solar wind at Jupiter (Tao 2005 model)</option><option value="0.02">0.02 nPa, rarefied (10th percentile)</option><option value="0.071">0.071 nPa, median</option><option value="0.22">0.22 nPa, compressed (90th percentile)</option><option value="0.5">0.5 nPa, strongly compressed</option></select></p>` +
+        `<div class="jc-b"></div><p class="jc-z"><button data-jzoom="1" title="Frame the Galilean moons (±30 R♃)">Moons</button><button data-jzoom="0.16" title="Frame the magnetopause and the bow shock">Magnetosphere</button></p>` +
+        `<p class="jc-n">The blue outline is the magnetopause. The dashed outline outside it is the bow shock. The purple rings are the current sheet. The red glow is the Io plasma torus. ` +
+        `Each moon's bright line is its Alfvén wing, along the magnetic field to Jupiter. A dot on Jupiter is where a wing lands. The cloud map is from December 2000, and the Great Red Spot has moved since.</p>` +
+        `<p class="jc-f">Globe: Cassini ISS (NASA/JPL/SSI). Field: JRM33 with Con2020. Positions: JPL Horizons. Solar wind: Tao et al. 2005, from CDPP/AMDA.</p></div>`;
+      root.appendChild(jupBox);
+      jupInsetCv = jupBox.querySelector("canvas");
+      // The inset and the card together are about 760 px tall. Where the view is shorter than both need, one is open at
+      // a time: the card first, the inset when a moon is picked.
+      const insetEl = jupBox.querySelector(".hso-jmoon"), cardEl = jupBox.querySelector(".hso-jup"), tight = () => root.clientHeight < 1000;
+      const openOnly = (el) => { el.classList.remove("min"); if (tight()) (el === insetEl ? cardEl : insetEl).classList.add("min"); };
+      jupBox.marks = () => { for (const m of jupBox.querySelectorAll(".jb-min")) { const shut = m.parentElement.parentElement.classList.contains("min"); m.textContent = shut ? "+" : "−"; m.title = shut ? "Show" : "Minimize"; } };
+      jupBox.pick = (key) => { jupMoon = key; openOnly(insetEl); jupBox.marks(); };
+      insetEl.classList.add("min");
+      jupBox.addEventListener("pointerdown", (e) => e.stopPropagation());
+      jupBox.addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.dataset.moon) { jupMoon = b.dataset.moon; openOnly(insetEl); }
+        else if (b.classList.contains("jm-f")) jupFollows = !jupFollows;
+        else if (b.dataset.min) { const el = b.dataset.min === "inset" ? insetEl : cardEl; if (el.classList.contains("min")) openOnly(el); else el.classList.add("min"); }
+        else if (b.dataset.jzoom) jupZoom = +b.dataset.jzoom;
+        jupBox.marks();
+        request();
+      });
+      jupBox.querySelector("select").addEventListener("change", (e) => { jupPressure = e.target.value ? +e.target.value : null; request(); });
+    }
+    function jupLoad() {
+      if (!JV || JV.ready || jupFailed) return;
+      JV.load(o.jupiter || "assets/data/jupiter.json").then(() => request(), () => { jupFailed = true; request(); });
+    }
+    function texOf(key, src) {                              // an equirectangular map's pixels, fetched when first wanted
+      if (key in jupTex) return jupTex[key];
+      jupTex[key] = null;
+      const im = new Image();
+      im.onload = () => {
+        const c = document.createElement("canvas"); c.width = im.width; c.height = im.height;
+        const g = c.getContext("2d"); g.drawImage(im, 0, 0);
+        jupTex[key] = { w: im.width, h: im.height, d: g.getImageData(0, 0, im.width, im.height).data };
+        jupGlobeKey = ""; request();
+      };
+      im.src = src;
+      return null;
+    }
+    /** The stars are kept in GSE at the page's moment; this rung's axes are JSO. The camera's axes go to the ecliptic of
+     *  J2000 through JSO's own axes, then about the pole by the Sun's longitude seen from the Earth. */
+    function jupSkyBasis(b) {
+      if (!JV || !o.epochMs) return b;
+      const F = JV.jso(o.epochMs(time)), e = JV.planet("earth", o.epochMs(S.epoch)), th = Math.atan2(-e[1], -e[0]), c = Math.cos(th), s = Math.sin(th);
+      const back = (v) => { const q = JV.vectorOf(F, v); return [q[0] * c + q[1] * s, -q[0] * s + q[1] * c, q[2]]; };
+      return { right: back(b.right), down: back(b.down), toward: back(b.toward) };
+    }
+    /** A textured spheroid seen along B (the camera's axes in the body's own frame), lit from `sun` (PlanetGlobeCPU, term
+     *  for term): the unit disc is the equatorial radius, `pr` the polar over the equatorial radius. */
+    function spheroidImage(cvs, size, B, sun, T, pr, night, off, width) {
+      cvs.width = cvs.height = size;
+      const gc = cvs.getContext("2d"), img = gc.createImageData(size, size), d = img.data, half = size / 2, ipr = 1 / pr;
+      const R = B.right, D = B.down, Tw = B.toward, tz = Tw[2] * ipr, A = Tw[0] * Tw[0] + Tw[1] * Tw[1] + tz * tz;
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        const dx = (x + 0.5 - half) / half, dy = (y + 0.5 - half) / half;
+        const qx = R[0] * dx + D[0] * dy, qy = R[1] * dx + D[1] * dy, qz = R[2] * dx + D[2] * dy, qs = qz * ipr;
+        const Bq = Tw[0] * qx + Tw[1] * qy + tz * qs, disc = Bq * Bq - A * (qx * qx + qy * qy + qs * qs - 1), g = disc / A;
+        const cover = clamp((1 - Math.sqrt(Math.max(0, 1 - g))) * half + 0.5, 0, 1);
+        if (!(cover > 0)) continue;
+        const tt = (-Bq + Math.sqrt(Math.max(0, disc))) / A, px = qx + Tw[0] * tt, py = qy + Tw[1] * tt, pz = qz + Tw[2] * tt;
+        const nz0 = pz / (pr * pr), nl = Math.hypot(px, py, nz0), pl = Math.hypot(px, py, pz);
+        const lat = Math.asin(clamp(pz / pl, -1, 1)), lon = Math.atan2(py, px);
+        const sx = Math.min(T.w - 1, Math.max(0, Math.floor((lon / TAU + 0.5) * T.w))), sy = Math.min(T.h - 1, Math.max(0, Math.floor((0.5 - lat / Math.PI) * T.h)));
+        const k = 4 * (sy * T.w + sx), f = night + (1 - night) * clamp(((px * sun[0] + py * sun[1] + nz0 * sun[2]) / nl + off) / width, 0, 1), o2 = 4 * (y * size + x);
+        d[o2] = T.d[k] * f; d[o2 + 1] = T.d[k + 1] * f; d[o2 + 2] = T.d[k + 2] * f; d[o2 + 3] = cover * 255;
+      }
+      gc.putImageData(img, 0, 0);
+      return cvs;
+    }
+    function jupSceneAt(ms) {
+      const key = [Math.round(ms / 1000), show.jSheet, show.jTorus, show.jTubes, jupPressure, JV.ready, JV.wind.state].join("|");
+      if (!jupCache || jupCache.key !== key) jupCache = { key, sc: JV.scene(ms, { layers: { sheet: show.jSheet, torus: show.jTorus, tubes: show.jTubes }, pressure: jupPressure }) };
+      return jupCache.sc;
+    }
+    const jupFade = (x) => clamp(1 - (x + 60) / -230, 0, 1);   // the boundaries fade from x = −60 to −290 R_J
+    function drawJupiter(ctx, dpr) {
+      jupHits = [];
+      const ms = epochMs(time);
+      if (!JV || !isFinite(ms)) return;
+      jupLoad();
+      JV.loadWind(epochMs(S.epoch), request);
+      const sc = jupSceneAt(ms), b = P.basis, c0 = P.earth, s = P.scale, pole = sc.pole, ratio = JV.RP / JV.RJ, kk = 1 - 1 / (ratio * ratio), b2j = sc.bodyToJso;
+      const mono = (px, wt = "") => `${wt ? wt + " " : ""}${px}px ${MONO}`;
+      const onGlobe = (q) => {                               // inside Jupiter's oblate outline on screen
+        const sx = (q[0] - c0[0]) / s, sy = (q[1] - c0[1]) / s, w = [0, 1, 2].map(i => b.right[i] * sx + b.down[i] * sy);
+        const dp = dot(b.toward, pole), wp = dot(w, pole), A = 1 - kk * dp * dp, B = dot(w, b.toward) - kk * wp * dp, C = dot(w, w) - kk * wp * wp - 1;
+        return B * B - A * C >= 0;
+      };
+      const hidden = (p) => P.depth(p) < 0 && onGlobe(P.pt(p));
+      const facing = (p) => { const k = (1 / (ratio * ratio) - 1) * dot(p, pole); return dot([p[0] + pole[0] * k, p[1] + pole[1] * k, p[2] + pole[2] * k], b.toward) > 0.02; };
+      const trail = (pts, skip, close) => {
+        ctx.beginPath();
+        let pen = false;
+        for (const p of pts) { if (skip && skip(p)) { pen = false; continue; } const q = P.pt(p); if (pen) ctx.lineTo(q[0], q[1]); else { ctx.moveTo(q[0], q[1]); pen = true; } }
+        if (close) ctx.closePath();
+      };
+      const visible = (pts) => trail(pts, hidden), front = (pts) => trail(pts, (p) => !facing(p));
+      const fade = (color, a) => {                           // a color that fades down the tail, as the boundaries do
+        const p0 = P.pt([-60, 0, 0]), p1 = P.pt([-290, 0, 0]);
+        if (Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) < 1) return rgba(color, a);
+        const g = ctx.createLinearGradient(p0[0], p0[1], p1[0], p1[1]);
+        g.addColorStop(0, rgba(color, a)); g.addColorStop(1, rgba(color, 0));
+        return g;
+      };
+      const toJ = (pts) => pts.map(p => JV.apply(b2j, p));
+
+      // the Sun and the Earth in the sky
+      const sunQ = P.sky([1, 0, 0]);
+      if (sunQ) {
+        const r = Math.max(2, P.focal * Math.tan(0.004652 / Math.max(0.1, sc.sunDistance))), m = r * 8;
+        if (sunQ[0] > -m && sunQ[0] < P.W + m && sunQ[1] > -m && sunQ[1] < P.H + m && !onGlobe(sunQ)) {
+          drawSkySun(ctx, { q: sunQ, r });
+          text(ctx, "☀ Sun", sunQ[0], sunQ[1] + Math.max(12, 3 * r) + 6, mono(10, 600), "#FFE08A");
+        }
+      }
+      const eq = P.sky(sc.earthDir);
+      if (eq && eq[0] > -40 && eq[0] < P.W + 40 && eq[1] > -40 && eq[1] < P.H + 40 && !onGlobe(eq)) {
+        circle(ctx, eq[0], eq[1], 7, rgba(JC.earth, 0.14)); circle(ctx, eq[0], eq[1], 2.4, rgba(JC.earth));
+        text(ctx, "⊕ Earth", eq[0] + 10, eq[1] - 5, mono(10, 600), rgba(JC.earth), "left");
+        text(ctx, `${sc.earthDistance.toFixed(2)} AU · ${(sc.earthDistance * JV.AU_KM / JV.C_KM_S / 60).toFixed(1)} light-min`, eq[0] + 10, eq[1] + 7, mono(9), rgba(JC.earth, 0.6), "left");
+      }
+      // the magnetosheath and the magnetosphere, filled in JSO's equator
+      if (show.jBounds) {
+        ctx.beginPath();
+        for (const loop of [sc.bs.loop, sc.mp.loop]) { loop.forEach((p, i) => { const q = P.pt(p); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.closePath(); }
+        ctx.fillStyle = fade(0x2a4a6e, 0.18); ctx.fill("evenodd");
+        trail(sc.mp.loop, null, true); ctx.fillStyle = fade(0x14365f, 0.16); ctx.fill();
+      }
+      // Jupiter: the Cassini map on the 1-bar spheroid, turned by System III
+      {
+        const T = texOf("jupiter", "assets/img/jupiter-equirect.jpg"), r = s;
+        if (T && r > 1.2) {
+          const Mt = JV.transpose(b2j), B = { right: JV.apply(Mt, b.right), down: JV.apply(Mt, b.down), toward: JV.apply(Mt, b.toward) }, sun = JV.apply(Mt, [1, 0, 0]);
+          const size = clamp(Math.ceil(2 * r * dpr), 4, 640), key = [size, B.right, B.down, sun].flat().map(v => (+v).toFixed(4)).join();
+          if (key !== jupGlobeKey) { spheroidImage(jupGlobeCv, size, B, sun, T, ratio, 0.07, 0.05, 0.18); jupGlobeKey = key; }
+          ctx.drawImage(jupGlobeCv, c0[0] - r, c0[1] - r, 2 * r, 2 * r);
+        } else circle(ctx, c0[0], c0[1], Math.max(r, 1.5), rgba(PLANET.Jupiter[0]));
+      }
+      const st = show.jLines || show.jOvals ? JV.statics(10) : null;
+      if ((show.jLines || show.jOvals) && !st) request();   // the fixed lines are still being traced
+      if (show.jLines && st) for (const l of st.discLines) { visible(toJ(l)); stroke(ctx, rgba(JC.disc, 0.22), 0.7); }
+      if (show.jSheet) {
+        for (const r of sc.sheetRings) { visible(r); stroke(ctx, rgba(JC.sheet, 0.36), 0.8, [3, 3]); }
+        for (const sp of sc.sheetSpokes) { visible(sp); stroke(ctx, rgba(JC.sheet, 0.18), 0.6); }
+      }
+      if (show.jTorus) {
+        // each blob's 1/e ellipsoid projected: an ellipse L·(cos t, sin t) with L Lᵀ the sum over its three semi-axes; soft
+        // edges in place of the app's blur
+        const grads = new Map();
+        for (const t of sc.torus) {
+          if (hidden(t.c)) continue;
+          const u = [dot(t.a, b.right), dot(t.a, b.down)], v = [dot(t.b, b.right), dot(t.b, b.down)], w = [dot(t.n, b.right), dot(t.n, b.down)];
+          const m11 = u[0] * u[0] + v[0] * v[0] + w[0] * w[0], m12 = u[0] * u[1] + v[0] * v[1] + w[0] * w[1], m22 = u[1] * u[1] + v[1] * v[1] + w[1] * w[1];
+          const l11 = Math.sqrt(Math.max(1e-6, m11)), l21 = m12 / l11, l22 = Math.sqrt(Math.max(1e-12, m22 - l21 * l21)), q = P.pt(t.c);
+          let g = grads.get(t.alpha);
+          if (!g) { g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1.25); g.addColorStop(0, rgba(JC.torus, t.alpha * 1.25)); g.addColorStop(0.6, rgba(JC.torus, t.alpha * 0.8)); g.addColorStop(1, rgba(JC.torus, 0)); grads.set(t.alpha, g); }
+          ctx.save(); ctx.transform(l11 * s, l21 * s, 0, l22 * s, q[0], q[1]);
+          ctx.beginPath(); ctx.arc(0, 0, 1.25, 0, TAU); ctx.fillStyle = g; ctx.fill(); ctx.restore();
+        }
+      }
+      if (show.jOvals && st) for (const m of JV.MOONS) for (const leg of [st.ovals[m].north, st.ovals[m].south]) if (leg.length > 3) { front(toJ(leg)); stroke(ctx, rgba(JV.MOON[m].color, 0.55), 0.9, [2, 2]); }
+      if (show.jBounds) {
+        visible(sc.bs.loop); stroke(ctx, fade(JC.bs, 0.5), 1, [5, 4]);
+        for (const [w, a] of [[6, 0.10], [3, 0.22], [1.2, 0.85]]) { visible(sc.mp.loop); stroke(ctx, fade(JC.mp, a), w); }
+        const vis = Math.abs(Math.sin(P.tilt));
+        if (vis > 0.02) for (const [W_, col, a, dash] of [[sc.bs, JC.bs, 0.24 * vis, [4, 4]], [sc.mp, JC.mpWire, 0.30 * vis, null]]) {
+          for (const m of W_.meridians) { visible(m); stroke(ctx, fade(col, a), 0.7, dash); }
+          for (const r of W_.rings) { const f = jupFade(r.x); if (f > 0.02) { visible(r.pts); stroke(ctx, rgba(col, a * 0.7 * f), 0.7, dash); } }
+        }
+      }
+      // the moons: orbit, flux tube, wings and footprints
+      for (const m of sc.moons) {
+        const col = m.info.color;
+        if (m.orbit.length > 2) { visible(m.orbit); stroke(ctx, rgba(col, 0.32), 0.8); }
+        if (!show.jTubes) continue;
+        // a wing and its footprint need a flow slower than the Alfvén speed: they fade out as M_A nears 1 (Callisto near the
+        // plasma sheet's center) and back in beyond it; the field line itself is there at any M_A, dimmed while it carries no wing
+        const on = clamp((1 - m.machA) / 0.15, 0, 1);
+        if (m.tube.length > 2) { const bare = !m.wingN.length && !m.wingS.length; visible(m.tube); stroke(ctx, rgba(col, bare ? 0.3 + 0.45 * on : 0.35), bare ? 1.0 : 0.7, bare ? [4, 3] : [2, 3]); }
+        if (!(on > 0)) continue;
+        for (const w of [m.wingN, m.wingS]) if (w.length > 2) { visible(w); stroke(ctx, rgba(col, 0.18 * on), 3.5); visible(w); stroke(ctx, rgba(col, 0.85 * on), 1.1); }
+        for (const [f, hemi] of [[m.footN, "northern"], [m.footS, "southern"]]) if (f && facing(f)) {
+          const q = P.pt(f), lw = JV.latWest(JV.apply(JV.transpose(b2j), f));
+          circle(ctx, q[0], q[1], 4, rgba(col, 0.25 * on)); circle(ctx, q[0], q[1], 2, rgba(col, on));
+          jupHits.push({ q, r: 6, soft: true, ring: { kind: "jup", name: m.info.name, title: `${m.info.name}'s ${hemi} footprint · latitude ${lw.lat.toFixed(1)}°, λIII ${lw.west.toFixed(1)}° W` } });
+        }
+      }
+      if (sc.juno) {
+        const k = sc.juno;
+        if (k.orbit.length > 2) { visible(k.orbit); stroke(ctx, rgba(JC.juno, 0.35), 0.9); }
+        if (k.track.length > 2) { visible(k.track); stroke(ctx, rgba(JC.juno, 0.8), 1.3); }
+        for (const f of [k.footN, k.footS]) if (f && facing(f)) {
+          const q = P.pt(f);
+          ctx.beginPath(); ctx.moveTo(q[0] - 3, q[1] - 3); ctx.lineTo(q[0] + 3, q[1] + 3); ctx.moveTo(q[0] - 3, q[1] + 3); ctx.lineTo(q[0] + 3, q[1] - 3); stroke(ctx, rgba(JC.juno), 1.2);
+        }
+      }
+      // names: the two rings' first, then the moons' and Juno's, then the boundaries'
+      const taken = [], inset = 28, over = (x) => taken.some(t => x[0] < t[2] && x[2] > t[0] && x[1] < t[3] && x[3] > t[1]);
+      if (jupBox && !jupBox.hidden) { const cr = cv.getBoundingClientRect(); for (const el of jupBox.children) { const r = el.getBoundingClientRect(); if (r.width) taken.push([r.left - cr.left, r.top - cr.top, r.right - cr.left, r.bottom - cr.top]); } }
+      const turned = (str, x, y, ang, color, dy = 0) => { ctx.save(); ctx.translate(x, y); ctx.rotate(ang); text(ctx, str, 0, dy, mono(9), color); ctx.restore(); };
+      const boxOf = (p, ang, halfW) => { const w = 2 * halfW, h = 16, bw = Math.abs(Math.cos(ang)) * w + Math.abs(Math.sin(ang)) * h, bh = Math.abs(Math.sin(ang)) * w + Math.abs(Math.cos(ang)) * h; return [p[0] - bw / 2, p[1] - bh / 2, p[0] + bw / 2, p[1] + bh / 2]; };
+      const inFrame = (x) => x[0] > inset && x[2] < P.W - inset && x[1] > inset + 40 + (P.top || 0) && x[3] < P.H - inset;
+      /** A near-equatorial ring's name, held in one place on screen as the view turns (labelOnRing): at the ring's lower
+       *  right (`below`) or upper left, along the projected ellipse's long axis. */
+      const labelOnRing = (pts, str, color, below) => {
+        if (pts.length <= 8) return;
+        const qs = pts.map(p => P.pt(p)), n = qs.length, c = [qs.reduce((a, q) => a + q[0], 0) / n, qs.reduce((a, q) => a + q[1], 0) / n];
+        let sxx = 0, syy = 0, sxy = 0;
+        for (const q of qs) { const dx = q[0] - c[0], dy = q[1] - c[1]; sxx += dx * dx / n; syy += dy * dy / n; sxy += dx * dy / n; }
+        const mid = (sxx + syy) / 2, rad = Math.sqrt((sxx - syy) ** 2 / 4 + sxy * sxy), major = Math.sqrt(mid + rad), minor = Math.sqrt(Math.max(0, mid - rad));
+        if (!(major * 1.414 > 14)) return;
+        const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy) * clamp((1 - minor / Math.max(major, 1e-6) - 0.08) / 0.25, 0, 1);
+        const u = [Math.cos(ang), Math.sin(ang)], v = [-Math.sin(ang), Math.cos(ang)], side = below ? 1 : -1, dir = [side * (0.55 * u[0] + 0.85 * v[0]), side * (0.55 * u[1] + 0.85 * v[1])];
+        const halfW = str.length * 2.9 + 6, center = (q) => [q[0] + side * (halfW - 3) * u[0] + side * 8 * v[0], q[1] + side * (halfW - 3) * u[1] + side * 8 * v[1]];
+        const order = qs.map((_, i) => i).sort((i, j) => ((qs[j][0] - c[0]) * dir[0] + (qs[j][1] - c[1]) * dir[1]) - ((qs[i][0] - c[0]) * dir[0] + (qs[i][1] - c[1]) * dir[1]));
+        const k = order.find(i => { const x = boxOf(center(qs[i]), ang, halfW); return inFrame(x) && !hidden(pts[i]) && !onGlobe(qs[i]) && !over(x); });
+        if (k === undefined) return;
+        const p = center(qs[k]);
+        turned(str, p[0], p[1], ang, color); taken.push(boxOf(p, ang, halfW));
+      };
+      /** Text along a projected outline, at a fraction of its length or the nearest free place (labelAlong). */
+      const labelAlong = (pts, str, color, frac) => {
+        const n = pts.length;
+        if (n <= 8) return;
+        const halfW = str.length * 2.9 + 6, want = clamp(Math.floor(frac * (n - 1)), 0, n - 1);
+        const angle = (k) => { const a = P.pt(pts[k]), e = P.pt(pts[Math.min(n - 1, k + 3)]); let g = Math.atan2(e[1] - a[1], e[0] - a[0]); if (g > Math.PI / 2) g -= Math.PI; if (g < -Math.PI / 2) g += Math.PI; return g; };
+        const ok = (k) => { const q = P.pt(pts[k]); return q[0] > inset && q[0] < P.W - inset && q[1] > inset + 40 + (P.top || 0) && q[1] < P.H - inset && !hidden(pts[k]) && !onGlobe(q) && !over(boxOf(q, angle(k), halfW)); };
+        let i = ok(want) ? want : -1;
+        for (let d = 1; i < 0 && d < n; d++) { if (want + d < n && ok(want + d)) i = want + d; else if (want - d >= 0 && ok(want - d)) i = want - d; }
+        if (i < 0) return;
+        const q = P.pt(pts[i]), g = angle(i);
+        turned(str, q[0], q[1], g, color, -5); taken.push(boxOf(q, g, halfW));
+      };
+      if (show.jSheet) { const ring = sc.sheetRings.find(r => r.length > 30); if (ring) labelOnRing(ring, "current sheet", rgba(JC.sheet, 0.75), false); }
+      if (show.jTorus && sc.torusLabel.length > 8) labelOnRing(sc.torusLabel, "Io plasma torus", rgba(JC.torus, 0.85), true);
+      const marks = sc.moons.map(m => ({ q: P.pt(m.pos), name: m.info.name, color: m.info.color, behind: hidden(m.pos), r: Math.max(2.6, m.info.radius / JV.RJ * s),
+        ring: { kind: "jup", name: m.info.name, title: `${m.info.name} · ${len3(m.pos).toFixed(2)} R♃ · λIII ${m.west.toFixed(0)}° W · show its plasma interaction in the inset`,
+                act: () => { jupBox.pick(m.key); request(); } } }));
+      if (sc.juno) marks.push({ q: P.pt(sc.juno.pos), name: "Juno", color: JC.juno, behind: hidden(sc.juno.pos), r: 2.3,
+        ring: { kind: "jup", name: "Juno", title: `Juno · ${sc.juno.r.toFixed(2)} R♃ · λIII ${sc.juno.west.toFixed(0)}° W${sc.juno.mShell ? ` · M-shell ${sc.juno.mShell.toFixed(1)}` : ""}`,
+                act: () => say("In Helios, this opens Juno's magnetometer, JADE and Waves data.") } });
+      for (const m of marks) {
+        if (m.behind) { ctx.beginPath(); ctx.arc(m.q[0], m.q[1], 5, 0, TAU); stroke(ctx, rgba(m.color, 0.55), 1, [2, 2]); }
+        else {
+          circle(ctx, m.q[0], m.q[1], m.r + 1.2, rgba(DS.screenAlt)); circle(ctx, m.q[0], m.q[1], m.r, rgba(m.color));
+          ctx.beginPath(); ctx.arc(m.q[0], m.q[1], Math.max(7.5, m.r + 3), 0, TAU); stroke(ctx, rgba(m.color, hover && hover.ring === m.ring ? 1 : 0.85), hover && hover.ring === m.ring ? 2 : 1.3);
+          jupHits.push({ q: m.q, r: 14, ring: m.ring });
+        }
+        taken.push([m.q[0] - m.r - 6, m.q[1] - m.r - 6, m.q[0] + m.r + 6, m.q[1] + m.r + 6]);
+      }
+      for (const m of marks) {
+        const str = m.behind ? `${m.name} (behind Jupiter)` : m.name, font = m.behind ? mono(9, 600) : mono(10, 700);
+        ctx.font = font;
+        const w = ctx.measureText(str).width + 4, h = 13, d = Math.max(7.5, m.r + 3) + 5;
+        const spots = [[d, 0, 1], [d - 1, 11, 1], [d - 1, -11, 1], [-d, 0, 0], [-d + 1, 11, 0], [-d + 1, -11, 0]];
+        const boxAt = (sp) => [sp[2] ? m.q[0] + sp[0] : m.q[0] + sp[0] - w, m.q[1] + sp[1] - h / 2, sp[2] ? m.q[0] + sp[0] + w : m.q[0] + sp[0], m.q[1] + sp[1] + h / 2];
+        const sp = spots.find(x => !over(boxAt(x)));
+        if (!sp) continue;                                  // no free place (zoomed far out, the moons on top of each other): hovering still names it
+        text(ctx, str, m.q[0] + sp[0], m.q[1] + sp[1], font, rgba(m.color, m.behind ? 0.7 : 1), sp[2] ? "left" : "right");
+        taken.push(boxAt(sp));
+      }
+      if (show.jBounds) {
+        if (!sc.mp.mid) sc.mp.mid = sc.mp.loop.map(m => { let best = null, bd = Infinity; for (const q of sc.bs.loop) { const d = (q[0] - m[0]) ** 2 + (q[1] - m[1]) ** 2 + (q[2] - m[2]) ** 2; if (d < bd) { bd = d; best = q; } } return best ? [(m[0] + best[0]) / 2, (m[1] + best[1]) / 2, (m[2] + best[2]) / 2] : m; });
+        labelAlong(sc.mp.loop, "MAGNETOPAUSE", rgba(JC.mpWire, 0.9), 0.30);
+        labelAlong(sc.bs.loop, "BOW SHOCK", rgba(0x34d27b, 0.85), 0.265);
+        labelAlong(sc.mp.mid, "magnetosheath", rgba(0x5b8cff, 0.6), 0.74);
+      }
+      if (!JV.ready) text(ctx, jupFailed ? "The moons' and Juno's tables could not be loaded." : "Loading the moons and Juno…", P.W / 2, (P.top || 0) + 30, mono(10), "rgba(255,255,255,0.6)");
+      jupCardUpdate(sc);
+      jupInsetUpdate(sc, dpr);
+    }
+    /** The spin axis on the axes gizmo, dashed: 3.1° off +Z, what the globe and the torus turn about. */
+    function drawJupPole(ctx) {
+      if (!jupCache) return;
+      const p = jupCache.sc.pole, ox = 46, oy = P.H - 34, L = 16 * 0.8;
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + dot(p, P.basis.right) * L, oy + dot(p, P.basis.down) * L); stroke(ctx, "rgba(255,255,255,0.35)", 0.8, [2, 2]);
+    }
+    const hms = (ms) => new Date(ms).toISOString().slice(11, 19);
+    function jupCardUpdate(sc) {
+      if (!jupBox) return;
+      const set = (sel, html) => { const el = jupBox.querySelector(sel); if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; } };
+      const lightMin = sc.earthDistance * JV.AU_KM / JV.C_KM_S / 60, cov = JV.coverage();
+      set(".jc-t", `${new Date(sc.ms).toISOString().slice(0, 16).replace("T", " ")} UTC`);
+      set(".jc-a", `<p>${sc.sunDistance.toFixed(2)} AU from the Sun. Earth is ${sc.earthDistance.toFixed(2)} AU away, ${lightMin.toFixed(0)} light-minutes.</p>` +
+        `<p title="System III (1965) west longitudes. CML is the central meridian Earth sees now: Jupiter as it was one light time ago.">Sun ${Math.abs(sc.solarLatitude).toFixed(1)}° ${sc.solarLatitude >= 0 ? "N" : "S"} · subsolar λ<sub>III</sub> ${sc.subsolarWest.toFixed(0)}° · CML ${sc.cmlWest.toFixed(0)}°</p>`);
+      let juno;
+      if (sc.juno) juno = `<p style="color:${rgba(JC.juno)}" title="Juno's distance from Jupiter's center, its System III west longitude, and the farthest point of its JRM33 + Con2020 field line. The × marks on Jupiter are that line's feet.">Juno ${sc.juno.r.toFixed(2)} R<sub>J</sub> · λ<sub>III</sub> ${sc.juno.west.toFixed(0)}°${sc.juno.mShell ? ` · M ${sc.juno.mShell.toFixed(1)}` : ""}</p>`;
+      else if (!cov) juno = "";
+      else if (sc.ms < cov.juno[0]) juno = `<p class="jc-d">Juno reached Jupiter on 2016-07-05.</p>`;
+      else if (sc.ms > cov.juno[1]) juno = `<p class="jc-d">JPL Horizons has no Juno trajectory after ${new Date(cov.juno[1]).toISOString().slice(0, 10)}.</p>`;
+      else juno = "";
+      const predicted = sc.juno && sc.ms > Date.UTC(2026, 8, 26) ? `<p class="jc-d">Juno's path after 2026-09-26 is JPL's prediction.</p>` : "";
+      set(".jc-b", `<p title="The Tao et al. 2005 model carries the solar wind measured near Earth out to Jupiter. It is good to a day or two when Earth and Jupiter are on the same side of the Sun, and worse as they separate.">P<sub>dyn</sub> ${sc.pressure.toFixed(3)} nPa · ${String(sc.pressureNote).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` +
+        `<p title="Joy et al. 2002's surfaces at this pressure. The fit holds from 0.02 to 0.6 nPa. They are drawn 300 R♃ down the tail.">Magnetopause ${sc.standoff.mp.toFixed(0)} R<sub>J</sub> and bow shock ${sc.standoff.bs.toFixed(0)} R<sub>J</sub> at the nose (Joy et al. 2002)</p>` + juno + predicted);
+    }
+    /** A moon's plasma interaction in 3-D (JupiterMoonInset): the moon under its USGS map with its sub-Jovian side toward
+     *  Jupiter, its Alfvén wings along u ± v_A·B̂, Ganymede's magnetopause and field lines, and Juno's pass. */
+    function jupInsetUpdate(sc, dpr) {
+      if (!jupBox) return;
+      const box = jupBox.querySelector(".hso-jmoon"), now = sc.moons.find(m => m.key === jupMoon);
+      for (const bt of box.querySelectorAll("[data-moon]")) { const on = bt.dataset.moon === jupMoon; bt.classList.toggle("on", on); bt.style.color = on ? rgba(JV.MOON[bt.dataset.moon].color) : ""; }
+      const fb = box.querySelector(".jm-f"), ftxt = jupFollows ? "↻ follows the view" : "flow–B plane";
+      if (fb.textContent !== ftxt) { fb.textContent = ftxt; fb.title = jupFollows ? "The sketch turns with the main view. Click to hold the plane of the flow and the field." : "The sketch holds the plane of the flow (right) and the field (up). Click to turn it with the main view."; }
+      const live = box.querySelector(".jm-live");
+      if (!now || box.classList.contains("min")) { if (!now && live.dataset.html !== "") { live.innerHTML = ""; live.dataset.html = ""; } return; }
+      const gan = now.key === "ganymede", env = now.info, east = 360 - now.west, bF = gan ? JV.Ganymede.ambient(east) : now.bMoon, bm = len3(bF), bHat = bF.map(v => v / bm);
+      const wg = JV.wings([1, 0, 0], bF, env), perp = [0, -bF[1], -bF[2]], pl = len3(perp), up = pl > 1e-9 ? perp.map(v => v / pl) : [0, 0, 1];
+      const ax = JV.moonAxes(now.pos, sc.pole), inMoon = (v) => [dot(v, ax.x), dot(v, ax.y), dot(v, ax.z)];
+      const B = jupFollows ? { right: inMoon(P.basis.right), down: inMoon(P.basis.down), toward: inMoon(P.basis.toward) }
+        : { right: [1, 0, 0], down: up.map(v => -v), toward: [0, -up[2], up[1]] };   // toward = down × right, as the main view's axes are
+      const W = 340, H = 241, cx = gan ? 0.8 : 0.6, sI = Math.min(W * 0.92 / (2 * (gan ? 6 : 4)), H * 0.92 / (2 * (gan ? 4.3 : 2.85)));
+      const cvI = jupInsetCv;
+      if (cvI.width !== Math.round(W * dpr)) { cvI.width = Math.round(W * dpr); cvI.height = Math.round(H * dpr); }
+      const g = cvI.getContext("2d");
+      g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+      const pt = (p) => [W / 2 + ((p[0] - cx) * B.right[0] + p[1] * B.right[1] + p[2] * B.right[2]) * sI, H / 2 + ((p[0] - cx) * B.down[0] + p[1] * B.down[1] + p[2] * B.down[2]) * sI];
+      const depth = (p) => dot(p, B.toward), o0 = pt([0, 0, 0]);
+      const hid = (p) => { if (!(depth(p) < 0)) return false; const q = pt(p); return Math.hypot(q[0] - o0[0], q[1] - o0[1]) < sI; };
+      const run = (pts, skipHidden = true) => { g.beginPath(); let pen = false; for (const p of pts) { if (skipHidden && hid(p)) { pen = false; continue; } const q = pt(p); if (pen) g.lineTo(q[0], q[1]); else { g.moveTo(q[0], q[1]); pen = true; } } };
+      const col = env.color;
+      // Alfvén wings stand only in a flow slower than the Alfvén speed. They fade out as M_A nears 1 and are not drawn above it
+      // (Callisto near the center of the plasma sheet; Rabia et al. 2025).
+      const wingOn = clamp((1 - wg.machA) / 0.15, 0, 1);
+      /** One wing as a volume: every Alfvén characteristic that passes through the moon, so a round cylinder one moon
+       *  radius across about the wing's own axis (Neubauer 1980; Volwerk et al. 2007, Fig. 2). Strips between its
+       *  generators, brighter toward the limb as a clear tube is, fading with distance; then its two outline edges and
+       *  three hoops, solid on the near side and dashed on the far side. Drawn over the moon, less what the moon hides. */
+      const drawWing = (w, alpha) => {
+        const seed = Math.abs(w[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], sw = dot(seed, w), e1r = seed.map((v, i) => v - w[i] * sw), el = len3(e1r), e1 = e1r.map(v => v / el);
+        const e2 = [w[1] * e1[2] - w[2] * e1[1], w[2] * e1[0] - w[0] * e1[2], w[0] * e1[1] - w[1] * e1[0]];
+        const nT = 60, sMax = 8, rho = (t) => [0, 1, 2].map(i => e1[i] * Math.cos(t) + e2[i] * Math.sin(t)), at = (t, d) => { const r = rho(t); return [0, 1, 2].map(i => r[i] + w[i] * d); };
+        // where each generator comes out from behind the moon
+        const from = (t) => { let d = 0; while (d < sMax && hid(at(t, d))) d += 0.1; return d; };
+        const a0 = pt([0, 0, 0]), a1 = pt(w.map(v => v * sMax)), along = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]);
+        const shade = (a) => {
+          if (along < 2) return rgba(col, a * 0.5);
+          const gr = g.createLinearGradient(a0[0], a0[1], a1[0], a1[1]);
+          gr.addColorStop(0, rgba(col, a)); gr.addColorStop(0.75, rgba(col, a * 0.25)); gr.addColorStop(1, rgba(col, 0));
+          return gr;
+        };
+        const strips = [];
+        for (let k = 0; k < nT; k++) { const t0 = TAU * k / nT, t1 = TAU * (k + 1.06) / nT, f = dot(rho((t0 + t1) / 2), B.toward); strips.push({ t0, t1, f }); }
+        strips.sort((p, q) => p.f - q.f);                     // the far side first
+        for (const st of strips) {
+          const d0 = from(st.t0), d1 = from(st.t1);
+          if (d0 >= sMax || d1 >= sMax) continue;
+          const q = [at(st.t0, d0), at(st.t0, sMax), at(st.t1, sMax), at(st.t1, d1)].map(pt);
+          g.beginPath(); g.moveTo(q[0][0], q[0][1]); for (let i = 1; i < 4; i++) g.lineTo(q[i][0], q[i][1]); g.closePath();
+          g.fillStyle = shade(alpha * (st.f < 0 ? 0.6 : 1) * (0.05 + 0.26 * Math.pow(1 - Math.abs(st.f), 1.6))); g.fill();
+        }
+        const ts = Math.atan2(-dot(e1, B.toward), dot(e2, B.toward));   // the outline: where the tube's side turns edge-on
+        for (const t of [ts, ts + Math.PI]) { const d = from(t); if (d < sMax) { run([at(t, d), at(t, sMax)], false); line(shade(alpha * 0.9), 1.1); } }
+        for (const d of [1.6, 3.2, 4.8]) for (const near of [false, true]) {
+          g.beginPath();
+          let pen = false;
+          for (let k = 0; k <= 72; k++) {
+            const t = TAU * k / 72, p3 = at(t, d);
+            if ((dot(rho(t), B.toward) >= 0) !== near || hid(p3)) { pen = false; continue; }
+            const q = pt(p3); if (pen) g.lineTo(q[0], q[1]); else { g.moveTo(q[0], q[1]); pen = true; }
+          }
+          line(rgba(col, alpha * (near ? 0.5 : 0.2) * (1 - d / 7)), 0.8, near ? null : [2, 3]);
+        }
+      };
+      // the moon: its map's 0° meridian toward Jupiter (+Y), 90° E toward −X, the trailing side into the flow
+      {
+        const T = texOf(now.key, `assets/img/${now.key}-equirect.jpg`), bodyOf = (v) => [v[1], -v[0], v[2]], size = Math.max(8, Math.ceil(2 * sI * dpr));
+        if (T) g.drawImage(spheroidImage(jupMoonCv, size, { right: bodyOf(B.right), down: bodyOf(B.down), toward: bodyOf(B.toward) }, bodyOf([ax.x[0], ax.y[0], ax.z[0]]), T, 1, 0.16, 0.02, 0.08), o0[0] - sI, o0[1] - sI, 2 * sI, 2 * sI);
+        else { g.beginPath(); g.arc(o0[0], o0[1], sI, 0, TAU); g.fillStyle = rgba(col, 0.5); g.fill(); }
+      }
+      const line = (style, width, dash) => { g.strokeStyle = style; g.lineWidth = width; g.setLineDash(dash || []); g.stroke(); };
+      if (gan) {
+        for (let h = -3; h <= 3; h += 1.5) { run(JV.Ganymede.ring(east, h)); line(rgba(JC.mp, h === 0 ? 0.6 : 0.3), h === 0 ? 1.1 : 0.8); }
+        const fine = [];
+        for (let h = -4.2; h <= 4.2 + 1e-9; h += 0.2) fine.push(JV.Ganymede.ring(east, h, 4));
+        for (const [k, w, a] of [[2, 1.4, 0.9], [0, 1.0, 0.4], [1, 0.8, 0.3], [3, 0.8, 0.3]]) { run(fine.map(r => r[k])); line(rgba(JC.mp, a), w); }
+        const L = JV.ganymedeLines(east);
+        for (const l of L.open) { run(l); line(rgba(0xF2C572, 0.5), 0.8); }
+        for (const l of L.closed) { run(l); line(rgba(0x7FE0A0, 0.8), 0.9); }
+        if (wingOn > 0) for (const [w, along] of [[wg.north, bHat.map(v => -v)], [wg.south, bHat]]) { const k = dot(w, along); if (k > 0.05) { run([along, w.map(v => v * 5.5 / k)]); line(rgba(col, 0.7 * wingOn), 1, [4, 3]); } }
+      } else if (wingOn > 0) {
+        // the wing that points away from the viewer first, so the nearer one lies over it
+        for (const w of [wg.north, wg.south].sort((p, q) => dot(p, B.toward) - dot(q, B.toward))) drawWing(w, wingOn);
+      }
+      const tx = (str, x, y, font, color, align = "center") => { g.font = font; g.fillStyle = color; g.textAlign = align; g.textBaseline = "middle"; g.fillText(str, x, y); };
+      const v = now.visitor;
+      if (v) {
+        run(v.track); line(rgba(JC.juno, 0.9), 1.3);
+        if (v.now && !hid(v.now)) { const q = pt(v.now); g.beginPath(); g.arc(q[0], q[1], 3, 0, TAU); g.fillStyle = rgba(JC.juno); g.fill(); tx("Juno", q[0] + 6, q[1] - 7, `600 10px ${MONO}`, rgba(JC.juno), "left"); }
+      }
+      // which way is which: the flow, the field and Jupiter
+      const named = [];
+      for (const [vec, lab, c, a0] of [[[1, 0, 0], "flow", 0xffffff, 0.75], [bHat, "B", 0x8fb7ff, 1], [[0, 1, 0], "♃", 0xF2C572, 1]]) {
+        const dx = dot(vec, B.right), dy = dot(vec, B.down), inP = Math.min(1, Math.hypot(dx, dy)), ox = 56, oy = H - 40;
+        g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox + dx * 20, oy + dy * 20); line(rgba(c, a0 * (0.35 + 0.6 * inP)), 1.2);
+        // the name beyond the tip, set from the side it points to so it never runs off the frame
+        const lp = [ox + dx * 24, oy + dy * 27];
+        if (inP > 0.3 && !named.some(q => Math.hypot(q[0] - lp[0], q[1] - lp[1]) < 13)) { named.push(lp); tx(lab, lp[0], lp[1], `600 9px ${MONO}`, rgba(c, a0 * (0.4 + 0.5 * inP)), dx < -0.3 ? "right" : dx > 0.3 ? "left" : "center"); }
+      }
+      g.beginPath(); g.moveTo(W - 14 - sI, H - 14); g.lineTo(W - 14, H - 14); line("rgba(255,255,255,0.45)", 1.2);
+      // the bar is one moon radius (Europa's would read "R_E", the Earth's, so the name is spelled out)
+      {
+        const str = `1 ${env.name} radius · ${(gan ? JV.GAN.radius : env.radius).toFixed(0)} km`;
+        g.font = `9px ${MONO}`;
+        const wd = g.measureText(str).width;
+        g.fillStyle = "rgba(8,8,10,0.72)"; g.fillRect(W - 20 - wd, H - 32, wd + 12, 16);
+        tx(str, W - 14, H - 24, `9px ${MONO}`, "rgba(255,255,255,0.6)", "right");
+      }
+      {
+        const str = `${wg.machA < 1 ? `θA ${wg.thetaA.toFixed(0)}°` : `MA ${wg.machA.toFixed(1)}`} · |B| ${bm.toFixed(0)} nT · u ${env.flow} km/s`;
+        g.font = `9px ${MONO}`;
+        const wd = g.measureText(str).width;
+        g.fillStyle = "rgba(8,8,10,0.72)"; g.fillRect(W - 14 - wd, 4, wd + 12, 16);   // a plate, so the wing's rings do not run through the numbers
+        tx(str, W - 8, 12, `9px ${MONO}`, rgba(col, 0.9), "right");
+      }
+      if (!(wingOn > 0)) { tx("No Alfvén wings now", W / 2, H - 58, `600 10px ${MONO}`, rgba(col, 0.9)); tx(`the flow is faster than the Alfvén speed (MA ${wg.machA.toFixed(2)})`, W / 2, H - 45, `9px ${MONO}`, "rgba(255,255,255,0.55)"); }
+      const view = jupFollows ? "Seen as the main view is." : "In the plane of the flow and the field.";
+      const cap = {
+        ganymede: `The blue cylinder is Kaweeyanun et al. 2020's magnetopause, ${JV.Ganymede.standoff.toFixed(2)} R<sub>G</sub> upstream. The lines are Kivelson et al. 2002's dipole in Jupiter's field, a vacuum sketch. Green lines close on Ganymede. Gold lines connect to Jupiter. Map: USGS Voyager and Galileo mosaic.`,
+        io: "Io has no field of its own. Its ionosphere and the plasma it loads drive the strongest wings in the system. Map: USGS Galileo and Voyager color mosaic.",
+        europa: "Europa's ocean answers Jupiter's turning field with an induced dipole, which is not drawn. The wings carry the interaction to the footprint. Map: USGS Voyager and Galileo mosaic.",
+        callisto: "Callisto's wings come and go. They stand while the flow is slower than the Alfvén speed, which is when Callisto is above or below the plasma sheet. Near the sheet's center the field is weak, the flow is faster, and there are none. The density is held at its plasma-sheet average, so only the field changes this. Map: USGS Voyager and Galileo mosaic.",
+      }[now.key];
+      const rho = env.rho >= 100 ? env.rho.toFixed(0) : env.rho.toFixed(1);
+      let html = `<p>λ<sub>III</sub> ${now.west.toFixed(0)}° · ${Math.abs(now.aboveSheet).toFixed(2)} R<sub>J</sub> ${now.aboveSheet >= 0 ? "above" : "below"} the current sheet</p>` +
+        `<p title="${gan ? "B is Kaweeyanun et al. 2020's ambient field at Ganymede's longitude." : "B is JRM33 with Con2020 at the moon."} The mass density ρ and the flow past the moon u are Kivelson et al. 2004's typical values.">|B| ${bm.toFixed(0)} nT · ρ ${rho} amu cm⁻³ · v<sub>A</sub> ${wg.vA.toFixed(0)} km/s · u ${env.flow} km/s</p>`;
+      if (v && v.closest) {
+        html += `<p style="color:${rgba(JC.juno)}" title="Juno's height above the moon's surface. The line in the sketch is its path in the moon's frame.">Juno closest ${v.closest.alt.toFixed(0)} km at ${hms(v.closest.t)} (track ±1 h)</p>`;
+        if (v.crossings.length) html += `<p style="color:${rgba(JC.juno, 0.8)}" title="Where Juno's path crosses the model magnetopause drawn here.">Model magnetopause: ${v.crossings.map(c => `${c.inbound ? "in" : "out"} ${hms(c.t)}`).join(" · ")}</p>`;
+      }
+      html += `<p title="MA is the flow speed over the Alfvén speed. Below 1 the moon has Alfvén wings, at θA = atan(MA) from the field (Neubauer 1980). A lead angle is how far downstream the footprint sits from the moon's own field line (Hue et al. 2023).">M<sub>A</sub> ${wg.machA.toFixed(2)} · ${wg.machA < 1 ? `θ<sub>A</sub> ${wg.thetaA.toFixed(0)}°` : "no wings"}${now.leadN !== null && now.leadS !== null ? ` · lead N ${now.leadN.toFixed(1)}° S ${now.leadS.toFixed(1)}°` : " · no footprint fit"}</p><p class="jm-c">${view} ${cap}</p>`;
+      if (live.dataset.html !== html) { live.innerHTML = html; live.dataset.html = html; }
     }
 
     // ── the LEO rung: the Earth at true size, Earth-fixed and north up, the all-sky imagers on it and the oval ──
@@ -1302,7 +2008,8 @@
     // ── the axes gizmo and the GSE rulers ──
     function axisDir(v) { return [dot(v, P.basis.right), dot(v, P.basis.down), dot(v, P.basis.toward)]; }
     const AXES = [[[1, 0, 0], "+X☉", 0xff7b72], [[0, 1, 0], "+Y", 0x7fd6a0], [[0, 0, 1], "+Z", 0x8fb7ff]];
-    function drawAxes(ctx) {
+    function drawAxes(ctx, AXES_ = AXES, name = "GSE") {
+      const AXES = AXES_;
       const ox = 46, L = 16, reach = L + 7, oy = P.H - (reach + 11), f = 0.58;
       const planes = [[0, 1], [0, 2], [1, 2]].sort((p, q) =>
         (axisDir(AXES[p[0]][0])[2] + axisDir(AXES[p[1]][0])[2]) - (axisDir(AXES[q[0]][0])[2] + axisDir(AXES[q[1]][0])[2]));
@@ -1324,7 +2031,7 @@
         stroke(ctx, rgba(col, a), 1.3);
         if (inPlane > 0.18) text(ctx, lab, ox + d[0] * (L + 7), oy + d[1] * (L + 7), `600 8px ${MONO}`, rgba(col, Math.min(1, a + 0.15)));
       }
-      text(ctx, "GSE", ox, oy - (reach + 10), `8px ${MONO}`, "rgba(255,255,255,0.40)");
+      text(ctx, name, ox, oy - (reach + 10), `8px ${MONO}`, "rgba(255,255,255,0.40)");
     }
     function niceStep(raw) {
       if (!(raw > 0) || !isFinite(raw)) return 1;
@@ -1332,7 +2039,7 @@
       return (f <= 1 ? 1 : f <= 5 ? 5 : 10) * 10 ** e;
     }
     const fmtRE = (v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : Math.abs(v - Math.round(v)) > 1e-9 ? v.toFixed(1) : v.toFixed(0));
-    function drawRulers(ctx) {
+    function drawRulers(ctx, unit) {
       const W = P.W, H = P.H, c = P.earth, leftSkipX = 46 + 42, bottomSkipY = 76, font = `500 8.5px ${MONO}`;
       const px = (v, horiz) => { const p = P.pt(v); return Math.abs(horiz ? p[0] - c[0] : p[1] - c[1]); };
       const step = (per, minPx) => { if (!(per > 0.02)) return null; const s = niceStep(minPx / per); return isFinite(s) && s > 0 && s * per <= 4000 ? s : null; };
@@ -1357,7 +2064,7 @@
         }
         if (c[0] > leftSkipX && c[0] < W - 152) {
           ctx.beginPath(); ctx.moveTo(c[0], yB); ctx.lineTo(c[0], yB - 6); stroke(ctx, rgba(hA.col, 0.75), 1);
-          text(ctx, "0", c[0], yB - 12, font, rgba(hA.col, 0.85));
+          text(ctx, unit ? `0 ${unit}` : "0", c[0], yB - 12, font, rgba(hA.col, 0.85));
         }
       }
       let vIdx = -1;
@@ -1455,7 +2162,13 @@
       rings = [];
 
       drawStars(ctx, dpr);
-      root.classList.toggle("far", rung === "sun" || rung === "leo");
+      root.classList.toggle("far", rung === "sun" || rung === "leo" || rung === "interstellar" || rung === "jupiter");
+      if (jupBox) jupBox.hidden = rung !== "jupiter";
+      root.classList.toggle("jup", rung === "jupiter");
+      if (rung === "jupiter") { drawJupiter(ctx, dpr); drawAxes(ctx, AXES, "JSO"); drawJupPole(ctx); drawRulers(ctx, "R♃"); updateSW(); return; }
+      if (farCard) farCard.hidden = rung !== "interstellar";
+      root.classList.toggle("ism", rung === "interstellar");
+      if (rung === "interstellar") { drawInterstellar(ctx); drawAxes(ctx, FAR_AXES, "ECLIPTIC"); updateSW(); return; }
       if (rung === "sun") { drawHelio(ctx, dpr); drawAxes(ctx); updateSW(); return; }
       const sun = skySun();
       if (sun) drawSkySun(ctx, sun);
@@ -1585,6 +2298,12 @@
 
     // ── pointing: drag to turn the view (azimuth, tilt), click a spacecraft, hover the orbit ──
     const hit = (x, y) => {
+      if (rung === "interstellar") return null;             // nothing opens from this rung; its markers name themselves on hover
+      if (rung === "jupiter") {
+        let near = null;
+        for (const m of jupHits) { const d = Math.hypot(m.q[0] - x, m.q[1] - y); if (d < m.r && (!near || d < near.d)) near = { ring: m.ring, d }; }
+        return near ? { ring: near.ring } : null;
+      }
       if (rung === "leo") {
         for (const m of stationMarks) if (Math.hypot(m.q[0] - x, m.q[1] - y) < 8) return { ring: { kind: "station", name: m.s.name, code: m.s.code, m } };
         return null;
@@ -1664,9 +2383,11 @@
         : h ? (h.earth ? "Earth · open the Geomagnetic indices window" : h.dot ? `Open MMS${h.dot.n} data window` : h.ring.kind === "station"
         ? `${h.ring.name} · ${h.ring.m.s.nets.map(k => NET_NAME[k]).join(" + ")} · Sun ${h.ring.m.elev.toFixed(0)}° · ${h.ring.m.imaging ? "imaging" : "daylight"}`
         : h.ring.kind === "sun" ? "The Sun · open SDO's images" : `Open ${h.ring.name} data window`) : "";
+      if (rung === "interstellar") { const m = farMarks.filter(m => Math.hypot(m.q[0] - x, m.q[1] - y) < 9).sort((a, b) => Math.hypot(a.q[0] - x, a.q[1] - y) - Math.hypot(b.q[0] - x, b.q[1] - y))[0]; cv.title = m ? m.title : ""; }
+      if (rung === "jupiter") { cv.title = h ? h.ring.title : ""; cv.style.cursor = h && h.ring.act ? "pointer" : ""; }
       const prev = hover;
       hover = h && h.ring ? { ring: h.ring, station: h.ring.code } : null;
-      showCard(h || rung === "leo" || rung === "sun" ? null : nearestOrbit(x, y));
+      showCard(h || rung === "leo" || rung === "sun" || rung === "interstellar" || rung === "jupiter" ? null : nearestOrbit(x, y));
       if ((prev && prev.ring) !== (hover && hover.ring)) request();
     });
     const end = (e) => {
@@ -1677,6 +2398,7 @@
       if (was.moved || e.type === "pointercancel") return;
       const h = hit(was.px, was.py);
       if (!h) return;
+      if (h.ring && h.ring.kind === "jup") { if (h.ring.act) h.ring.act(); return; }
       if (h.earth) o.onEarth(time);
       else if (h.dot) o.onMMS(h.dot.n, time);
       else if (h.ring.kind === "mms") o.onMMS(1, time);
@@ -1756,8 +2478,9 @@
         b.setAttribute("aria-pressed", String(Math.abs(d) < 1e-3 && Math.abs(view.tilt - tl) < 1e-3));
       }
     }
-    function goTo(key) {
-      const [az1, tl1] = PRESETS[key], az0 = view.az, tl0 = view.tilt;
+    function goTo(key) { turnTo(...PRESETS[key]); }
+    function turnTo(az1, tl1) {
+      const az0 = view.az, tl0 = view.tilt;
       const daz = Math.atan2(Math.sin(az1 - az0), Math.cos(az1 - az0)), t0 = performance.now(), me = {};
       anim = me;
       const step = (now) => {
@@ -1772,13 +2495,20 @@
     }
     for (const b of presetBtns) b.addEventListener("click", () => { goTo(b.dataset.preset); if (o.onPreset) o.onPreset(b.dataset.preset); });
     const rungBtns = Array.from(root.querySelectorAll("[data-rung]"));
+    let zoomSync = () => {};
     function setRung(key) {
-      if (key === rung) return;
+      if (key === rung || !Object.hasOwn(RUNGS, key) || (key === "interstellar" && !farCard) || (key === "jupiter" && !jupBox)) return;
       const near = (k) => k === "mag" || k === "moon" || k === "l1";
       if (P && near(key) && near(rung)) zoomFrom = { scale: P.scale, c: P.c, t0: performance.now() };
+      // The Interstellar rung opens tilted 62° (the app's): the Voyagers are 35° above and 39° below the ecliptic, and
+      // seen from straight above Voyager 1 looks well inside the light-day sphere. Leaving puts the view back.
+      if (key === "interstellar") { farLoad(); if (view.tilt < 0.35) { tiltBefore = [view.az, view.tilt]; turnTo(view.az, 62 * DEG); } }
+      else if (rung === "interstellar" && tiltBefore) { turnTo(...tiltBefore); tiltBefore = null; }
+      if (key === "jupiter") jupLoad();
       rung = key;
       for (const b of rungBtns) { const on = b.dataset.rung === key; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
-      card.hidden = true; hover = null;
+      card.hidden = true; hover = null; cv.title = "";
+      zoomSync();
       if (o.onRung) o.onRung(key);
       request();
     }
@@ -1790,22 +2520,24 @@
     new ResizeObserver(() => { skyCache = null; request(); }).observe(root);
     // LEO zoom (live): pinch or ⌘/Ctrl-scroll over the globe, or the + / − buttons; plain scrolling still scrolls the page
     if (o.leoZoom) {
-      const setZoom = (z) => { leoCam.zoom = clamp(z, 1, 8); leoCache = null; request(); };
+      const zoomed = () => rung === "leo" || rung === "interstellar" || rung === "jupiter", zoomNow = () => (rung === "interstellar" ? farZoom : rung === "jupiter" ? jupZoom : leoCam.zoom);
+      // LEO 1 to 8; the Interstellar rung out to twice the frame and in to where Jupiter's orbit fills it (the app's 0.5 to 40)
+      // the Jupiter rung from ±300 R_J (the shock's flanks) in to ±1.1 R_J (the footprints): the app's 0.1 to 28
+      const setZoom = (z) => { if (rung === "interstellar") farZoom = clamp(z, 0.5, 40); else if (rung === "jupiter") jupZoom = clamp(z, 0.1, 28); else { leoCam.zoom = clamp(z, 1, 8); leoCache = null; } request(); };
       cv.addEventListener("wheel", (e) => {
-        if (rung !== "leo" || !(o.plainWheel || e.ctrlKey || e.metaKey)) return;   // (the app's page does not scroll: its wheel zooms)
+        if (!zoomed() || !(o.plainWheel || e.ctrlKey || e.metaKey)) return;   // (the app's page does not scroll: its wheel zooms)
         e.preventDefault();
-        setZoom(leoCam.zoom * Math.exp(-e.deltaY * 0.01));
+        setZoom(zoomNow() * Math.exp(-e.deltaY * 0.01));
       }, { passive: false });
       const box_ = document.createElement("div");
       box_.className = "hso-zoom";
       box_.innerHTML = '<button aria-label="Zoom in" title="Zoom in (or pinch, or ⌘-scroll)">+</button><button aria-label="Zoom out" title="Zoom out">−</button>';
       const [zin, zout] = box_.querySelectorAll("button");
-      zin.addEventListener("click", () => setZoom(leoCam.zoom * 1.5));
-      zout.addEventListener("click", () => setZoom(leoCam.zoom / 1.5));
+      zin.addEventListener("click", () => setZoom(zoomNow() * 1.5));
+      zout.addEventListener("click", () => setZoom(zoomNow() / 1.5));
       root.appendChild(box_);
-      const sync = () => { box_.hidden = rung !== "leo"; };
-      for (const b of rungBtns) b.addEventListener("click", () => setTimeout(sync, 0));
-      sync();
+      zoomSync = () => { box_.hidden = !zoomed(); };
+      zoomSync();
     }
     return {
       get time() { return time; },

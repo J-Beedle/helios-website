@@ -284,3 +284,54 @@ body.now-mode .hso-toast { z-index: 8; }   /* over the Now panel */
 
 /* a data window whose mission has ended (MAVEN after 2025-12-06): the note in place of empty panels */
 .panel-loading.ended { padding: 0 12%; background: #fff; font: 500 13.5px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; text-align: center; }
+
+/* ── the Interstellar rung's card (hsoview.js farCardUpdate): each craft's distances and light time, then what is drawn ── */
+.hso-far { position: absolute; right: 14px; bottom: 76px; z-index: 5; width: 350px; box-sizing: border-box; padding: 10px 11px; border: 1px solid rgba(240, 240, 250, 0.12); border-radius: 10px; background: rgba(22, 22, 26, 0.92); color: #aeaeb6; font-size: 10.5px; line-height: 1.4; }
+.hso-far[hidden] { display: none; }
+.hso-far.min { width: auto; padding: 5px 9px; }
+.hso-far p { margin: 3px 0 0; }
+.hso-far .hf-h { display: flex; align-items: baseline; gap: 8px; margin: 0 0 5px; }
+.hso-far.min .hf-h { margin: 0; }
+.hso-far .hf-h b { color: #e3e3eb; font: 700 10px/1 inherit; letter-spacing: 0.06em; }
+.hso-far .hf-h span { flex: 1; color: #919199; font: 10px/1 ui-monospace, "SF Mono", Menlo, monospace; }
+.hso-far .hf-min { width: 16px; height: 16px; margin-left: auto; padding: 0; border: 0; border-radius: 4px; background: none; color: #aeaeb6; font: 600 13px/1 ui-monospace, Menlo, monospace; cursor: pointer; }
+.hso-far .hf-min:hover { background: rgba(240, 240, 250, 0.12); color: #fff; }
+.hso-far table { width: 100%; margin: 0 0 6px; border-collapse: collapse; font: 10px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+.hso-far thead td { color: #6c6c74; font: 9px/1.4 inherit; }
+.hso-far td { padding: 0 0 0 10px; color: #e3e3eb; text-align: right; white-space: nowrap; }
+.hso-far tbody th { padding: 0; font: 600 10px/1.5 inherit; text-align: left; white-space: nowrap; }
+.hso-far tr.sil td { color: #6c6c74; }
+.hso-far .hf-f { margin-top: 6px; color: #6c6c74; font-size: 9.5px; }
+.ism .hso-zoom { top: 104px; transform: none; }   /* clear of the card */
+/* the Jupiter rung: a moon's inset above the card, bottom right */
+.hso-jupbox { position: absolute; right: 14px; bottom: 76px; z-index: 5; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; color: #aeaeb6; font: 10.5px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.hso-jupbox[hidden] { display: none; }
+.hso-jupbox > div { pointer-events: auto; box-sizing: border-box; padding: 8px 10px; border: 1px solid rgba(240, 240, 250, 0.12); border-radius: 10px; background: rgba(22, 22, 26, 0.95); }
+.hso-jupbox p { margin: 2px 0 0; }
+.hso-jupbox sub { font-size: 0.72em; }
+.hso-jupbox button { padding: 0; border: 0; background: none; color: #aeaeb6; font: inherit; cursor: pointer; }
+.hso-jupbox button:hover { color: #fff; }
+.hso-jupbox .jb-min { width: 16px; height: 16px; border-radius: 4px; font: 600 13px/1 ui-monospace, Menlo, monospace; }
+.hso-jupbox .jb-min:hover { background: rgba(240, 240, 250, 0.12); }
+.hso-jmoon { width: 362px; }
+.hso-jmoon .jm-h { display: flex; align-items: baseline; gap: 9px; margin: 0 0 5px; font-size: 11px; }
+.hso-jmoon .jm-h span { flex: 1; }
+.hso-jmoon .jm-h button.on { font-weight: 700; }
+.hso-jmoon canvas { display: block; width: 340px; height: 241px; border-radius: 6px; background: rgba(0, 0, 0, 0.3); }
+.hso-jmoon .jm-live { margin-top: 4px; font: 10px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+.hso-jmoon .jm-c { color: #6c6c74; font: 9.5px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.hso-jmoon.min, .hso-jup.min { width: auto; padding: 5px 9px; }
+.hso-jmoon.min canvas, .hso-jmoon.min .jm-live, .hso-jmoon.min .jm-f, .hso-jup.min > :not(.jc-h) { display: none; }
+.hso-jmoon.min .jm-h, .hso-jup.min .jc-h { margin: 0; }
+.hso-jup { width: 362px; }
+.hso-jup .jc-h { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; }
+.hso-jup .jc-h b { color: #e3e3eb; font: 700 10px/1 inherit; letter-spacing: 0.06em; }
+.hso-jup .jc-h span { flex: 1; color: #919199; font: 10px/1 ui-monospace, "SF Mono", Menlo, monospace; }
+.hso-jup .jc-a, .hso-jup .jc-b { color: #e3e3eb; font: 10px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+.hso-jup .jc-d { color: #6c6c74; }
+.hso-jup select { max-width: 100%; margin: 2px 0; padding: 1px 4px; border: 1px solid rgba(240, 240, 250, 0.18); border-radius: 5px; background: #16161a; color: #e3e3eb; font: 10px/1.4 inherit; }
+.hso-jup .jc-z { display: flex; gap: 12px; margin: 5px 0 4px; }
+.hso-jup .jc-z button { text-decoration: underline; text-decoration-color: rgba(240, 240, 250, 0.3); text-underline-offset: 2px; }
+.hso-jup .jc-n { margin-top: 3px; color: #919199; font-size: 9.5px; line-height: 1.4; }
+.hso-jup .jc-f { margin-top: 5px; color: #6c6c74; font-size: 9.5px; }
+.jup .hso-zoom { right: 386px; }   /* beside the inset and the card */
